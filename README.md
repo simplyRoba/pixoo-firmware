@@ -26,7 +26,7 @@ LEDBoard` REV1.0 (`20210525`). Other board revisions and variants are unknown.
 
 ## Documentation
 
-- [User manual: installation, operation, updates, and recovery](docs/manual.md)
+- [Installation and operation guide](docs/manual.md)
 - [Hardware and panel-protocol reference](docs/hardware.md)
 - [Firmware architecture](docs/firmware.md)
 - [Contributor setup, builds, tests, and generators](CONTRIBUTING.md)

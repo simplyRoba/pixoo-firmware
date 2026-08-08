@@ -1,8 +1,16 @@
-# Pixoo64 manual
+# Installation and operation guide
 
-This manual covers the replacement firmware in this repository. It replaces the
+This guide covers the replacement firmware in this repository. It replaces the
 mainboard ESP32 firmware only; it does not reflash the panel MCU. Read the
 [hardware reference](hardware.md) before connecting a programmer.
+
+> [!WARNING]
+> Installing this firmware is not a beginner flashing procedure. You must be able
+> to identify the documented board revision and test pads, distinguish 3.3 V
+> logic from 5 V power, verify wiring before applying power, and recover an ESP32
+> through ROM download mode. Incorrect wiring, voltage, flash image, offset, or
+> handling can permanently damage the mainboard or panel, or leave the device
+> unbootable. Stop if any connection, measurement, or instruction is uncertain.
 
 ## Requirements and safety
 
