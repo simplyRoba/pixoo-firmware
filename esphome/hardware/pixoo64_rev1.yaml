@@ -1,0 +1,40 @@
+substitutions:
+  pixoo64_rev1_panel_spi_mosi_pin: "33"
+  pixoo64_rev1_panel_spi_sclk_pin: "25"
+  pixoo64_rev1_panel_spi_cs_pin: "26"
+  pixoo64_rev1_panel_uart_rx_pin: "32"
+  pixoo64_rev1_button_power_pin: "35"
+  pixoo64_rev1_button_brightness_pin: "34"
+  pixoo64_rev1_button_inverted: "true"
+  pixoo64_rev1_buzzer_pin: "23"
+  pixoo64_rev1_microphone_enable_pin: "21"
+  pixoo64_rev1_microphone_bclk_pin: "18"
+  pixoo64_rev1_microphone_lrclk_pin: "19"
+  pixoo64_rev1_microphone_din_pin: "5"
+  pixoo64_rev1_microphone_sample_rate: "32000"
+  pixoo64_rev1_microphone_bits_per_sample: "32bit"
+  pixoo64_rev1_microphone_channel: "left"
+  pixoo64_rev1_microphone_use_apll: "true"
+  pixoo64_rev1_panel_spi_clock_hz: "15000000"
+  pixoo64_rev1_panel_uart_baud: "115200"
+  pixoo64_rev1_panel_soft_start_duration: "120ms"
+  pixoo64_rev1_panel_soft_start_period: "1ms"
+
+output:
+  - platform: ledc
+    id: panel_power_output
+    pin: 22
+    channel: 8
+    frequency: 1kHz
+
+pixoo64:
+  panel:
+    power_output: panel_power_output
+    spi_mosi_pin: ${pixoo64_rev1_panel_spi_mosi_pin}
+    spi_sclk_pin: ${pixoo64_rev1_panel_spi_sclk_pin}
+    spi_cs_pin: ${pixoo64_rev1_panel_spi_cs_pin}
+    uart_rx_pin: ${pixoo64_rev1_panel_uart_rx_pin}
+    spi_clock_hz: ${pixoo64_rev1_panel_spi_clock_hz}
+    uart_baud: ${pixoo64_rev1_panel_uart_baud}
+    soft_start_duration: ${pixoo64_rev1_panel_soft_start_duration}
+    soft_start_period: ${pixoo64_rev1_panel_soft_start_period}

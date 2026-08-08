@@ -1,0 +1,97 @@
+name: firmware-ci
+
+# Build + test only. No releases, no flashing, no deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "esphome/**"
+      - "pixoo_protocol/**"
+      - "pixoo_app/**"
+      - "pixoo_content/**"
+      - "tools/**"
+      - "resources/openmoji-17.0.0/**"
+      - "requirements.txt"
+      - "ci-requirements.txt"
+      - ".github/workflows/firmware-ci.yml"
+  pull_request:
+    paths:
+      - "esphome/**"
+      - "pixoo_protocol/**"
+      - "pixoo_app/**"
+      - "pixoo_content/**"
+      - "tools/**"
+      - "resources/openmoji-17.0.0/**"
+      - "requirements.txt"
+      - "ci-requirements.txt"
+      - ".github/workflows/firmware-ci.yml"
+  workflow_dispatch:
+
+# One run per ref; a newer run supersedes an older one still in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    name: host unit tests (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Every project reports its own result; one failure does not cancel the
+      # others.
+      fail-fast: false
+      matrix:
+        project: [pixoo_protocol, pixoo_app, pixoo_content]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install -r ci-requirements.txt
+      - name: Run native unit tests
+        working-directory: ${{ matrix.project }}
+        run: pio test -e native
+
+  esphome-build:
+    name: ESPHome config tests and Pixoo64 build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install -r ci-requirements.txt
+      - name: Run Python tool tests
+        run: python -m unittest discover -s tools/tests
+      - name: Run ESPHome config validation tests
+        run: python -m unittest discover -s esphome/tests/config_validation
+      - name: Verify generated reaction artwork
+        run: python tools/gen-reaction-art.py --check
+      - name: Verify generated split-flap digits
+        run: python tools/gen-split-flap-digits.py --check
+      - name: Supply non-production ESPHome secrets
+        run: cp esphome/secrets.example.yaml esphome/secrets.yaml
+      - name: Compile ESPHome Pixoo firmware
+        run: esphome compile esphome/pixoo64.yaml
+
+  render-tests:
+    name: dashboard render tests (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install -r ci-requirements.txt
+      # esphome run swallows the program exit code, so build then run the
+      # compiled host binary directly and check its status.
+      - name: Compile render test
+        run: esphome compile esphome/tests/render_test/render_test.yaml
+      - name: Compare rendered dashboards to references
+        run: esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-render-test/program

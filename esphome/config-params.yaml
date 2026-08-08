@@ -1,0 +1,40 @@
+# Runtime configuration parameters: persisted, user-settable device settings
+# read at runtime instead of compiled-in constants, so changing one is a data
+# write, not a reflash. Merged into the device config as a package.
+
+# Location and refresh cadence. Values are the runtime source of truth; the
+# compiled initial_value is only the first-boot seed.
+number:
+  - platform: template
+    id: location_latitude
+    name: Latitude
+    entity_category: config
+    unit_of_measurement: "°"
+    min_value: -90
+    max_value: 90
+    step: 0.01
+    initial_value: 40.71
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: location_longitude
+    name: Longitude
+    entity_category: config
+    unit_of_measurement: "°"
+    min_value: -180
+    max_value: 180
+    step: 0.01
+    initial_value: -74.01
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: weather_refresh_minutes
+    name: Weather Refresh Interval
+    entity_category: config
+    unit_of_measurement: min
+    min_value: 5
+    max_value: 240
+    step: 5
+    initial_value: 30
+    optimistic: true
+    restore_value: true

@@ -1,0 +1,1260 @@
+# Dashboard render test. Renders each dashboard through the real
+# pixoo64_content controller pipeline (controller -> WeatherDashboard ->
+# WeatherModel -> RenderWeather) with fixed inputs and a fixed clock, and
+# byte-compares each rendered frame to frames/<id>.png. Deterministic: the clock
+# is pinned via `fixed_time` so the hero temperature, clock, date, and forecast
+# labels are stable on the host (the host RTC would report wall-clock time).
+# Run:    esphome compile esphome/tests/render_test/render_test.yaml, then run the binary
+# Update: PIXOO_UPDATE_SNAPSHOTS=1 <built binary>
+esphome:
+  name: pixoo64-render-test
+  includes:
+    - ../../components/pixoo64_content/dashboard
+    - ../../components/pixoo64_content/notification
+    - ../../components/pixoo64_content/reaction
+    - ../../../pixoo_protocol/include/pixoo_cmd.h
+    - ../../../pixoo_protocol/include/pixoo_frame.h
+    - ../../../pixoo_protocol/src/pixoo_frame.cpp
+    - ../../../pixoo_protocol/include/pixoo_framebuffer.h
+    - ../../../pixoo_protocol/src/pixoo_framebuffer.cpp
+    - ../../../pixoo_content/include/dashboard/weather/weather_data.h
+    - ../../../pixoo_content/src/dashboard/weather/weather_data.cpp
+    - ../../../pixoo_content/include/dashboard/weather/weather_source.h
+    - ../../../pixoo_content/include/dashboard/weather/wmo.h
+    - ../../../pixoo_content/src/dashboard/weather/wmo.cpp
+    - ../../../pixoo_content/include/dashboard/weather/weather_effects.h
+    - ../../../pixoo_content/src/dashboard/weather/weather_effects.cpp
+    - ../../../pixoo_content/include/dashboard/weather/sky_astronomy.h
+    - ../../../pixoo_content/src/dashboard/weather/sky_astronomy.cpp
+    - ../../../pixoo_content/include/dashboard/clock/split_flap.h
+    - ../../../pixoo_content/src/dashboard/clock/split_flap.cpp
+    - ../../../pixoo_content/include/dashboard/clock/analog_clock.h
+    - ../../../pixoo_content/src/dashboard/clock/analog_clock.cpp
+    - ../../../pixoo_content/include/dashboard/clock/binary_clock.h
+    - ../../../pixoo_content/src/dashboard/clock/binary_clock.cpp
+    - ../../../pixoo_content/include/dashboard/game_of_life/game_of_life.h
+    - ../../../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
+    - ../../../pixoo_content/include/dashboard/equalizer/spectrum.h
+    - ../../../pixoo_content/include/dashboard/equalizer/equalizer_processor.h
+    - ../../../pixoo_app/include/app_state.h
+    - ../../../pixoo_app/src/app_state.cpp
+    - ../../../pixoo_app/include/frame_metrics.h
+    - ../../../pixoo_app/include/firmware_app.h
+    - ../../../pixoo_app/include/pixoo_sound.h
+
+host:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [pixoo64_content]
+  - source:
+      type: local
+      path: components
+    components: [pixoo64_render_test]
+
+font:
+  - file: ../../fonts/TomThumb.bdf
+    id: font_5
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: ../../fonts/PixelOperator8.ttf
+    id: font_8
+    size: 8
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: ../../fonts/PixelOperator.ttf
+    id: font_16
+    size: 16
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+
+text:
+  - platform: template
+    id: render_test_text
+    mode: text
+    optimistic: true
+    initial_value: "Hello"
+
+# Public fixture: Berlin city center (52.5200 N, 13.4050 E).
+# One fixed snapshot per frame, served through the WeatherSource port in place
+# of the Open-Meteo adapter.
+pixoo64_render_test:
+  - id: src_sky_day
+    condition: sunny
+    temperature: 24
+    apparent_temperature: 23
+    humidity: 50
+    high: 26
+    low: 12
+    start_hour: 12
+    forecast_temperatures: [24, 25, 23]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_sky_night
+    condition: sunny
+    night: true
+    temperature: 14
+    apparent_temperature: 13
+    humidity: 70
+    high: 26
+    low: 12
+    start_hour: 23
+    forecast_temperatures: [14, 13, 12]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_sky_partlycloudy
+    condition: partlycloudy
+    temperature: 22
+    apparent_temperature: 21
+    humidity: 55
+    high: 25
+    low: 13
+    start_hour: 14
+    forecast_temperatures: [22, 23, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_sky_cloudy
+    condition: cloudy
+    night: true
+    temperature: 13
+    apparent_temperature: 12
+    humidity: 76
+    high: 19
+    low: 10
+    start_hour: 23
+    forecast_temperatures: [13, 12, 11]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_sunny
+    condition: sunny
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  # Fractional readings: the hero is just over a degree and must not be carried
+  # up to the next one, feels-like sits between -0.5 and 0 and must not print a
+  # signed zero, and the columns cover both halves rounding away from zero.
+  - id: src_weather_fractional
+    condition: sunny
+    temperature: 31.1
+    apparent_temperature: -0.4
+    humidity: 58
+    high: 31.5
+    low: -3.5
+    start_hour: 14
+    forecast_temperatures: [32.5, -2.5, 0.4]
+  - id: src_weather_sunny_night
+    condition: sunny
+    night: true
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 2
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  - id: src_weather_partlycloudy
+    condition: partlycloudy
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  - id: src_weather_partlycloudy_night
+    condition: partlycloudy
+    night: true
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 2
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  - id: src_weather_cloudy
+    condition: cloudy
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  - id: src_weather_fog
+    condition: fog
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_fog_night
+    condition: fog
+    night: true
+    temperature: 7
+    apparent_temperature: 5
+    humidity: 92
+    high: 10
+    low: 4
+    start_hour: 23
+    forecast_temperatures: [7, 6, 5]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_drizzle
+    condition: drizzle
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_freezing_drizzle
+    condition: freezing-drizzle
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_rainy
+    condition: rainy
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_rainy_night
+    condition: rainy
+    night: true
+    temperature: 9
+    apparent_temperature: 7
+    humidity: 88
+    high: 12
+    low: 6
+    start_hour: 23
+    forecast_temperatures: [9, 8, 7]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_pouring
+    condition: pouring
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_freezing_rain
+    condition: freezing-rain
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_freezing_rain_night
+    condition: freezing-rain
+    night: true
+    temperature: -2
+    apparent_temperature: -5
+    humidity: 90
+    high: 1
+    low: -4
+    start_hour: 23
+    forecast_temperatures: [-2, -3, -3]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_snowy
+    condition: snowy
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_snow_grains
+    condition: snow-grains
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+  - id: src_sky_snowy_night
+    condition: snowy
+    night: true
+    temperature: -6
+    apparent_temperature: -9
+    humidity: 84
+    high: -3
+    low: -11
+    start_hour: 23
+    forecast_temperatures: [-6, -7, -9]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_sky_snow_grains_night
+    condition: snow-grains
+    night: true
+    temperature: -6
+    apparent_temperature: -9
+    humidity: 84
+    high: -3
+    low: -11
+    start_hour: 23
+    forecast_temperatures: [-6, -7, -9]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_thunderstorm
+    condition: thunderstorm
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_sky_thunderstorm_night
+    condition: thunderstorm
+    night: true
+    temperature: 13
+    apparent_temperature: 11
+    humidity: 88
+    high: 16
+    low: 8
+    start_hour: 23
+    forecast_temperatures: [13, 12, 10]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_hail_thunderstorm
+    condition: hail-thunderstorm
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    # Width edge cases: worst-case two-digit negative, one digit, two digits.
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+
+  - id: src_weather_loading
+    condition: sunny
+    available_at_ms: 100
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_fog_transition
+    condition: sunny
+    condition_after: fog
+    condition_after_ms: 100
+    temperature: 12
+    apparent_temperature: 11
+    humidity: 94
+    high: 15
+    low: 8
+    start_hour: 14
+    forecast_temperatures: [12, 11, 10]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_landscape_transition
+    condition: sunny
+    condition_after: rainy
+    condition_after_ms: 100
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_landscape_lifecycle
+    condition: rainy
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+  - id: src_weather_wrap
+    condition: sunny
+    condition_after: rainy
+    condition_after_ms: 256
+    temperature: 21
+    apparent_temperature: 20
+    humidity: 58
+    high: 24
+    low: -3
+    start_hour: 14
+    forecast_temperatures: [-20, 8, 21]
+    location:
+      latitude: 52.5200
+      longitude: 13.4050
+
+pixoo64_content:
+  id: render_test_content_controller
+  default_dashboard: text
+  notification_font: font_8
+  firmware_update_title_font: font_16
+  firmware_update_detail_font: font_5
+  dashboards:
+    - platform: text
+      id: text_dashboard
+      dashboard_id: text
+      panel_font: font_8
+      panel_text: render_test_text
+
+    - platform: equalizer
+      id: equalizer_dashboard
+      dashboard_id: equalizer_bars
+      face: bars
+
+    - platform: equalizer
+      id: equalizer_waveform_dashboard
+      dashboard_id: equalizer_waveform
+      face: waveform
+
+    - platform: game_of_life
+      id: game_of_life_dashboard
+      dashboard_id: game_of_life
+      seed: 305419896
+
+    - platform: weather
+      id: weather_forecast_sunny
+      dashboard_id: weather_forecast_sunny
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_sunny
+
+    - platform: weather
+      id: weather_forecast_fractional
+      dashboard_id: weather_forecast_fractional
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_fractional
+
+    - platform: weather
+      id: weather_forecast_sunny_night
+      dashboard_id: weather_forecast_sunny_night
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616378400
+      source: src_weather_sunny_night
+
+    - platform: weather
+      id: weather_forecast_partlycloudy
+      dashboard_id: weather_forecast_partlycloudy
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_partlycloudy
+
+    - platform: weather
+      id: weather_forecast_partlycloudy_night
+      dashboard_id: weather_forecast_partlycloudy_night
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616378400
+      source: src_weather_partlycloudy_night
+
+    - platform: weather
+      id: weather_forecast_cloudy
+      dashboard_id: weather_forecast_cloudy
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_cloudy
+
+    - platform: weather
+      id: weather_forecast_fog
+      dashboard_id: weather_forecast_fog
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_fog
+
+    - platform: weather
+      id: weather_forecast_drizzle
+      dashboard_id: weather_forecast_drizzle
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_drizzle
+
+    - platform: weather
+      id: weather_forecast_freezing_drizzle
+      dashboard_id: weather_forecast_freezing_drizzle
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_freezing_drizzle
+
+    - platform: weather
+      id: weather_forecast_rainy
+      dashboard_id: weather_forecast_rainy
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_rainy
+
+    - platform: weather
+      id: weather_forecast_pouring
+      dashboard_id: weather_forecast_pouring
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_pouring
+
+    - platform: weather
+      id: weather_forecast_freezing_rain
+      dashboard_id: weather_forecast_freezing_rain
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_freezing_rain
+
+    - platform: weather
+      id: weather_forecast_snowy
+      dashboard_id: weather_forecast_snowy
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_snowy
+
+    - platform: weather
+      id: weather_forecast_snow_grains
+      dashboard_id: weather_forecast_snow_grains
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_snow_grains
+
+    - platform: weather
+      id: weather_forecast_thunderstorm
+      dashboard_id: weather_forecast_thunderstorm
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_thunderstorm
+
+    - platform: weather
+      id: weather_forecast_hail_thunderstorm
+      dashboard_id: weather_forecast_hail_thunderstorm
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_hail_thunderstorm
+
+    # 14:05: the cards riffle up from 00:00.
+    - platform: clock
+      id: clock_split_flap
+      dashboard_id: clock_split_flap
+      face: split_flap
+      fixed_time: 1616421900
+
+    # 14:05:38, an angle apart on each hand.
+    - platform: clock
+      id: clock_analog
+      dashboard_id: clock_analog
+      face: analog
+      fixed_time: 1616421938
+
+    # Midnight: the second whose rebound puts the hand at a negative angle.
+    - platform: clock
+      id: clock_analog_midnight
+      dashboard_id: clock_analog_midnight
+      face: analog
+      fixed_time: 1616371200
+
+    # Midday: sun near the top of its arc over Berlin.
+    - platform: weather
+      id: weather_landscape_day
+      dashboard_id: weather_landscape_day
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_sky_day
+
+    # Morning: sun low on the left, orange dawn sky.
+    - platform: weather
+      id: weather_landscape_morning
+      dashboard_id: weather_landscape_morning
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616398200
+      source: src_sky_day
+
+    # Dusk: mid-twilight at sunset, with each body at its local sky position.
+    - platform: weather
+      id: weather_landscape_dusk
+      dashboard_id: weather_landscape_dusk
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616433810
+      source: src_sky_day
+
+    # Daylight with the Moon high and close to the Sun: the discs overlap, so
+    # the Sun's glow must composite over the Moon instead of replacing it.
+    - platform: weather
+      id: weather_landscape_day_moon
+      dashboard_id: weather_landscape_day_moon
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1653277800
+      source: src_sky_day
+
+    # Night: the Moon appears only when above Berlin's local horizon.
+    - platform: weather
+      id: weather_landscape_night
+      dashboard_id: weather_landscape_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_sky_night
+
+    - platform: weather
+      id: weather_landscape_loading
+      dashboard_id: weather_landscape_loading
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_loading
+
+    - platform: weather
+      id: weather_landscape_transition
+      dashboard_id: weather_landscape_transition
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_landscape_transition
+
+    # Fog composites translucently rather than writing opaque pixels, so its
+    # cross-fade exercises a different path from the other conditions.
+    - platform: weather
+      id: weather_landscape_fog_transition
+      dashboard_id: weather_landscape_fog_transition
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_fog_transition
+
+    - platform: weather
+      id: weather_landscape_lifecycle
+      dashboard_id: weather_landscape_lifecycle
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_landscape_lifecycle
+
+    - platform: weather
+      id: weather_landscape_wrap
+      dashboard_id: weather_landscape_wrap
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_wrap
+
+    # Partly cloudy afternoon: moving clouds can cross the sun.
+    - platform: weather
+      id: weather_landscape_partlycloudy
+      dashboard_id: weather_landscape_partlycloudy
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_sky_partlycloudy
+
+    # Isolated cloud timeline and matching cloud-free scene for fractional-motion
+    # assertions without advancing a snapshot dashboard's effect clock.
+    - platform: weather
+      id: weather_landscape_cloud_subpixel
+      dashboard_id: weather_landscape_cloud_subpixel
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_sky_partlycloudy
+
+    - platform: weather
+      id: weather_landscape_cloud_baseline
+      dashboard_id: weather_landscape_cloud_baseline
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_sky_day
+
+    # Cloudy night: cloud layers pass in front of the moon and starfield.
+    - platform: weather
+      id: weather_landscape_cloudy
+      dashboard_id: weather_landscape_cloudy
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_sky_cloudy
+
+    # Weather effects use dedicated landscape dashboards so their world layers
+    # (fog, precipitation, wet ground, and ice) are exercised independently.
+    - platform: weather
+      id: weather_landscape_fog
+      dashboard_id: weather_landscape_fog
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_fog
+
+    - platform: weather
+      id: weather_landscape_fog_night
+      dashboard_id: weather_landscape_fog_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_weather_fog_night
+
+    - platform: weather
+      id: weather_landscape_drizzle
+      dashboard_id: weather_landscape_drizzle
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_drizzle
+
+    - platform: weather
+      id: weather_landscape_freezing_drizzle
+      dashboard_id: weather_landscape_freezing_drizzle
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_freezing_drizzle
+
+    - platform: weather
+      id: weather_landscape_rainy
+      dashboard_id: weather_landscape_rainy
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_rainy
+
+    - platform: weather
+      id: weather_landscape_rainy_night
+      dashboard_id: weather_landscape_rainy_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_weather_rainy_night
+
+    - platform: weather
+      id: weather_landscape_pouring
+      dashboard_id: weather_landscape_pouring
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_pouring
+
+    - platform: weather
+      id: weather_landscape_freezing_rain
+      dashboard_id: weather_landscape_freezing_rain
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_freezing_rain
+
+    - platform: weather
+      id: weather_landscape_freezing_rain_night
+      dashboard_id: weather_landscape_freezing_rain_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_weather_freezing_rain_night
+
+    # Snowflakes cover both palettes; granular snow uses the night palette.
+    - platform: weather
+      id: weather_landscape_snowy
+      dashboard_id: weather_landscape_snowy
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_snowy
+
+    - platform: weather
+      id: weather_landscape_snowy_night
+      dashboard_id: weather_landscape_snowy_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_sky_snowy_night
+
+    - platform: weather
+      id: weather_landscape_snow_grains_night
+      dashboard_id: weather_landscape_snow_grains_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_sky_snow_grains_night
+
+    - platform: weather
+      id: weather_landscape_thunderstorm
+      dashboard_id: weather_landscape_thunderstorm
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_thunderstorm
+
+    - platform: weather
+      id: weather_landscape_thunderstorm_night
+      dashboard_id: weather_landscape_thunderstorm_night
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616460000
+      source: src_sky_thunderstorm_night
+
+    - platform: weather
+      id: weather_landscape_hail_thunderstorm
+      dashboard_id: weather_landscape_hail_thunderstorm
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616421900
+      source: src_weather_hail_thunderstorm
+
+    # No clock at all, so the hands park at 12.
+    - platform: clock
+      id: clock_analog_unset
+      dashboard_id: clock_analog_unset
+      face: analog
+
+    # 14:05:38: distinct digits in every column pair.
+    - platform: clock
+      id: clock_binary
+      dashboard_id: clock_binary
+      face: binary
+      fixed_time: 1616421938
+
+display:
+  - platform: pixoo64_render_test
+    id: render_test_panel
+    content_controller: render_test_content_controller
+    equalizer: equalizer_dashboard
+    # Showing the face sends every column to its digit the long way around,
+    # staggered 120ms apart. The first flap of a run takes 350ms and later ones
+    # speed up: at 120ms the leftmost leaf is falling, at 260ms it is swinging
+    # out of the hinge, and the slowest column lands by 4538ms.
+    animation_frames:
+      - dashboard: game_of_life
+        now_ms: 0
+        snapshot: game_of_life
+      - dashboard: game_of_life
+        now_ms: 150
+        snapshot: game_of_life_next_generation
+      # The waveform weave and its echoes advance at the production 33ms tick
+      # cadence. The first frame covers its wind-out from centre; unsnapshotted
+      # ticks let the traces and glow reach the loaded spectrum before the main
+      # visual reference is captured.
+      - dashboard: equalizer_waveform
+        now_ms: 0
+        snapshot: equalizer_waveform_start
+      - dashboard: equalizer_waveform
+        now_ms: 33
+      - dashboard: equalizer_waveform
+        now_ms: 66
+      - dashboard: equalizer_waveform
+        now_ms: 99
+      - dashboard: equalizer_waveform
+        now_ms: 132
+      - dashboard: equalizer_waveform
+        now_ms: 165
+      - dashboard: equalizer_waveform
+        now_ms: 198
+      - dashboard: equalizer_waveform
+        now_ms: 231
+      - dashboard: equalizer_waveform
+        now_ms: 264
+        snapshot: equalizer_waveform
+      - dashboard: equalizer_waveform
+        now_ms: 2000
+        snapshot: equalizer_waveform_color
+      - dashboard: clock_split_flap
+        now_ms: 0
+        snapshot: clock_split_flap_start
+      - dashboard: clock_split_flap
+        now_ms: 120
+        snapshot: clock_split_flap_fall
+      - dashboard: clock_split_flap
+        now_ms: 260
+        snapshot: clock_split_flap_swing
+      - dashboard: clock_split_flap
+        now_ms: 5000
+        snapshot: clock_split_flap
+      # Showing the face winds the movement forward out of 12 onto 14:05:38.
+      # All three hands leave together, each at its own speed: the geared hour
+      # and minute hands arrive at 1093ms, the second hand at 1760ms.
+      - dashboard: clock_analog
+        now_ms: 0
+        snapshot: clock_analog_wind_start
+      - dashboard: clock_analog
+        now_ms: 700
+        snapshot: clock_analog_wind
+      - dashboard: clock_analog
+        now_ms: 1400
+        snapshot: clock_analog_wind_second
+      # Settled, then the second hand's step rebound: furthest past its mark at
+      # 17ms and furthest short of it at 61ms.
+      - dashboard: clock_analog
+        now_ms: 1760
+        snapshot: clock_analog
+      - dashboard: clock_analog
+        now_ms: 1777
+        snapshot: clock_analog_overshoot
+      - dashboard: clock_analog
+        now_ms: 1821
+        snapshot: clock_analog_undershoot
+      - dashboard: clock_analog_midnight
+        now_ms: 1821
+        snapshot: clock_analog_midnight
+      - dashboard: clock_analog_unset
+        now_ms: 0
+        snapshot: clock_analog_unset
+      # The hero icon loops: rain falls through its band and every loop is a
+      # pure function of the animation time, so a later frame in the loop
+      # differs from its start.
+      - dashboard: weather_forecast_rainy
+        now_ms: 0
+        snapshot: weather_forecast_rainy
+      - dashboard: weather_forecast_rainy
+        now_ms: 450
+        snapshot: weather_forecast_rainy_mid_loop
+      # Every loop meets itself: the icon's cycles (900ms rain, 7000ms cloud
+      # swell) all repeat together after 63000ms, which draws the frame the
+      # loop started from, so no part of the icon jumps at its boundary.
+      - dashboard: weather_forecast_rainy
+        now_ms: 63000
+        snapshot: weather_forecast_rainy
+      # A storm holds its bolt visible between strikes and flares on one. The
+      # schedule fires at 0 and again at 11967ms, peaking 80ms in, so 3000ms
+      # sits between events and 12047ms is at a strike's brightest.
+      - dashboard: weather_forecast_thunderstorm
+        now_ms: 0
+      - dashboard: weather_forecast_thunderstorm
+        now_ms: 3000
+        snapshot: weather_forecast_thunderstorm
+      - dashboard: weather_forecast_thunderstorm
+        now_ms: 12047
+        snapshot: weather_forecast_thunderstorm_strike
+      - dashboard: weather_forecast_hail_thunderstorm
+        now_ms: 0
+      - dashboard: weather_forecast_hail_thunderstorm
+        now_ms: 3000
+        snapshot: weather_forecast_hail_thunderstorm
+      # Showing the face sweeps the columns in from unlit, 70ms apart, each
+      # dot flaring past its resting level over 130ms: at 39ms the hour tens
+      # are at the peak of their pop, at 250ms the sweep is part-way across,
+      # and the last column settles at 480ms.
+      - dashboard: clock_binary
+        now_ms: 0
+      - dashboard: clock_binary
+        now_ms: 39
+        snapshot: clock_binary_load_start
+      - dashboard: clock_binary
+        now_ms: 250
+        snapshot: clock_binary_load
+      - dashboard: clock_binary
+        now_ms: 480
+        snapshot: clock_binary
+      # The first source condition initializes the face after its loading frame.
+      - dashboard: weather_landscape_loading
+        now_ms: 0
+        snapshot: weather_landscape_lifecycle_loading
+      - dashboard: weather_landscape_loading
+        now_ms: 100
+        snapshot: weather_landscape_lifecycle_loaded
+      # The initial sunny frame seeds the retained condition before rain
+      # arrives. Cloud, precipitation kind, and amount all differ, so the
+      # handoff runs 1920ms from 100ms: a quarter in the cloud deck is thin and
+      # few drops have arrived, half-way both are part-way, and it settles by
+      # 2020ms.
+      - dashboard: weather_landscape_transition
+        now_ms: 0
+      - dashboard: weather_landscape_transition
+        now_ms: 100
+        snapshot: weather_landscape_transition_sunny_rainy_start
+      - dashboard: weather_landscape_transition
+        now_ms: 580
+        snapshot: weather_landscape_transition_sunny_rainy_quarter
+      - dashboard: weather_landscape_transition
+        now_ms: 1060
+        snapshot: weather_landscape_transition_sunny_rainy_midpoint
+      - dashboard: weather_landscape_transition
+        now_ms: 2020
+        snapshot: weather_landscape_transition_sunny_rainy_complete
+      # Only fog differs, so this handoff runs the minimum 1200ms from 100ms
+      # and the bank thickens in place rather than being revealed.
+      - dashboard: weather_landscape_fog_transition
+        now_ms: 0
+      - dashboard: weather_landscape_fog_transition
+        now_ms: 100
+      - dashboard: weather_landscape_fog_transition
+        now_ms: 700
+        snapshot: weather_landscape_transition_sunny_fog_midpoint
+      - dashboard: weather_landscape_fog_transition
+        now_ms: 1300
+        snapshot: weather_landscape_transition_sunny_fog_complete
+      # Re-showing resumes the retained animation phase at the current tick.
+      - dashboard: weather_landscape_lifecycle
+        now_ms: 0
+      - dashboard: weather_landscape_lifecycle
+        now_ms: 1500
+        snapshot: weather_landscape_lifecycle_resume
+      - dashboard: weather_landscape_lifecycle
+        now_ms: 1000001500
+        base_visible: false
+      - dashboard: weather_landscape_lifecycle
+        now_ms: 1000001500
+        snapshot: weather_landscape_lifecycle_resume
+      # A timed source condition crosses the millis wrap before this deadline.
+      - dashboard: weather_landscape_wrap
+        now_ms: 4294967040
+      - dashboard: weather_landscape_wrap
+        now_ms: 256
+        snapshot: weather_landscape_lifecycle_wrap
+      # The glow breathes slowly while the sun stays on its astronomical arc.
+      - dashboard: weather_landscape_day
+        now_ms: 0
+        snapshot: weather_landscape_day
+      - dashboard: weather_landscape_day
+        now_ms: 2048
+        snapshot: weather_landscape_day_pulse
+      - dashboard: weather_landscape_day_moon
+        now_ms: 0
+        snapshot: weather_landscape_day_moon
+      # Each cloud profile advances by several pixels between these frames.
+      - dashboard: weather_landscape_partlycloudy
+        now_ms: 0
+        snapshot: weather_landscape_partlycloudy_start
+      - dashboard: weather_landscape_partlycloudy
+        now_ms: 6000
+        snapshot: weather_landscape_partlycloudy
+      # The cloud band completes a scroll period at 32768ms. A cloud keeps its
+      # silhouette and fractional position across that wrap.
+      - dashboard: weather_landscape_partlycloudy
+        now_ms: 32760
+        snapshot: weather_landscape_partlycloudy_prewrap
+      - dashboard: weather_landscape_partlycloudy
+        now_ms: 32776
+        snapshot: weather_landscape_partlycloudy_wrap
+      - dashboard: weather_landscape_cloud_subpixel
+        now_ms: 0
+      - dashboard: weather_landscape_cloud_baseline
+        now_ms: 0
+      - dashboard: weather_landscape_cloudy
+        now_ms: 0
+        snapshot: weather_landscape_cloudy_start
+      - dashboard: weather_landscape_cloudy
+        now_ms: 6000
+        snapshot: weather_landscape_cloudy
+      # Fog, cloud, and representative precipitation frames advance from fixed
+      # hashes, making their motion reviewable.
+      - dashboard: weather_landscape_fog
+        now_ms: 0
+        snapshot: weather_landscape_fog_start
+      - dashboard: weather_landscape_fog
+        now_ms: 8000
+        snapshot: weather_landscape_fog
+      - dashboard: weather_landscape_fog_night
+        now_ms: 0
+      - dashboard: weather_landscape_fog_night
+        now_ms: 8000
+        snapshot: weather_landscape_fog_night
+      - dashboard: weather_landscape_drizzle
+        now_ms: 0
+      - dashboard: weather_landscape_drizzle
+        now_ms: 1500
+        snapshot: weather_landscape_drizzle
+      - dashboard: weather_landscape_freezing_drizzle
+        now_ms: 0
+      - dashboard: weather_landscape_freezing_drizzle
+        now_ms: 1500
+        snapshot: weather_landscape_freezing_drizzle
+      - dashboard: weather_landscape_rainy
+        now_ms: 0
+        snapshot: weather_landscape_rainy_start
+      - dashboard: weather_landscape_rainy
+        now_ms: 1500
+        snapshot: weather_landscape_rainy
+      - dashboard: weather_landscape_rainy_night
+        now_ms: 0
+      - dashboard: weather_landscape_rainy_night
+        now_ms: 1500
+        snapshot: weather_landscape_rainy_night
+      - dashboard: weather_landscape_pouring
+        now_ms: 0
+      - dashboard: weather_landscape_pouring
+        now_ms: 1500
+        snapshot: weather_landscape_pouring
+      - dashboard: weather_landscape_freezing_rain
+        now_ms: 0
+        snapshot: weather_landscape_freezing_rain_start
+      - dashboard: weather_landscape_freezing_rain
+        now_ms: 1500
+        snapshot: weather_landscape_freezing_rain
+      - dashboard: weather_landscape_freezing_rain_night
+        now_ms: 0
+      - dashboard: weather_landscape_freezing_rain_night
+        now_ms: 1500
+        snapshot: weather_landscape_freezing_rain_night
+      # Slow multi-depth flakes cover day and night; granular snow moves faster.
+      - dashboard: weather_landscape_snowy
+        now_ms: 0
+        snapshot: weather_landscape_snowy_start
+      - dashboard: weather_landscape_snowy
+        now_ms: 6000
+        snapshot: weather_landscape_snowy
+      - dashboard: weather_landscape_snowy_night
+        now_ms: 0
+      - dashboard: weather_landscape_snowy_night
+        now_ms: 6000
+        snapshot: weather_landscape_snowy_night
+      - dashboard: weather_landscape_snow_grains_night
+        now_ms: 0
+        snapshot: weather_landscape_snow_grains_night_start
+      - dashboard: weather_landscape_snow_grains_night
+        now_ms: 1600
+        snapshot: weather_landscape_snow_grains_night
+      # Storms stay quiet between deterministic strikes; active frames show the
+      # shared lightning envelope for rain and hail.
+      - dashboard: weather_landscape_thunderstorm
+        now_ms: 0
+      - dashboard: weather_landscape_thunderstorm
+        now_ms: 1000
+        snapshot: weather_landscape_thunderstorm_idle
+      - dashboard: weather_landscape_thunderstorm
+        now_ms: 12047
+        snapshot: weather_landscape_thunderstorm_active
+      - dashboard: weather_landscape_thunderstorm_night
+        now_ms: 0
+      - dashboard: weather_landscape_thunderstorm_night
+        now_ms: 12047
+        snapshot: weather_landscape_thunderstorm_night_active
+      - dashboard: weather_landscape_hail_thunderstorm
+        now_ms: 0
+      - dashboard: weather_landscape_hail_thunderstorm
+        now_ms: 12047
+        snapshot: weather_landscape_hail_thunderstorm_active
+    output_dir: esphome/tests/render_test/frames

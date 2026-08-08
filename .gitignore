@@ -1,0 +1,36 @@
+# Local user captures, backups, generated previews, and environments
+/local/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# PlatformIO and ESPHome build outputs
+**/.pio/
+**/.esphome/
+
+# Firmware, memory-image, and signal-capture artifacts
+*.bin
+*.elf
+*.hex
+*.img
+*.dump
+*.sr
+*.srzip
+*.lac
+*.pcap
+*.pcapng
+*.logicdata
+
+# Local secrets
+.env
+.env.*
+!.env.example
+**/secrets.yaml
+
+# Locally generated render-test review composites (reference snapshots remain tracked)
+esphome/tests/render_test/frames/_*.png

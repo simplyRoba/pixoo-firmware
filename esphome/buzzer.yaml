@@ -1,0 +1,26 @@
+# Buzzer sound output, shared across build targets.
+#
+# The panel buzzer BUZ1 is driven directly by the ESP32 as an LEDC (PWM) square
+# wave on GPIO23 = ribbon pin 1 (no panel-side command). ESPHome's rtttl plays
+# tones on that LEDC output. The pixoo64 `sound:` adapter wraps rtttl as the
+# concrete pixoo::SoundPlayer, so the rest of the firmware drives sound through
+# the abstract interface (named sounds), never rtttl. The Sounds-enabled switch
+# gates all sounds, including the boot chime, and persists across reboot/OTA.
+
+output:
+  - platform: ledc
+    id: buzzer_output
+    pin: ${pixoo64_rev1_buzzer_pin}  # ribbon pin 1 -> BUZ1
+    channel: 0  # classic ESP32 high-speed channel 0; independent of panel power
+
+rtttl:
+  id: buzzer_rtttl
+  output: buzzer_output
+
+switch:
+  - platform: template
+    id: sounds_enabled
+    name: Sounds
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON

@@ -1,0 +1,36 @@
+# Front-panel button inputs.
+#
+# Ribbon pin 7/GPIO35 is the power button and ribbon pin 8/GPIO34 is the
+# brightness button. Both are input-only pins with panel-supplied pull-ups, so
+# a press pulls the line low and `inverted: true` reports it as ON.
+
+binary_sensor:
+  - platform: gpio
+    id: button_power
+    internal: true
+    pin:
+      number: ${pixoo64_rev1_button_power_pin}
+      mode:
+        input: true
+      inverted: ${pixoo64_rev1_button_inverted}
+    filters:
+      - delayed_on_off: 30ms
+    on_press:
+      - lambda: id(pixoo_firmware).PowerButtonPressed();
+    on_release:
+      - lambda: id(pixoo_firmware).PowerButtonReleased();
+
+  - platform: gpio
+    id: button_brightness
+    internal: true
+    pin:
+      number: ${pixoo64_rev1_button_brightness_pin}
+      mode:
+        input: true
+      inverted: ${pixoo64_rev1_button_inverted}
+    filters:
+      - delayed_on_off: 30ms
+    on_press:
+      - lambda: id(pixoo_firmware).BrightnessButtonPressed();
+    on_release:
+      - lambda: id(pixoo_firmware).BrightnessButtonReleased();

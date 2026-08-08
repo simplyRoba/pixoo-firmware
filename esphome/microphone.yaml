@@ -1,0 +1,26 @@
+# Panel MEMS microphone: I2S master/receive-only at 32 kHz/32-bit.
+# GPIO18/GPIO19/GPIO5 are BCLK/WS/data-in on ribbon pins 11/10/12. GPIO21
+# enables the microphone before capture.
+
+switch:
+  - platform: gpio
+    id: mic_enable
+    internal: true
+    pin: ${pixoo64_rev1_microphone_enable_pin}
+    restore_mode: ALWAYS_OFF
+
+i2s_audio:
+  id: panel_i2s
+  i2s_bclk_pin: ${pixoo64_rev1_microphone_bclk_pin}
+  i2s_lrclk_pin: ${pixoo64_rev1_microphone_lrclk_pin}
+
+microphone:
+  - platform: i2s_audio
+    id: panel_mic
+    i2s_audio_id: panel_i2s
+    adc_type: external
+    i2s_din_pin: ${pixoo64_rev1_microphone_din_pin}
+    sample_rate: ${pixoo64_rev1_microphone_sample_rate}
+    bits_per_sample: ${pixoo64_rev1_microphone_bits_per_sample}
+    channel: ${pixoo64_rev1_microphone_channel}
+    use_apll: ${pixoo64_rev1_microphone_use_apll}

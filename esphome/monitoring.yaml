@@ -1,0 +1,59 @@
+# state_class is cleared on the numeric sensors so Home Assistant keeps only
+# default recorder history, not long-term statistics.
+
+debug:
+  update_interval: 300s
+
+pixoo64:
+  frame_metrics:
+    window: 300s
+    average:
+      name: End-to-End Frame Time Average
+    maximum:
+      name: End-to-End Frame Time Maximum
+    rendered_fps:
+      name: Rendered FPS
+
+pixoo64_content:
+  update_interval: 300s
+  render_metrics:
+    budget: 26ms
+    average:
+      name: Render Time Average
+    maximum:
+      name: Render Time Maximum
+    over_budget:
+      name: Render Frames Over Budget
+      unit_of_measurement: frames
+
+sensor:
+  - platform: wifi_signal
+    name: Wi-Fi Signal
+    update_interval: 300s
+    entity_category: diagnostic
+    state_class: ""
+  - platform: uptime
+    type: timestamp
+    name: Last Boot
+    time_id: panel_time
+    entity_category: diagnostic
+    icon: mdi:timer-outline
+  - platform: debug
+    free:
+      name: Free Memory (Internal)
+      entity_category: diagnostic
+      device_class: data_size
+      state_class: ""
+      icon: mdi:memory
+    psram:
+      name: Free Memory (PSRAM)
+      entity_category: diagnostic
+      device_class: data_size
+      state_class: ""
+      icon: mdi:memory
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: Reset Reason
+      entity_category: diagnostic

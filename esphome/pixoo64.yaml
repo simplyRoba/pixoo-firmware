@@ -1,0 +1,335 @@
+# Pixoo64 firmware for the device's own ESP32-WROVER-IE (8MB flash). The ESP32
+# reaches the panel through the stock mainboard traces.
+packages:
+  hardware: !include hardware/pixoo64_rev1.yaml
+  config_params: !include config-params.yaml
+  buttons: !include buttons.yaml
+  buzzer: !include buzzer.yaml
+  monitoring: !include monitoring.yaml
+  microphone: !include microphone.yaml
+
+esphome:
+  name: pixoo64
+  friendly_name: Pixoo64
+  includes:
+    # Structured pixoo64_content subdirectories.
+    - components/pixoo64_content/dashboard
+    - components/pixoo64_content/notification
+    - components/pixoo64_content/reaction
+    # pixoo_protocol
+    - ../pixoo_protocol/include/pixoo_cmd.h
+    - ../pixoo_protocol/include/pixoo_frame.h
+    - ../pixoo_protocol/src/pixoo_frame.cpp
+    - ../pixoo_protocol/include/pixoo_framebuffer.h
+    - ../pixoo_protocol/src/pixoo_framebuffer.cpp
+    - ../pixoo_protocol/include/pixoo_uart.h
+    - ../pixoo_protocol/src/pixoo_uart.cpp
+    # pixoo_app
+    - ../pixoo_app/include/app_state.h
+    - ../pixoo_app/src/app_state.cpp
+    - ../pixoo_app/include/frame_metrics.h
+    - ../pixoo_app/include/firmware_app.h
+    - ../pixoo_app/src/firmware_app.cpp
+    - ../pixoo_app/include/timezone_catalog.h
+    - ../pixoo_app/src/timezone_catalog.cpp
+    - ../pixoo_app/include/pixoo_output.h
+    - ../pixoo_app/src/pixoo_output.cpp
+    - ../pixoo_app/include/pixoo_sound.h
+    # pixoo_content (weather domain + equalizer DSP + clock faces + Game of Life)
+    - ../pixoo_content/include/dashboard/weather/weather_data.h
+    - ../pixoo_content/src/dashboard/weather/weather_data.cpp
+    - ../pixoo_content/include/dashboard/weather/weather_source.h
+    - ../pixoo_content/include/dashboard/weather/refresh_policy.h
+    - ../pixoo_content/src/dashboard/weather/refresh_policy.cpp
+    - ../pixoo_content/include/dashboard/weather/open_meteo_url.h
+    - ../pixoo_content/src/dashboard/weather/open_meteo_url.cpp
+    - ../pixoo_content/include/dashboard/weather/wmo.h
+    - ../pixoo_content/src/dashboard/weather/wmo.cpp
+    - ../pixoo_content/include/dashboard/weather/weather_effects.h
+    - ../pixoo_content/src/dashboard/weather/weather_effects.cpp
+    - ../pixoo_content/include/dashboard/weather/sky_astronomy.h
+    - ../pixoo_content/src/dashboard/weather/sky_astronomy.cpp
+    - ../pixoo_content/include/dashboard/clock/split_flap.h
+    - ../pixoo_content/src/dashboard/clock/split_flap.cpp
+    - ../pixoo_content/include/dashboard/clock/analog_clock.h
+    - ../pixoo_content/src/dashboard/clock/analog_clock.cpp
+    - ../pixoo_content/include/dashboard/clock/binary_clock.h
+    - ../pixoo_content/src/dashboard/clock/binary_clock.cpp
+    - ../pixoo_content/include/dashboard/game_of_life/game_of_life.h
+    - ../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
+    - ../pixoo_content/include/dashboard/equalizer/spectrum.h
+    - ../pixoo_content/src/dashboard/equalizer/spectrum.cpp
+    - ../pixoo_content/include/dashboard/equalizer/equalizer_processor.h
+    - ../pixoo_content/src/dashboard/equalizer/equalizer_processor.cpp
+
+esp32:
+  board: esp-wrover-kit
+  flash_size: 8MB
+  framework:
+    type: arduino
+    # arduino-esp32 3.3.10 / ESP-IDF 5.5.5 (pioarduino platform 55.3.39).
+    version: 3.3.10
+    advanced:
+      minimum_chip_revision: "3.0"
+      sram1_as_iram: true
+    sdkconfig_options:
+      # Makes malloc() draw from PSRAM, not just internal RAM. Allocations above
+      # 8 KiB prefer PSRAM; either pool remains a fallback for the other.
+      CONFIG_SPIRAM_USE_MALLOC: "y"
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "8192"
+      # Let TLS use the same internal/PSRAM preference and fallback policy.
+      CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC: "n"
+      CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC: "y"
+      # Allows task stacks to be placed in PSRAM.
+      CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"
+      CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "y"
+      # Wi-Fi and lwIP buffers prefer PSRAM, falling back to internal RAM.
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: "y"
+
+# External PSRAM on the WROVER-IE module: quad chip at 40 MHz.
+psram:
+  mode: quad
+  speed: 40MHz
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: all
+
+# Connectivity and device services
+logger:
+  baud_rate: 115200
+
+wifi:
+  power_save_mode: none
+  fast_connect: true
+  # Full TX power browns out the ESP32 on the Pixoo mainboard regulator.
+  output_power: 8.5dB
+  ap:
+    ssid: "Pixoo64 Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    # Show a transient banner over the live content.
+    #   severity: info | success | warning | error (default info)
+    #   duration: integer seconds; <=0 uses 4s; 300 is five minutes; values
+    #             above 4294967s saturate; long text may extend through one scroll pass
+    #   sound: tone name (chirp|success|pling1|pling2|pling3|pling4|alarm1|alarm2|alarm3),
+    #          independent of severity; empty is silent
+    - action: notify
+      variables:
+        message: string
+        severity: string
+        duration: int
+        sound: string
+      then:
+        - pixoo64.show_notification:
+            id: pixoo_firmware
+            text: !lambda return message;
+            severity: !lambda return severity;
+            duration: !lambda return duration;
+            sound: !lambda return sound;
+    # Queue a short full-screen reaction over one frozen, blurred base.
+    #   reaction: laughing | love | crying | angry | poop | approve |
+    #             disapprove | celebrate | thinking | surprised | fire | eyes
+    - action: reaction
+      variables:
+        reaction: string
+      then:
+        - pixoo64.show_reaction:
+            id: pixoo_firmware
+            reaction: !lambda return reaction;
+    - action: clear_overlay_queue
+      then:
+        - pixoo64.clear_overlay_queue: pixoo_firmware
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      - pixoo64.begin_firmware_update: pixoo_firmware
+
+# TLS certificate verification is off: no root CA bundle is bundled on this
+# build, and the fetched weather is public data sent with no credentials.
+http_request:
+  id: weather_http
+  timeout: 5s
+  verify_ssl: false
+
+time:
+  - platform: sntp
+    id: panel_time
+
+# Dashboard source entities
+font:
+  - file: fonts/TomThumb.bdf
+    id: font_5
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: fonts/PixelOperator8.ttf
+    id: font_8
+    size: 8
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: fonts/PixelOperator.ttf
+    id: font_16
+    size: 16
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+
+text:
+  - platform: template
+    id: panel_content
+    name: Pixoo64 Text
+    mode: text
+    min_length: 0
+    max_length: 32
+    initial_value: Pixoo64
+    optimistic: true
+    restore_value: true
+
+# Firmware application and its adapters.
+pixoo64:
+  id: pixoo_firmware
+  update_interval: 5ms
+  panel:
+    id: panel
+  weather:
+    platform: open_meteo
+    id: weather_source
+    http_request_id: weather_http
+    latitude: location_latitude
+    longitude: location_longitude
+    refresh_interval: weather_refresh_minutes
+  renderer: panel_content_controller
+
+  sound:
+    id: panel_sound_player
+    rtttl: buzzer_rtttl
+    enable_switch: sounds_enabled
+  microphone:
+    id: panel_microphone_adapter
+    microphone_id: panel_mic
+    enable_switch: mic_enable
+  light: panel_light
+  dashboard_select: panel_dashboard
+
+# Dashboard rendering and content sources.
+pixoo64_content:
+  id: panel_content_controller
+  default_dashboard: clock_analog
+  notification_font: font_8
+  firmware_update_title_font: font_16
+  firmware_update_detail_font: font_5
+  dashboards:
+    - platform: text
+      id: text_dashboard
+      dashboard_id: text
+      frame_interval: 33ms
+      panel_font: font_8
+      panel_text: panel_content
+
+    - platform: equalizer
+      id: equalizer_bars_dashboard
+      dashboard_id: equalizer_bars
+      frame_interval: 33ms
+      face: bars
+
+    - platform: equalizer
+      id: equalizer_waveform_dashboard
+      dashboard_id: equalizer_waveform
+      frame_interval: 33ms
+      face: waveform
+
+    - platform: weather
+      id: weather_forecast_dashboard
+      dashboard_id: weather_forecast
+      frame_interval: 33ms
+      face: forecast
+      font_small: font_5
+      font_big: font_16
+      time_id: panel_time
+      source: weather_source
+
+    - platform: weather
+      id: weather_landscape_dashboard
+      dashboard_id: weather_landscape
+      frame_interval: 33ms
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      time_id: panel_time
+      source: weather_source
+
+    - platform: game_of_life
+      id: game_of_life_dashboard
+      dashboard_id: game_of_life
+      frame_interval: 33ms
+
+    - platform: clock
+      id: clock_split_flap_dashboard
+      dashboard_id: clock_split_flap
+      frame_interval: 33ms
+      face: split_flap
+      time_id: panel_time
+
+    - platform: clock
+      id: clock_analog_dashboard
+      dashboard_id: clock_analog
+      frame_interval: 33ms
+      face: analog
+      time_id: panel_time
+
+    - platform: clock
+      id: clock_binary_dashboard
+      dashboard_id: clock_binary
+      frame_interval: 33ms
+      face: binary
+      time_id: panel_time
+
+# Home Assistant controls
+select:
+  # Timezone select backed by the C++ pixoo::TimezoneCatalog. It owns the option
+  # labels, their POSIX mapping, and the default; the platform applies the
+  # chosen POSIX string to panel_time.
+  - platform: pixoo64
+    id: weather_timezone
+    name: Timezone
+    time_id: panel_time
+
+  - platform: template
+    id: panel_dashboard
+    name: Pixoo64 Dashboard
+    options:
+      - text
+      - weather_forecast
+      - weather_landscape
+      - equalizer_bars
+      - equalizer_waveform
+      - game_of_life
+      - clock_split_flap
+      - clock_analog
+      - clock_binary
+    initial_option: clock_analog
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: id(pixoo_firmware).SelectDashboard(x);
+
+output:
+  - platform: template
+    id: panel_brightness_output
+    type: float
+    write_action:
+      lambda: id(pixoo_firmware).SyncLightFromEntity();
+
+light:
+  - platform: monochromatic
+    id: panel_light
+    name: Pixoo64 Panel
+    output: panel_brightness_output
+    default_transition_length: 0s
+    restore_mode: RESTORE_AND_ON
