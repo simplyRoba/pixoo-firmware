@@ -189,7 +189,7 @@ text:
     name: Pixoo64 Text
     mode: text
     min_length: 0
-    max_length: 32
+    max_length: 128
     initial_value: Pixoo64
     optimistic: true
     restore_value: true

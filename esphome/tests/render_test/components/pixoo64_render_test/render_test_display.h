@@ -6,6 +6,7 @@
 #include "esphome/components/pixoo64_content/content_controller.h"
 #include "dashboard/equalizer/equalizer_dashboard.h"
 #include "esphome/components/display/display.h"
+#include "esphome/components/text/text.h"
 #include "static_weather_source.h"
 
 namespace esphome::pixoo64_render_test {
@@ -19,6 +20,7 @@ class RenderTestDisplay final : public display::Display {
   void set_equalizer_dashboard(pixoo64::dashboard::EqualizerDashboard *eq) {
     this->equalizer_ = eq;
   }
+  void set_panel_text(text::Text *text) { this->text_ = text; }
   void set_output_dir(std::string dir);
   // Renders `dashboard_id` at tick time `now_ms`, in the order added and after
   // the single-frame dashboards. An empty `snapshot_id` only advances the
@@ -48,6 +50,7 @@ class RenderTestDisplay final : public display::Display {
 
   pixoo64::content::ContentController *content_controller_{nullptr};
   pixoo64::dashboard::EqualizerDashboard *equalizer_{nullptr};
+  text::Text *text_{nullptr};
   std::string output_dir_;
   std::vector<AnimationFrame> animation_frames_;
   std::vector<uint8_t> framebuffer_ = std::vector<uint8_t>(64 * 64 * 3, 0);

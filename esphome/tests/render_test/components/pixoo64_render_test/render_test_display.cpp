@@ -303,6 +303,145 @@ void RenderTestDisplay::setup() {
       }
     }
 
+    if (this->text_ == nullptr) {
+      std::printf("render test: FAILED text dashboard fixture\n");
+      ++failures;
+    } else {
+      auto render_dashboard_text = [&](const std::string &value, uint32_t now_ms,
+                                       const char *dashboard_id) {
+        this->text_->publish_state(value);
+        return this->render_frame_(now_ms, dashboard_id, nullptr, 0, true);
+      };
+      auto render_text = [&](const std::string &value, uint32_t now_ms) {
+        return render_dashboard_text(value, now_ms, "text");
+      };
+      if (!render_text("Hello", 0)) {
+        std::printf("render test: FAILED short text\n");
+        ++failures;
+      } else {
+        check("text_short");
+      }
+      if (!render_text("A compact dashboard now wraps ordinary prose into "
+                       "readable lines.",
+                       100)) {
+        std::printf("render test: FAILED wrapped text\n");
+        ++failures;
+      } else {
+        check("text_wrapped");
+      }
+      if (!render_text("First line\nSecond line", 200)) {
+        std::printf("render test: FAILED newline text\n");
+        ++failures;
+      } else {
+        check("text_newline");
+      }
+      const std::string long_word(128, 'W');
+      bool scrolling_valid = render_text(long_word, 1200);
+      std::vector<uint8_t> scroll_start;
+      if (scrolling_valid)
+        scroll_start = this->framebuffer_;
+      scrolling_valid = scrolling_valid && render_text(long_word, 2200);
+      if (!scrolling_valid || this->framebuffer_ == scroll_start ||
+          std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                      [](uint8_t value) { return value == 0; })) {
+        std::printf("render test: FAILED scrolling text\n");
+        ++failures;
+      } else {
+        check("text_wide_scroll");
+      }
+      scrolling_valid = scrolling_valid && render_text(long_word, 4200);
+      if (!scrolling_valid || this->framebuffer_ == scroll_start ||
+          std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                      [](uint8_t value) { return value == 0; })) {
+        std::printf("render test: FAILED scrolling text after three seconds\n");
+        ++failures;
+      }
+
+      const char *pages = "One\nTwo\nThree\nFour\nFive\nSix\nSeven";
+      bool pages_valid = render_text(pages, 2000);
+      std::vector<uint8_t> first_page;
+      if (pages_valid) {
+        first_page = this->framebuffer_;
+        check("text_page_1");
+      }
+      pages_valid = pages_valid && render_text(pages, 5000);
+      if (pages_valid) {
+        if (this->framebuffer_ == first_page) {
+          std::printf("render test: FAILED text page advance\n");
+          ++failures;
+        }
+        check("text_page_2");
+      }
+      pages_valid = pages_valid && render_text(pages, 8000) &&
+                    this->framebuffer_ == first_page;
+      pages_valid =
+          pages_valid &&
+          this->render_frame_(8001, "clock_binary", nullptr, 0, true) &&
+          render_text(pages, 8002) && this->framebuffer_ == first_page;
+      const char *changed_pages = "One\nTwo\nThree\nFour\nFive\nSix\nChanged";
+      pages_valid = pages_valid && render_text(pages, 11002) &&
+                    render_text(changed_pages, 11003) &&
+                    this->framebuffer_ == first_page;
+      if (!pages_valid) {
+        std::printf("render test: FAILED text page reset\n");
+        ++failures;
+      }
+
+      bool input_valid = render_text("", 9000) &&
+                         std::all_of(this->framebuffer_.begin(),
+                                     this->framebuffer_.end(),
+                                     [](uint8_t value) { return value == 0; });
+      input_valid = input_valid && render_text("First\r\nSecond\rThird", 9100);
+      const std::vector<uint8_t> normalized_lines = this->framebuffer_;
+      input_valid = input_valid && render_text("First\nSecond\nThird", 9101) &&
+                    this->framebuffer_ == normalized_lines;
+      const std::vector<uint8_t> explicit_newlines = this->framebuffer_;
+      input_valid = input_valid &&
+                    render_text("First\\nSecond\\nThird", 9102) &&
+                    this->framebuffer_ == explicit_newlines;
+      input_valid = input_valid &&
+                    render_text(std::string("A\0B", 3), 9200);
+      const std::vector<uint8_t> embedded_nul = this->framebuffer_;
+      input_valid = input_valid && render_text("A?B", 9201) &&
+                    this->framebuffer_ == embedded_nul;
+      input_valid = input_valid &&
+                    render_text(std::string("A\xF0\x28\x8C\x28" "B", 6), 9300);
+      const std::vector<uint8_t> malformed_utf8 = this->framebuffer_;
+      input_valid = input_valid && render_text("A?(?(B", 9301) &&
+                    this->framebuffer_ == malformed_utf8;
+      const std::string truncated_multibyte =
+          std::string(127, 'a') + "\xC3\xA9";
+      input_valid = input_valid && render_text(truncated_multibyte, 9400);
+      const std::vector<uint8_t> truncated_frame = this->framebuffer_;
+      input_valid = input_valid && render_text(std::string(127, 'a'), 9400) &&
+                    this->framebuffer_ == truncated_frame;
+      if (!input_valid) {
+        std::printf("render test: FAILED text input normalization\n");
+        ++failures;
+      }
+
+      const char *large_pages = "One\nTwo\nThree\nFour\nFive";
+      bool large_text_valid =
+          render_dashboard_text(large_pages, 10000, "text_16");
+      std::vector<uint8_t> large_first_page;
+      if (large_text_valid) {
+        large_first_page = this->framebuffer_;
+        check("text_16_page_1");
+      }
+      large_text_valid = large_text_valid &&
+                         render_dashboard_text(large_pages, 13000, "text_16");
+      if (!large_text_valid || this->framebuffer_ == large_first_page) {
+        std::printf("render test: FAILED font metrics text layout\n");
+        ++failures;
+      } else {
+        check("text_16_page_2");
+      }
+
+      // Restore the fixture used by the established dashboard and notification
+      // snapshots below.
+      this->text_->publish_state("Hello");
+    }
+
     const struct {
       const char *id;
       const char *text;

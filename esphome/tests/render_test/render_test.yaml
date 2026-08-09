@@ -479,6 +479,12 @@ pixoo64_content:
       panel_font: font_8
       panel_text: render_test_text
 
+    - platform: text
+      id: text_dashboard_16
+      dashboard_id: text_16
+      panel_font: font_16
+      panel_text: render_test_text
+
     - platform: equalizer
       id: equalizer_dashboard
       dashboard_id: equalizer_bars
@@ -953,6 +959,7 @@ display:
     id: render_test_panel
     content_controller: render_test_content_controller
     equalizer: equalizer_dashboard
+    panel_text: render_test_text
     # Showing the face sends every column to its digit the long way around,
     # staggered 120ms apart. The first flap of a run takes 350ms and later ones
     # speed up: at 120ms the leftmost leaf is falling, at 260ms it is swinging

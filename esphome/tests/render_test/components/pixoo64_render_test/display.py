@@ -1,11 +1,12 @@
 import esphome.codegen as cg
-from esphome.components import display
+from esphome.components import display, text
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 
 CONF_CONTENT_CONTROLLER = "content_controller"
 CONF_OUTPUT_DIR = "output_dir"
 CONF_EQUALIZER = "equalizer"
+CONF_PANEL_TEXT = "panel_text"
 CONF_ANIMATION_FRAMES = "animation_frames"
 CONF_DASHBOARD = "dashboard"
 CONF_NOW_MS = "now_ms"
@@ -36,6 +37,7 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
         cv.GenerateID(): cv.declare_id(RenderTestDisplay),
         cv.Required(CONF_CONTENT_CONTROLLER): cv.use_id(ContentController),
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
+        cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
         cv.Optional(CONF_ANIMATION_FRAMES, default=[]): cv.ensure_list(
             ANIMATION_FRAME_SCHEMA
         ),
@@ -58,6 +60,7 @@ async def to_code(config):
                 await cg.get_variable(config[CONF_EQUALIZER])
             )
         )
+    cg.add(var.set_panel_text(await cg.get_variable(config[CONF_PANEL_TEXT])))
     for frame in config[CONF_ANIMATION_FRAMES]:
         cg.add(
             var.add_animation_frame(
