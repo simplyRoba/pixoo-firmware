@@ -40,3 +40,5 @@ GNU Affero General Public License, version 3 or later
 full license text in [LICENSE](LICENSE).
 Checked-in OpenMoji artwork and bundled fonts have their own terms; see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+**This project is developed with AI assistance, reviewed by a critical human.**
