@@ -1,5 +1,8 @@
 #include "firmware_app_component.h"
 
+#include <new>
+
+#include "esp_heap_caps.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -8,6 +11,14 @@ namespace {
 
 static const char *const TAG = "pixoo64.app";
 }  // namespace
+
+FirmwareAppComponent::~FirmwareAppComponent() {
+  this->app_.reset();
+  if (this->overlay_queue_storage_ != nullptr) {
+    this->overlay_queue_storage_->~OverlayQueueStorage();
+    heap_caps_free(this->overlay_queue_storage_);
+  }
+}
 
 void FirmwareAppComponent::setup() {
   if (this->panel_ == nullptr || this->panel_component_ == nullptr ||
@@ -25,9 +36,24 @@ void FirmwareAppComponent::setup() {
 
   const std::string dashboard_id = this->dashboard_select_->current_option().c_str();
 
+  void *queue_memory = heap_caps_malloc(
+      sizeof(pixoo::OverlayQueueStorage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (queue_memory == nullptr) {
+    ESP_LOGW(TAG, "overlay queue storage using internal RAM fallback");
+    queue_memory = heap_caps_malloc(sizeof(pixoo::OverlayQueueStorage),
+                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  if (queue_memory == nullptr) {
+    ESP_LOGE(TAG, "overlay queue storage allocation failed");
+    this->mark_failed();
+    return;
+  }
+  this->overlay_queue_storage_ =
+      new (queue_memory) pixoo::OverlayQueueStorage{};
+
   this->app_.emplace(*this->panel_, *this->renderer_, this->sound_player_,
                      this->microphone_, this, pixoo::FirmwareAppConfig{}, this,
-                     this);
+                     this, this->overlay_queue_storage_);
   if (this->frame_metrics_window_ms_ != 0)
     this->frame_metrics_window_.Reset(millis());
   this->started_ = this->app_->Start(millis(), this->ReadLight_(), dashboard_id);

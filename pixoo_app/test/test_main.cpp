@@ -120,10 +120,11 @@ struct RecordingRenderer final : RenderPort {
   }
   uint32_t NotificationMinVisibleMs(
       const Notification &notification) override {
-    events->push_back("min-visible:" + notification.text);
+    events->push_back("min-visible:" + std::string(notification.text.c_str()));
     return min_visible_ms;
   }
   void HideBaseContent() override { hide_base_calls++; }
+  void ReleaseOverlayResources() override { release_overlay_calls++; }
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                      const Overlay *overlay,
                      uint32_t overlay_visible_elapsed_ms, bool base_visible,
@@ -138,7 +139,7 @@ struct RecordingRenderer final : RenderPort {
       event += render_base ? ":base" : ":cached-base";
       *frame = base_frame;
     } else if (overlay->tag == OverlayTag::kNotification) {
-      event += ":" + overlay->notification.text + ":" +
+      event += ":" + std::string(overlay->notification.text.c_str()) + ":" +
                std::to_string(overlay_visible_elapsed_ms) +
                (base_visible ? ":live" : ":black");
       *frame = notification_frame;
@@ -168,6 +169,7 @@ struct RecordingRenderer final : RenderPort {
   uint32_t min_visible_ms{0};
   uint32_t last_render_now_ms{0};
   int hide_base_calls{0};
+  int release_overlay_calls{0};
   std::vector<bool> render_results;
   size_t render_result_index{0};
   std::vector<bool> render_base_calls;
@@ -1256,6 +1258,7 @@ static void test_clear_overlay_queue_pending_and_visible_restores_snapshot() {
   app.Notify(Request("Pending", 10), 1);
   app.ClearOverlayQueue();
   TEST_ASSERT_FALSE(app.notification_pending());
+  TEST_ASSERT_EQUAL(1, renderer.release_overlay_calls);
   AssertLight(app.logical_light(), false, 0.4f);
   const int initialize_calls = panel.initialize_calls;
   app.Tick(20);
@@ -1272,6 +1275,7 @@ static void test_clear_overlay_queue_pending_and_visible_restores_snapshot() {
   TEST_ASSERT_TRUE(app.notification_visible());
   app.ClearOverlayQueue();
   TEST_ASSERT_FALSE(app.notification_visible());
+  TEST_ASSERT_EQUAL(2, renderer.release_overlay_calls);
   AssertLight(app.logical_light(), true, 0.4f);
   AssertEvent(events, events.size() - 3, "sound:stop");
   AssertEvent(events, events.size() - 2, "brightness:40");
@@ -1298,7 +1302,7 @@ static void test_notification_queued_during_first_boot_waits_for_running() {
   TEST_ASSERT_EQUAL(1, CountEvent(events, "present:force:notification"));
 }
 
-static void test_reaction_queued_during_boot_renders_one_base_snapshot() {
+static void test_reaction_queued_during_boot_renders_clean_base() {
   std::vector<std::string> events;
   RecordingPanel panel(&events);
   RecordingRenderer renderer(&events);
@@ -1383,11 +1387,51 @@ static void test_notification_text_limit_bounds_retained_queue_memory() {
                     app.current_overlay()->notification.title.size());
 
   std::string oversized(kMaximumNotificationTextBytes + 1, 'b');
+  Notification oversized_notification{oversized, Severity::kInfo, oversized};
+  TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
+                    oversized_notification.text.size());
+  TEST_ASSERT_TRUE(oversized_notification.text.overflowed());
+  TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
+                    oversized_notification.title.size());
+  TEST_ASSERT_TRUE(oversized_notification.title.overflowed());
   TEST_ASSERT_FALSE(app.Notify(Request(oversized.c_str(), 1), 2));
   NotificationRequest oversized_title = Request("Message", 1);
   oversized_title.notification.title = oversized;
+  TEST_ASSERT_TRUE(oversized_title.notification.title.overflowed());
   TEST_ASSERT_FALSE(app.Notify(std::move(oversized_title), 2));
   TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
+}
+
+static void test_notification_fifo_preserves_fixed_payloads() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  OverlayQueueStorage storage;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0}, nullptr, nullptr, &storage);
+  StartRunning(&app);
+
+  NotificationRequest first = Request("first message", 1);
+  first.notification.title = "first title";
+  NotificationRequest second = Request("second message", 1);
+  second.notification.title = "second title";
+  TEST_ASSERT_TRUE(app.Notify(first, 1));
+  TEST_ASSERT_TRUE(app.Notify(second, 1));
+  TEST_ASSERT_EQUAL_STRING("first message",
+                           app.current_overlay()->notification.text.c_str());
+  TEST_ASSERT_EQUAL_STRING("first title",
+                           app.current_overlay()->notification.title.c_str());
+  TEST_ASSERT_EQUAL_STRING("first message",
+                           storage.slots[0].overlay.notification.text.c_str());
+  TEST_ASSERT_EQUAL_STRING("first title",
+                           storage.slots[0].overlay.notification.title.c_str());
+
+  app.Tick(1);
+  app.Tick(2);
+  TEST_ASSERT_EQUAL_STRING("second message",
+                           app.current_overlay()->notification.text.c_str());
+  TEST_ASSERT_EQUAL_STRING("second title",
+                           app.current_overlay()->notification.title.c_str());
 }
 
 static void test_mixed_overlay_fifo_freezes_reaction_base_and_never_sounds_it() {
@@ -1416,7 +1460,7 @@ static void test_mixed_overlay_fifo_freezes_reaction_base_and_never_sounds_it() 
                     static_cast<int>(app.current_overlay()->tag));
   TEST_ASSERT_TRUE(app.overlay_visible());
   TEST_ASSERT_TRUE(renderer.base_frozen_calls.back());
-  TEST_ASSERT_FALSE(renderer.render_base_calls.back());
+  TEST_ASSERT_TRUE(renderer.render_base_calls.back());
   TEST_ASSERT_EQUAL_STRING("reaction", panel.received_tokens.back().c_str());
   TEST_ASSERT_EQUAL(1, sound.played.size());
   TEST_ASSERT_EQUAL(power_calls, panel.power_calls);
@@ -1429,6 +1473,7 @@ static void test_mixed_overlay_fifo_freezes_reaction_base_and_never_sounds_it() 
                     static_cast<int>(app.current_overlay()->tag));
   TEST_ASSERT_EQUAL_STRING("Last",
                            app.current_overlay()->notification.text.c_str());
+  TEST_ASSERT_TRUE(renderer.render_base_calls.back());
   TEST_ASSERT_EQUAL_STRING("notification", panel.received_tokens.back().c_str());
   TEST_ASSERT_EQUAL(power_calls, panel.power_calls);
 }
@@ -2113,10 +2158,11 @@ int main(int, char **) {
   RUN_TEST(test_notification_presentation_failures_retry_before_timer_or_sound);
   RUN_TEST(test_clear_overlay_queue_pending_and_visible_restores_snapshot);
   RUN_TEST(test_notification_queued_during_first_boot_waits_for_running);
-  RUN_TEST(test_reaction_queued_during_boot_renders_one_base_snapshot);
+  RUN_TEST(test_reaction_queued_during_boot_renders_clean_base);
   RUN_TEST(test_promoted_overlay_timer_starts_when_presented);
   RUN_TEST(test_overlay_queue_rejects_new_tail_when_full);
   RUN_TEST(test_notification_text_limit_bounds_retained_queue_memory);
+  RUN_TEST(test_notification_fifo_preserves_fixed_payloads);
   RUN_TEST(test_mixed_overlay_fifo_freezes_reaction_base_and_never_sounds_it);
   RUN_TEST(test_reaction_duration_crosses_uint32_wrap_without_sound);
   RUN_TEST(test_clear_and_explicit_off_cancel_the_entire_overlay_queue);

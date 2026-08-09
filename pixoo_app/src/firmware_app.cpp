@@ -23,7 +23,8 @@ FirmwareApp::FirmwareApp(PanelPort &panel, RenderPort &renderer,
                          SoundPlayer *sound_player,
                          MicrophonePort *microphone,
                          LightStateSink *light_sink, FirmwareAppConfig config,
-                         SystemPort *system, FrameMetricsPort *frame_metrics)
+                         SystemPort *system, FrameMetricsPort *frame_metrics,
+                         OverlayQueueStorage *overlay_queue_storage)
     : panel_(panel),
       renderer_(renderer),
       sound_player_(sound_player),
@@ -31,7 +32,13 @@ FirmwareApp::FirmwareApp(PanelPort &panel, RenderPort &renderer,
       light_sink_(light_sink),
       config_(config),
       system_(system),
-      frame_metrics_(frame_metrics) {}
+      frame_metrics_(frame_metrics),
+      owned_overlay_queue_storage_(
+          overlay_queue_storage == nullptr ? new OverlayQueueStorage : nullptr),
+      overlay_queue_storage_(overlay_queue_storage) {
+  if (this->overlay_queue_storage_ == nullptr)
+    this->overlay_queue_storage_ = this->owned_overlay_queue_storage_.get();
+}
 
 bool FirmwareApp::ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                                   uint32_t duration_ms) {
@@ -247,8 +254,9 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
   const bool base_frozen =
       this->overlay_queue_size_ != 0 &&
       this->CurrentOverlayRequest_().overlay.tag == OverlayTag::kReaction;
-  const bool initial_reaction_base =
-      base_frozen && !this->reaction_base_snapshot_ready_;
+  // A reaction never uses retained dashboard pixels: its first presented frame
+  // draws a clean base, then the renderer freezes and blurs that frame.
+  const bool initial_reaction_base = base_frozen && !this->overlay_visible_;
   const bool render_base =
       this->BaseContentVisible_() &&
       (initial_reaction_base ||
@@ -309,8 +317,6 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
       now_ms, this->selected_dashboard_.id, &request.overlay,
       visible_elapsed_ms, this->overlay_saved_light_.on, base_frozen,
       render_base, render_overlay, &frame);
-  if (base_frozen && render_base && rendered)
-    this->reaction_base_snapshot_ready_ = true;
   const bool presented = render_overlay && rendered && frame.valid() &&
                          this->panel_.Present(frame, !this->overlay_visible_);
   if (render_overlay && this->frame_metrics_ != nullptr)
@@ -484,8 +490,8 @@ bool FirmwareApp::BeginFirmwareUpdate() {
 }
 
 bool FirmwareApp::Notify(NotificationRequest request, uint32_t now_ms) {
-  if (request.notification.text.size() > kMaximumNotificationTextBytes ||
-      request.notification.title.size() > kMaximumNotificationTextBytes)
+  if (request.notification.text.overflowed() ||
+      request.notification.title.overflowed())
     return false;
   OverlayRequest overlay_request;
   overlay_request.overlay.tag = OverlayTag::kNotification;
@@ -513,7 +519,7 @@ bool FirmwareApp::EnqueueOverlay_(OverlayRequest request, uint32_t now_ms) {
   const size_t tail =
       (this->overlay_queue_head_ + this->overlay_queue_size_) %
       kOverlayQueueCapacity;
-  this->overlay_queue_[tail] = std::move(request);
+  this->overlay_queue_storage_->slots[tail] = std::move(request);
   ++this->overlay_queue_size_;
   if (!first)
     return true;
@@ -548,7 +554,7 @@ void FirmwareApp::FactoryReset() {
 }
 
 const OverlayRequest &FirmwareApp::CurrentOverlayRequest_() const {
-  return this->overlay_queue_[this->overlay_queue_head_];
+  return this->overlay_queue_storage_->slots[this->overlay_queue_head_];
 }
 
 const Overlay *FirmwareApp::current_overlay() const {
@@ -581,10 +587,6 @@ bool FirmwareApp::StopOverlaySound_() {
 void FirmwareApp::ResetCurrentOverlayPresentation_() {
   this->overlay_visible_ = false;
   this->overlay_sound_started_ = false;
-  this->reaction_base_snapshot_ready_ =
-      this->overlay_queue_size_ != 0 &&
-      (this->CurrentOverlayRequest_().overlay.tag != OverlayTag::kReaction ||
-       !this->overlay_saved_light_.on || this->base_rendered_);
   this->overlay_visible_started_ms_ = 0;
   this->overlay_visible_duration_ms_ = 0;
   this->overlay_rendered_ = false;
@@ -592,7 +594,7 @@ void FirmwareApp::ResetCurrentOverlayPresentation_() {
 }
 
 void FirmwareApp::ResetOverlayState_() {
-  this->overlay_queue_ = {};
+  this->overlay_queue_storage_->slots = {};
   this->overlay_queue_head_ = 0;
   this->overlay_queue_size_ = 0;
   this->overlay_saved_light_ = {};
@@ -602,17 +604,29 @@ void FirmwareApp::ResetOverlayState_() {
 
 void FirmwareApp::PromoteOverlay_() {
   this->StopOverlaySound_();
-  this->overlay_queue_[this->overlay_queue_head_] = {};
+  const bool previous_was_reaction =
+      this->CurrentOverlayRequest_().overlay.tag == OverlayTag::kReaction;
+  this->overlay_queue_storage_->slots[this->overlay_queue_head_] = {};
   this->overlay_queue_head_ =
       (this->overlay_queue_head_ + 1) % kOverlayQueueCapacity;
   --this->overlay_queue_size_;
-  if (this->overlay_queue_size_ != 0)
-    this->ResetCurrentOverlayPresentation_();
+  if (this->overlay_queue_size_ == 0)
+    return;
+
+  const OverlayTag next_tag = this->CurrentOverlayRequest_().overlay.tag;
+  // A promoted reaction and a notification following a reaction must replace
+  // the previous overlay artwork with a freshly rendered dashboard.
+  if (this->overlay_saved_light_.on &&
+      (next_tag == OverlayTag::kReaction ||
+       (previous_was_reaction && next_tag == OverlayTag::kNotification)))
+    this->base_render_requested_ = true;
+  this->ResetCurrentOverlayPresentation_();
 }
 
 bool FirmwareApp::CancelOverlayQueueWithoutRestore_() {
   const bool overlay_sound_stopped = this->StopOverlaySound_();
   this->ResetOverlayState_();
+  this->renderer_.ReleaseOverlayResources();
   this->ReconcileMicrophone_();
   return overlay_sound_stopped;
 }

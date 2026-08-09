@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 namespace pixoo {
@@ -8,6 +10,54 @@ namespace pixoo {
 struct LightState {
   bool on{true};
   float brightness{1.0f};
+};
+
+constexpr size_t kMaximumNotificationTextBytes = 256;
+
+// Stores a NUL-terminated byte sequence without allocating. Overlong input is
+// retained up to capacity and flagged so the caller can reject it.
+class FixedByteString {
+ public:
+  FixedByteString() = default;
+  FixedByteString(const char *value) { this->Assign(value); }
+  FixedByteString(const std::string &value) { this->Assign(value); }
+
+  FixedByteString &operator=(const char *value) {
+    this->Assign(value);
+    return *this;
+  }
+  FixedByteString &operator=(const std::string &value) {
+    this->Assign(value);
+    return *this;
+  }
+
+  size_t size() const { return this->size_; }
+  bool empty() const { return this->size_ == 0; }
+  const char *c_str() const { return this->data_; }
+  bool overflowed() const { return this->overflowed_; }
+
+ private:
+  void Assign(const char *value) {
+    if (value == nullptr) {
+      this->Assign_({}, 0);
+      return;
+    }
+    this->Assign_(value, std::strlen(value));
+  }
+  void Assign(const std::string &value) {
+    this->Assign_(value.data(), value.size());
+  }
+  void Assign_(const char *value, size_t size) {
+    this->overflowed_ = size > kMaximumNotificationTextBytes;
+    this->size_ = this->overflowed_ ? kMaximumNotificationTextBytes : size;
+    if (this->size_ != 0)
+      std::memcpy(this->data_, value, this->size_);
+    this->data_[this->size_] = '\0';
+  }
+
+  char data_[kMaximumNotificationTextBytes + 1]{};
+  size_t size_{0};
+  bool overflowed_{false};
 };
 
 // Notification severity. Selects the banner border colour in the renderer.
@@ -19,9 +69,9 @@ enum class Severity {
 };
 
 struct Notification {
-  std::string text;
+  FixedByteString text;
   Severity severity{Severity::kInfo};
-  std::string title{};
+  FixedByteString title{};
 };
 
 // Closed vocabulary for renderer-owned reaction animations.

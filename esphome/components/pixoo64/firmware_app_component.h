@@ -19,6 +19,7 @@ class FirmwareAppComponent final : public PollingComponent,
                                    public pixoo::SystemPort,
                                    public pixoo::FrameMetricsPort {
  public:
+  ~FirmwareAppComponent() override;
   void setup() override;
   void update() override;
   void dump_config() override;
@@ -90,6 +91,8 @@ class FirmwareAppComponent final : public PollingComponent,
   uint32_t frame_started_us_{0};
   bool frame_timing_active_{false};
   pixoo::FrameMetricsWindow frame_metrics_window_;
+  // This precedes app_ so application destruction cannot outlive its queue.
+  pixoo::OverlayQueueStorage *overlay_queue_storage_{nullptr};
   std::optional<pixoo::FirmwareApp> app_;
   bool started_{false};
 };

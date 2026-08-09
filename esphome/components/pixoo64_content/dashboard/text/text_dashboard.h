@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "dashboard/dashboard.h"
 #include "esphome/components/display/display.h"
@@ -15,7 +16,8 @@ class TextDashboard : public Dashboard {
   void set_font(font::Font *font) { this->font_ = font; }
   void set_text(text::Text *text) { this->text_ = text; }
   bool available() const override {
-    return this->font_ != nullptr && this->text_ != nullptr;
+    return this->font_ != nullptr && this->text_ != nullptr &&
+           this->EnsureLayoutStorage_();
   }
   void OnShow(uint32_t now_ms) override;
   void Tick(uint32_t now_ms) override;
@@ -39,6 +41,17 @@ class TextDashboard : public Dashboard {
     bool scrolls;
   };
 
+  struct LayoutStorage {
+    char content[kMaximumTextBytes + 1]{};
+    mutable char render_buffer[kMaximumTextBytes + 1]{};
+    Line lines[kMaximumLines]{};
+    uint32_t page_durations_ms[kMaximumLines]{};
+  };
+  struct LayoutStorageDeleter {
+    void operator()(LayoutStorage *storage) const;
+  };
+
+  bool EnsureLayoutStorage_() const;
   bool CopyText_();
   void LayoutText_();
   void LayoutParagraph_(size_t start, size_t end);
@@ -55,13 +68,11 @@ class TextDashboard : public Dashboard {
 
   font::Font *font_{nullptr};
   text::Text *text_{nullptr};
-  char content_[kMaximumTextBytes + 1]{};
-  mutable char render_buffer_[kMaximumTextBytes + 1]{};
-  Line lines_[kMaximumLines]{};
+  mutable std::unique_ptr<LayoutStorage, LayoutStorageDeleter> layout_;
+  mutable bool layout_allocation_attempted_{false};
   size_t content_length_{0};
   size_t line_count_{0};
   size_t page_count_{0};
-  uint32_t page_durations_ms_[kMaximumLines]{};
   uint64_t page_cycle_duration_ms_{0};
   uint32_t page_started_ms_{0};
   uint32_t current_ms_{0};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,7 @@ class ContentController : public display::Display,
   uint32_t NotificationMinVisibleMs(
       const pixoo::Notification &notification) override;
   void HideBaseContent() override;
+  void ReleaseOverlayResources() override;
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::Overlay *overlay,
                      uint32_t overlay_visible_elapsed_ms, bool base_visible,
@@ -82,8 +84,9 @@ class ContentController : public display::Display,
   Dashboard *find_(const std::string &id) const;
   void DrawBootWordmark(uint32_t elapsed_ms);
   static int cos_deg_(int degrees);
-  void CaptureReactionBackground_();
-  void RestoreBaseSnapshot_(bool base_visible);
+  bool CaptureReactionBackground_();
+  bool EnsureReactionBackground_();
+  void ReleaseReactionBackground_();
   void RecordRender_(uint32_t elapsed_us);
   void PublishRenderWindow_();
   void ResetRenderWindow_();
@@ -91,14 +94,18 @@ class ContentController : public display::Display,
   std::vector<Dashboard *> dashboards_;
   Dashboard *visible_{nullptr};
   std::string default_dashboard_id_;
+  struct ReactionBackgroundDeleter {
+    void operator()(pixoo::Framebuffer *framebuffer) const;
+  };
+
   pixoo::Framebuffer framebuffer_;
-  pixoo::Framebuffer base_framebuffer_;
-  pixoo::Framebuffer reaction_background_;
+  std::unique_ptr<pixoo::Framebuffer, ReactionBackgroundDeleter>
+      reaction_background_;
   NotificationRenderer notification_renderer_;
   ReactionRenderer reaction_renderer_;
   const pixoo::Overlay *reaction_overlay_{nullptr};
   uint32_t last_reaction_elapsed_ms_{0};
-  bool base_snapshot_ready_{false};
+  bool reaction_background_allocation_attempted_{false};
   bool reaction_snapshot_active_{false};
   font::Font *firmware_update_title_font_{nullptr};
   font::Font *firmware_update_detail_font_{nullptr};

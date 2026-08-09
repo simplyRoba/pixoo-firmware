@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 
 #include "pixoo_sound.h"
@@ -62,10 +63,13 @@ class RenderPort {
   // Ends the current base-dashboard visibility interval. The next rendered
   // base is an entry even if its dashboard selection did not change.
   virtual void HideBaseContent() = 0;
+  // Releases renderer-owned storage that is needed only while an overlay is
+  // active without ending the base-dashboard visibility interval.
+  virtual void ReleaseOverlayResources() = 0;
   // Writes a view on success. `render_base` advances and redraws the selected
   // dashboard; a false value retains the renderer's current base pixels.
-  // `base_frozen` tells the renderer that a reaction must use one unchanged
-  // base snapshot. Notifications keep a live base. The overlay is composited
+  // `base_frozen` tells the renderer that a reaction must freeze one clean
+  // base frame. Notifications keep a live base. The overlay is composited
   // only when `render_overlay` is true and must replace every pixel its
   // preceding frame modified. The returned view belongs to the renderer and is
   // consumed synchronously by the caller. `now_ms` is the tick clock, the only
@@ -120,7 +124,13 @@ struct OverlayRequest {
 };
 
 constexpr size_t kOverlayQueueCapacity = 16;
-constexpr size_t kMaximumNotificationTextBytes = 256;
+
+// Retained overlay slots are supplied by the platform when memory placement
+// matters. The application core keeps this type framework-independent.
+struct OverlayQueueStorage {
+  std::array<OverlayRequest, kOverlayQueueCapacity> slots{};
+};
+
 constexpr uint32_t kNotificationMillisecondsPerSecond = 1000;
 constexpr uint32_t kDefaultNotificationDurationSeconds = 4;
 constexpr uint32_t kMaximumNotificationDurationSeconds =
@@ -157,13 +167,16 @@ class FirmwareApp {
     kRunning,
   };
 
+  // Borrows overlay_queue_storage for this object's lifetime when supplied;
+  // otherwise owns ordinary dynamically allocated storage.
   FirmwareApp(PanelPort &panel, RenderPort &renderer,
               SoundPlayer *sound_player = nullptr,
               MicrophonePort *microphone = nullptr,
               LightStateSink *light_sink = nullptr,
               FirmwareAppConfig config = FirmwareAppConfig{},
               SystemPort *system = nullptr,
-              FrameMetricsPort *frame_metrics = nullptr);
+              FrameMetricsPort *frame_metrics = nullptr,
+              OverlayQueueStorage *overlay_queue_storage = nullptr);
 
   bool Start(uint32_t now_ms, LightState initial_light,
              const std::string &initial_dashboard_id);
@@ -275,12 +288,12 @@ class FirmwareApp {
   bool brightness_button_pressed_{false};
   uint32_t brightness_button_pressed_at_ms_{0};
 
-  std::array<OverlayRequest, kOverlayQueueCapacity> overlay_queue_{};
+  std::unique_ptr<OverlayQueueStorage> owned_overlay_queue_storage_;
+  OverlayQueueStorage *overlay_queue_storage_{nullptr};
   size_t overlay_queue_head_{0};
   size_t overlay_queue_size_{0};
   bool overlay_visible_{false};
   bool overlay_sound_started_{false};
-  bool reaction_base_snapshot_ready_{false};
   LightState overlay_saved_light_{};
   uint32_t overlay_visible_started_ms_{0};
   uint32_t overlay_visible_duration_ms_{0};

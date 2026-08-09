@@ -2,9 +2,57 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 #include <string>
 
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#include "esphome/core/log.h"
+#endif
+
 namespace esphome::pixoo64::dashboard {
+namespace {
+
+#ifdef ESP_PLATFORM
+static const char *const TAG = "pixoo64.text_dashboard";
+#endif
+
+}  // namespace
+
+void TextDashboard::LayoutStorageDeleter::operator()(
+    LayoutStorage *storage) const {
+#ifdef ESP_PLATFORM
+  storage->~LayoutStorage();
+  heap_caps_free(storage);
+#else
+  delete storage;
+#endif
+}
+
+bool TextDashboard::EnsureLayoutStorage_() const {
+  if (this->layout_ != nullptr)
+    return true;
+  if (this->layout_allocation_attempted_)
+    return false;
+  this->layout_allocation_attempted_ = true;
+#ifdef ESP_PLATFORM
+  void *memory = heap_caps_malloc(sizeof(LayoutStorage),
+                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (memory == nullptr) {
+    ESP_LOGW(TAG, "layout storage using internal RAM fallback");
+    memory = heap_caps_malloc(sizeof(LayoutStorage),
+                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  if (memory == nullptr) {
+    ESP_LOGE(TAG, "layout storage allocation failed");
+    return false;
+  }
+  this->layout_.reset(new (memory) LayoutStorage{});
+#else
+  this->layout_.reset(new (std::nothrow) LayoutStorage{});
+#endif
+  return this->layout_ != nullptr;
+}
 
 void TextDashboard::OnShow(uint32_t now_ms) { this->page_started_ms_ = now_ms; }
 
@@ -18,23 +66,24 @@ void TextDashboard::Tick(uint32_t now_ms) {
 
 void TextDashboard::Render(display::Display &display) const {
   display.fill(Color(0, 0, 0));
-  if (this->font_ == nullptr || this->line_count_ == 0)
+  if (this->font_ == nullptr || !this->EnsureLayoutStorage_() ||
+      this->line_count_ == 0)
     return;
+  const LayoutStorage &layout = *this->layout_;
 
   if (this->short_text_) {
     display.printf(32, 32, this->font_, display::TextAlign::CENTER, "%s",
-                   this->content_);
+                   layout.content);
     return;
   }
 
   const uint32_t elapsed_ms = this->current_ms_ - this->page_started_ms_;
-  uint64_t page_elapsed_ms =
-      elapsed_ms % this->page_cycle_duration_ms_;
+  uint64_t page_elapsed_ms = elapsed_ms % this->page_cycle_duration_ms_;
   size_t page = 0;
   for (; page + 1 < this->page_count_; ++page) {
-    if (page_elapsed_ms < this->page_durations_ms_[page])
+    if (page_elapsed_ms < layout.page_durations_ms[page])
       break;
-    page_elapsed_ms -= this->page_durations_ms_[page];
+    page_elapsed_ms -= layout.page_durations_ms[page];
   }
   const size_t lines_per_page = this->LinesPerPage_();
   const int line_height = this->LineHeight_();
@@ -45,7 +94,7 @@ void TextDashboard::Render(display::Display &display) const {
       (kPanelHeight - static_cast<int>(visible_lines) * line_height) / 2;
 
   for (size_t i = 0; i < visible_lines; ++i) {
-    const Line &line = this->lines_[first_line + i];
+    const Line &line = layout.lines[first_line + i];
     this->CopyRange_(line.start, line.length);
     const int width = line.width;
     const int y = top + static_cast<int>(i) * line_height;
@@ -57,16 +106,19 @@ void TextDashboard::Render(display::Display &display) const {
            page_elapsed_ms % 1000u * kScrollPixelsPerSecond / 1000u) %
           static_cast<uint32_t>(travel));
       display.print(kContentRight - phase, y, this->font_,
-                    display::TextAlign::TOP_LEFT, this->render_buffer_);
+                    display::TextAlign::TOP_LEFT, layout.render_buffer);
     } else {
       display.print(kContentLeft + (kContentWidth - width) / 2, y, this->font_,
-                    display::TextAlign::TOP_LEFT, this->render_buffer_);
+                    display::TextAlign::TOP_LEFT, layout.render_buffer);
     }
     display.end_clipping();
   }
 }
 
 bool TextDashboard::CopyText_() {
+  if (!this->EnsureLayoutStorage_())
+    return false;
+  LayoutStorage &layout = *this->layout_;
   const std::string &state = this->text_->state;
   char sanitized[kMaximumTextBytes + 1];
   size_t length = 0;
@@ -108,23 +160,26 @@ bool TextDashboard::CopyText_() {
   sanitized[length] = '\0';
 
   if (length == this->content_length_ &&
-      std::memcmp(this->content_, sanitized, length) == 0)
+      std::memcmp(layout.content, sanitized, length) == 0)
     return false;
 
-  std::memcpy(this->content_, sanitized, length + 1);
+  std::memcpy(layout.content, sanitized, length + 1);
   this->content_length_ = length;
   this->LayoutText_();
   return true;
 }
 
 void TextDashboard::LayoutText_() {
+  if (this->layout_ == nullptr)
+    return;
+  const LayoutStorage &layout = *this->layout_;
   this->line_count_ = 0;
   this->page_count_ = 0;
   this->short_text_ = false;
   if (this->content_length_ == 0)
     return;
 
-  if (std::memchr(this->content_, '\n', this->content_length_) == nullptr &&
+  if (std::memchr(layout.content, '\n', this->content_length_) == nullptr &&
       this->TextWidth_(0, this->content_length_) <= kContentWidth) {
     this->AddLine_(0, this->content_length_, false);
     this->short_text_ = true;
@@ -136,7 +191,7 @@ void TextDashboard::LayoutText_() {
   size_t start = 0;
   while (true) {
     size_t end = start;
-    while (end < this->content_length_ && this->content_[end] != '\n')
+    while (end < this->content_length_ && layout.content[end] != '\n')
       ++end;
     this->LayoutParagraph_(start, end);
     if (end == this->content_length_)
@@ -149,7 +204,10 @@ void TextDashboard::LayoutText_() {
 }
 
 void TextDashboard::LayoutParagraph_(size_t start, size_t end) {
-  while (start < end && IsSpace_(this->content_[start]))
+  if (this->layout_ == nullptr)
+    return;
+  const LayoutStorage &layout = *this->layout_;
+  while (start < end && IsSpace_(layout.content[start]))
     ++start;
   if (start == end) {
     this->AddLine_(start, 0, false);
@@ -159,12 +217,12 @@ void TextDashboard::LayoutParagraph_(size_t start, size_t end) {
   size_t position = start;
   while (position < end) {
     const size_t word_start = position;
-    while (position < end && !IsSpace_(this->content_[position]))
+    while (position < end && !IsSpace_(layout.content[position]))
       ++position;
     const size_t word_end = position;
     if (this->TextWidth_(word_start, word_end - word_start) > kContentWidth) {
       this->AddLine_(word_start, word_end - word_start, true);
-      while (position < end && IsSpace_(this->content_[position]))
+      while (position < end && IsSpace_(layout.content[position]))
         ++position;
       continue;
     }
@@ -172,7 +230,7 @@ void TextDashboard::LayoutParagraph_(size_t start, size_t end) {
     size_t line_end = word_end;
     while (true) {
       size_t next_start = position;
-      while (next_start < end && IsSpace_(this->content_[next_start]))
+      while (next_start < end && IsSpace_(layout.content[next_start]))
         ++next_start;
       if (next_start == end) {
         this->AddLine_(word_start, line_end - word_start, false);
@@ -180,7 +238,7 @@ void TextDashboard::LayoutParagraph_(size_t start, size_t end) {
       }
 
       size_t next_end = next_start;
-      while (next_end < end && !IsSpace_(this->content_[next_end]))
+      while (next_end < end && !IsSpace_(layout.content[next_end]))
         ++next_end;
       if (this->TextWidth_(word_start, next_end - word_start) <=
           kContentWidth) {
@@ -197,14 +255,16 @@ void TextDashboard::LayoutParagraph_(size_t start, size_t end) {
 }
 
 void TextDashboard::AddLine_(size_t start, size_t length, bool scrolls) {
-  if (this->line_count_ == kMaximumLines)
+  if (this->layout_ == nullptr || this->line_count_ == kMaximumLines)
     return;
-  this->lines_[this->line_count_++] =
+  this->layout_->lines[this->line_count_++] =
       Line{static_cast<uint8_t>(start), static_cast<uint8_t>(length),
            this->TextWidth_(start, length), scrolls};
 }
 
 void TextDashboard::BuildPageDurations_() {
+  if (this->layout_ == nullptr)
+    return;
   this->page_cycle_duration_ms_ = 0;
   const size_t lines_per_page = this->LinesPerPage_();
   for (size_t page = 0; page < this->page_count_; ++page) {
@@ -213,11 +273,11 @@ void TextDashboard::BuildPageDurations_() {
     const size_t visible_lines =
         std::min(lines_per_page, this->line_count_ - first_line);
     for (size_t i = 0; i < visible_lines; ++i) {
-      const Line &line = this->lines_[first_line + i];
+      const Line &line = this->layout_->lines[first_line + i];
       if (line.scrolls)
         duration_ms = std::max(duration_ms, ScrollDurationMs_(line.width));
     }
-    this->page_durations_ms_[page] = duration_ms;
+    this->layout_->page_durations_ms[page] = duration_ms;
     this->page_cycle_duration_ms_ += duration_ms;
   }
 }
@@ -233,8 +293,11 @@ uint32_t TextDashboard::ScrollDurationMs_(int width) {
 }
 
 void TextDashboard::CopyRange_(size_t start, size_t length) const {
-  std::memcpy(this->render_buffer_, this->content_ + start, length);
-  this->render_buffer_[length] = '\0';
+  if (this->layout_ == nullptr)
+    return;
+  std::memcpy(this->layout_->render_buffer, this->layout_->content + start,
+              length);
+  this->layout_->render_buffer[length] = '\0';
 }
 
 int TextDashboard::TextWidth_(size_t start, size_t length) const {
@@ -243,12 +306,14 @@ int TextDashboard::TextWidth_(size_t start, size_t length) const {
 }
 
 int TextDashboard::BufferWidth_() const {
+  if (this->layout_ == nullptr || this->font_ == nullptr)
+    return 0;
   int width = 0;
   int x_offset = 0;
   int baseline = 0;
   int height = 0;
-  this->font_->measure(this->render_buffer_, &width, &x_offset, &baseline,
-                       &height);
+  this->font_->measure(this->layout_->render_buffer, &width, &x_offset,
+                       &baseline, &height);
   return width;
 }
 

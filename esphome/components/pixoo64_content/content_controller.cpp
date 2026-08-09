@@ -2,7 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
 #include <utility>
+
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -340,7 +345,14 @@ uint32_t ContentController::NotificationMinVisibleMs(
   return this->notification_renderer_.ScrollPassMs(notification);
 }
 
-void ContentController::HideBaseContent() { this->visible_ = nullptr; }
+void ContentController::HideBaseContent() {
+  this->visible_ = nullptr;
+  this->ReleaseReactionBackground_();
+}
+
+void ContentController::ReleaseOverlayResources() {
+  this->ReleaseReactionBackground_();
+}
 
 void ContentController::RecordRender_(uint32_t elapsed_us) {
   ++this->render_frames_;
@@ -379,9 +391,56 @@ void ContentController::update() {
   this->ResetRenderWindow_();
 }
 
-void ContentController::CaptureReactionBackground_() {
+void ContentController::ReactionBackgroundDeleter::operator()(
+    pixoo::Framebuffer *framebuffer) const {
+#ifdef ESP_PLATFORM
+  framebuffer->~Framebuffer();
+  heap_caps_free(framebuffer);
+#else
+  delete framebuffer;
+#endif
+}
+
+bool ContentController::EnsureReactionBackground_() {
+  if (this->reaction_background_ != nullptr)
+    return true;
+  if (this->reaction_background_allocation_attempted_)
+    return false;
+
+  this->reaction_background_allocation_attempted_ = true;
+#ifdef ESP_PLATFORM
+  void *memory = heap_caps_malloc(sizeof(pixoo::Framebuffer),
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (memory == nullptr) {
+    ESP_LOGE(TAG, "reaction background allocation failed");
+    return false;
+  }
+  this->reaction_background_.reset(new (memory) pixoo::Framebuffer{});
+#else
+  this->reaction_background_.reset(new (std::nothrow) pixoo::Framebuffer{});
+  if (this->reaction_background_ == nullptr) {
+    ESP_LOGE(TAG, "reaction background allocation failed");
+    return false;
+  }
+#endif
+  return true;
+}
+
+void ContentController::ReleaseReactionBackground_() {
+  this->reaction_background_.reset();
+  this->reaction_background_allocation_attempted_ = false;
+  this->reaction_snapshot_active_ = false;
+  this->reaction_overlay_ = nullptr;
+  this->last_reaction_elapsed_ms_ = 0;
+}
+
+bool ContentController::CaptureReactionBackground_() {
+  if (!this->EnsureReactionBackground_())
+    return false;
+
   constexpr int kBlurRadius = 3;
   constexpr int kDarkenPercent = 42;
+  pixoo::Framebuffer &background = *this->reaction_background_;
   const auto &source = this->framebuffer_.payload();
 
   // A box blur separates into horizontal and vertical passes. This produces
@@ -396,7 +455,7 @@ void ContentController::CaptureReactionBackground_() {
         for (int channel = 0; channel < 3; ++channel)
           channels[channel] += source[offset + channel];
       }
-      this->reaction_background_.SetPixel(
+      background.SetPixel(
           x, y,
           pixoo::Rgb{static_cast<uint8_t>(channels[0] / 7),
                      static_cast<uint8_t>(channels[1] / 7),
@@ -404,7 +463,7 @@ void ContentController::CaptureReactionBackground_() {
     }
   }
 
-  const auto &horizontal = this->reaction_background_.payload();
+  const auto &horizontal = background.payload();
   for (int y = 0; y < pixoo::kHeight; ++y) {
     for (int x = 0; x < pixoo::kWidth; ++x) {
       uint32_t channels[3]{};
@@ -422,14 +481,8 @@ void ContentController::CaptureReactionBackground_() {
               static_cast<uint8_t>(channels[2] * kDarkenPercent / 700)});
     }
   }
-  this->reaction_background_ = this->framebuffer_;
-}
-
-void ContentController::RestoreBaseSnapshot_(bool base_visible) {
-  if (base_visible && this->base_snapshot_ready_)
-    this->framebuffer_ = this->base_framebuffer_;
-  else
-    this->framebuffer_.Clear();
+  background = this->framebuffer_;
+  return true;
 }
 
 bool ContentController::RenderContent(
@@ -447,13 +500,8 @@ bool ContentController::RenderContent(
   PushActiveBlendCanvas(*this, *this);
   const bool reaction = base_frozen && overlay != nullptr &&
                         overlay->tag == pixoo::OverlayTag::kReaction;
-  if (!reaction && this->reaction_snapshot_active_) {
-    // A notification promoted after a reaction starts from the clean base, not
-    // from the reaction's final artwork.
-    this->RestoreBaseSnapshot_(base_visible);
-    this->reaction_snapshot_active_ = false;
-    this->reaction_overlay_ = nullptr;
-  }
+  if (!reaction && this->reaction_snapshot_active_)
+    this->ReleaseReactionBackground_();
 
   // A base that is not drawn is not visible, so returning to it is an entry.
   if (!base_visible)
@@ -470,8 +518,6 @@ bool ContentController::RenderContent(
       if (dashboard->available())
         dashboard->Render(*this);
     }
-    this->base_framebuffer_ = this->framebuffer_;
-    this->base_snapshot_ready_ = true;
   } else if (!base_visible) {
     this->framebuffer_.Clear();
   }
@@ -481,17 +527,24 @@ bool ContentController::RenderContent(
         !this->reaction_snapshot_active_ || overlay != this->reaction_overlay_ ||
         (overlay_visible_elapsed_ms == 0 && this->last_reaction_elapsed_ms_ != 0);
     if (new_reaction) {
-      // The retained clean base also removes a preceding notification banner.
-      this->RestoreBaseSnapshot_(base_visible);
-      this->CaptureReactionBackground_();
+      // FirmwareApp has just rendered the clean dashboard for visible-base
+      // reactions. An off-state reaction deliberately starts from black.
+      if (base_visible)
+        this->CaptureReactionBackground_();
+      else
+        this->framebuffer_.Clear();
       this->reaction_snapshot_active_ = true;
       this->reaction_overlay_ = overlay;
     }
     this->last_reaction_elapsed_ms_ = overlay_visible_elapsed_ms;
     if (render_overlay) {
       // Restoring every frame prevents transformed artwork from leaving stale
-      // pixels as it moves, while the blurred base remains unchanged.
-      this->framebuffer_ = this->reaction_background_;
+      // pixels as it moves. If allocation failed, a black fallback remains
+      // valid without dereferencing absent background storage.
+      if (this->reaction_background_ != nullptr)
+        this->framebuffer_ = *this->reaction_background_;
+      else
+        this->framebuffer_.Clear();
       this->reaction_renderer_.Render(*this, overlay->reaction,
                                       overlay_visible_elapsed_ms);
     }

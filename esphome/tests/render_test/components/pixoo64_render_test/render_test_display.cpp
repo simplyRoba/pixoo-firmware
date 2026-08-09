@@ -552,7 +552,7 @@ void RenderTestDisplay::setup() {
         replacement_clean &&
         render_reaction(pixoo::Reaction::kAngry, 0, true) &&
         render_reaction(pixoo::Reaction::kAngry, 700, false) &&
-        render_reaction(pixoo::Reaction::kLove, 0, false) &&
+        render_reaction(pixoo::Reaction::kLove, 0, true) &&
         render_reaction(pixoo::Reaction::kLove, 700, false) &&
         this->framebuffer_ == fresh_love;
     if (!replacement_clean) {
