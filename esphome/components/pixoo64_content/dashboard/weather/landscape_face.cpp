@@ -36,7 +36,10 @@ constexpr float kSunGlowR = 5.0f;
 constexpr float kSunBaseY = 30.0f;   // sun height at the horizon edges
 constexpr float kSunRise = 14.0f;    // how much higher the sun sits at midday
 constexpr float kSunSink = 18.0f;    // extra drop as it fades through twilight
-constexpr float kSunGlareFullDayness = 0.35f;  // dayness at full star washout
+// At 0.05, glare reaches full strength within the final 90 seconds of the
+// 30-minute twilight ramp. This keeps the visibly drawn twilight disc free of
+// stars while the linear ramp still releases them smoothly as it disappears.
+constexpr float kSunGlareFullDayness = 0.05f;
 constexpr float kSunEdgeL = 6.0f;
 constexpr float kSunEdgeR = 58.0f;
 
@@ -134,18 +137,24 @@ void DrawStars(display::Display &d, const Scene &scene, float alpha,
                         static_cast<float>(period_ms);
     const float twinkle = 0.72f + 0.28f *
                                         (1.0f - std::fabs(phase * 2.0f - 1.0f));
-    const float b = (0.30f + ((h >> 16) & 0xff) / 255.0f * 0.70f) * alpha *
-                    twinkle *
-                    (1.0f - SunGlare(xi, yi, sun_x, sun_y, dayness));
-    if (b <= 0.0f)
-      continue;
-    d.draw_pixel_at(xi, yi, Blend(scene.At(yi), Color(210, 216, 235), b));
+    const float brightness =
+        (0.30f + ((h >> 16) & 0xff) / 255.0f * 0.70f) * alpha * twinkle;
+    const auto draw_star_pixel = [&](int x, int y, float pixel_brightness) {
+      if (pixel_brightness <= 0.0f || x < 0 || x >= pixoo::kWidth || y < 0 ||
+          y >= pixoo::kHeight)
+        return;
+      const float b = pixel_brightness *
+                      (1.0f - SunGlare(x, y, sun_x, sun_y, dayness));
+      if (b > 0.0f)
+        d.draw_pixel_at(x, y, Blend(scene.At(y), Color(210, 216, 235), b));
+    };
+    draw_star_pixel(xi, yi, brightness);
     if (((h >> 24) & 0xff) > 210) {
-      const float ab = b * 0.4f;
-      d.draw_pixel_at(xi - 1, yi, Blend(scene.At(yi), Color(210, 216, 235), ab));
-      d.draw_pixel_at(xi + 1, yi, Blend(scene.At(yi), Color(210, 216, 235), ab));
-      d.draw_pixel_at(xi, yi - 1, Blend(scene.At(yi), Color(210, 216, 235), ab));
-      d.draw_pixel_at(xi, yi + 1, Blend(scene.At(yi), Color(210, 216, 235), ab));
+      const float arm_brightness = brightness * 0.4f;
+      draw_star_pixel(xi - 1, yi, arm_brightness);
+      draw_star_pixel(xi + 1, yi, arm_brightness);
+      draw_star_pixel(xi, yi - 1, arm_brightness);
+      draw_star_pixel(xi, yi + 1, arm_brightness);
     }
   }
 }

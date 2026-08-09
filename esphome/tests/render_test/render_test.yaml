@@ -695,6 +695,17 @@ pixoo64_content:
       fixed_time: 1616433810
       source: src_sky_day
 
+    # Late twilight: dayness is about 0.20 and several deterministic stars,
+    # including a multi-pixel arm, overlap the still-visible setting sun.
+    - platform: weather
+      id: weather_landscape_sun_glare_twilight
+      dashboard_id: weather_landscape_sun_glare_twilight
+      face: landscape
+      font_small: font_5
+      font_big: font_16
+      fixed_time: 1616434350
+      source: src_sky_day
+
     # Daylight with the Moon high and close to the Sun: the discs overlap, so
     # the Sun's glow must composite over the Moon instead of replacing it.
     - platform: weather
@@ -1151,6 +1162,9 @@ display:
       - dashboard: weather_landscape_day_moon
         now_ms: 0
         snapshot: weather_landscape_day_moon
+      - dashboard: weather_landscape_sun_glare_twilight
+        now_ms: 0
+        snapshot: weather_landscape_sun_glare_twilight
       # Each cloud profile advances by several pixels between these frames.
       - dashboard: weather_landscape_partlycloudy
         now_ms: 0
