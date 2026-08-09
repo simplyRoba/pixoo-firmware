@@ -102,9 +102,11 @@ The configured Home Assistant/native-API surface includes:
 - `Pixoo64 Panel` power and brightness; `Pixoo64 Text`; dashboard and timezone
   selects; location and weather-refresh settings; a sound switch; and diagnostic
   sensors.
-- `notify` (message, severity, duration, optional sound), `reaction`, and
-  `clear_overlay_queue` API actions. Notifications support `info`, `success`,
-  `warning`, and `error`. Reactions are `laughing`, `love`, `crying`, `angry`,
+- `notify` (message, optional title, severity, duration, optional sound),
+  `reaction`, and `clear_overlay_queue` API actions. An empty notification title
+  keeps the one-line banner; a title adds a line above the message. Notifications
+  support `info`, `success`, `warning`, and `error`. Reactions are `laughing`,
+  `love`, `crying`, `angry`,
   `poop`, `approve`, `disapprove`, `celebrate`, `thinking`, `surprised`, `fire`,
   and `eyes`.
 

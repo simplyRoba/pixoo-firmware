@@ -288,6 +288,27 @@ class PublicCliTest(unittest.TestCase):
         with mock.patch.dict("os.environ", {"PIXOO_API_ENCRYPTION_KEY": "test-key"}, clear=True):
             args = NOTIFY.parse_args(["--host", "display.local", "--reaction", "laughing"])
         self.assertEqual(NOTIFY.service_request(args), ("reaction", {"reaction": "laughing"}))
+        with mock.patch.dict("os.environ", {"PIXOO_API_ENCRYPTION_KEY": "test-key"}, clear=True):
+            args = NOTIFY.parse_args(["--host", "display.local", "hello"])
+        self.assertEqual(NOTIFY.service_request(args), ("notify", {
+            "message": "hello", "title": "", "severity": "info",
+            "duration": 4, "sound": "",
+        }))
+        with mock.patch.dict("os.environ", {"PIXOO_API_ENCRYPTION_KEY": "test-key"}, clear=True):
+            args = NOTIFY.parse_args([
+                "--host", "display.local", "--title", "System", "hello",
+            ])
+        self.assertEqual(NOTIFY.service_request(args), ("notify", {
+            "message": "hello", "title": "System", "severity": "info",
+            "duration": 4, "sound": "",
+        }))
+        for mode in (["--reaction", "laughing"], ["--clear"]):
+            with self.subTest(mode=mode), mock.patch.dict(
+                "os.environ", {"PIXOO_API_ENCRYPTION_KEY": "test-key"}, clear=True
+            ), self.assertRaises(SystemExit):
+                NOTIFY.parse_args([
+                    "--host", "display.local", "--title", "System", *mode,
+                ])
 
     def test_notify_reads_only_private_key_files_and_rejects_cli_keys(self):
         with tempfile.TemporaryDirectory() as directory:

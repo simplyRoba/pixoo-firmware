@@ -59,8 +59,9 @@ class FirmwareAppComponent final : public PollingComponent,
   void PowerButtonReleased();
   void BrightnessButtonPressed();
   void BrightnessButtonReleased();
-  void ShowNotification(const std::string &text, const std::string &severity,
-                        int32_t duration_seconds, const std::string &sound);
+  void ShowNotification(const std::string &text, const std::string &title,
+                        const std::string &severity, int32_t duration_seconds,
+                        const std::string &sound);
   void ShowReaction(const std::string &reaction);
   void ClearOverlayQueue();
   void BeginFirmwareUpdate();
@@ -99,12 +100,14 @@ class ShowNotificationAction : public Action<Ts...> {
   explicit ShowNotificationAction(FirmwareAppComponent *parent) : parent_(parent) {}
 
   TEMPLATABLE_VALUE(std::string, text)
+  TEMPLATABLE_VALUE(std::string, title)
   TEMPLATABLE_VALUE(std::string, severity)
   TEMPLATABLE_VALUE(int32_t, duration)
   TEMPLATABLE_VALUE(std::string, sound)
 
   void play(const Ts &...x) override {
     this->parent_->ShowNotification(this->text_.value(x...),
+                                    this->title_.value(x...),
                                     this->severity_.value(x...),
                                     this->duration_.value(x...),
                                     this->sound_.value(x...));

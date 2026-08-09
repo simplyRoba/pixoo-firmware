@@ -484,7 +484,8 @@ bool FirmwareApp::BeginFirmwareUpdate() {
 }
 
 bool FirmwareApp::Notify(NotificationRequest request, uint32_t now_ms) {
-  if (request.notification.text.size() > kMaximumNotificationTextBytes)
+  if (request.notification.text.size() > kMaximumNotificationTextBytes ||
+      request.notification.title.size() > kMaximumNotificationTextBytes)
     return false;
   OverlayRequest overlay_request;
   overlay_request.overlay.tag = OverlayTag::kNotification;

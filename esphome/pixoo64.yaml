@@ -117,14 +117,16 @@ api:
     key: !secret api_encryption_key
   actions:
     # Show a transient banner over the live content.
+    #   title: optional title; empty keeps a one-line message banner
     #   severity: info | success | warning | error (default info)
     #   duration: integer seconds; <=0 uses 4s; 300 is five minutes; values
-    #             above 4294967s saturate; long text may extend through one scroll pass
+    #             above 4294967s saturate; long title or text may extend through one scroll pass
     #   sound: tone name (chirp|success|pling1|pling2|pling3|pling4|alarm1|alarm2|alarm3),
     #          independent of severity; empty is silent
     - action: notify
       variables:
         message: string
+        title: string
         severity: string
         duration: int
         sound: string
@@ -132,6 +134,7 @@ api:
         - pixoo64.show_notification:
             id: pixoo_firmware
             text: !lambda return message;
+            title: !lambda return title;
             severity: !lambda return severity;
             duration: !lambda return duration;
             sound: !lambda return sound;

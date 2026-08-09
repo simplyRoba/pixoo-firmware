@@ -58,6 +58,7 @@ CONF_MICROPHONE_ENABLE_SWITCH = "enable_switch"
 CONF_LIGHT = "light"
 CONF_DASHBOARD_SELECT = "dashboard_select"
 CONF_TEXT = "text"
+CONF_TITLE = "title"
 CONF_REACTION = "reaction"
 CONF_SEVERITY = "severity"
 CONF_DURATION = "duration"
@@ -278,6 +279,7 @@ SHOW_NOTIFICATION_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.use_id(FirmwareAppComponent),
         cv.Required(CONF_TEXT): cv.templatable(cv.string),
+        cv.Optional(CONF_TITLE, default=""): cv.templatable(cv.string),
         cv.Optional(CONF_SEVERITY, default="info"): cv.templatable(
             cv.one_of(*SEVERITIES, lower=True)
         ),
@@ -317,6 +319,8 @@ async def show_notification_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, parent)
     templ = await cg.templatable(config[CONF_TEXT], args, cg.std_string)
     cg.add(var.set_text(templ))
+    templ = await cg.templatable(config[CONF_TITLE], args, cg.std_string)
+    cg.add(var.set_title(templ))
     templ = await cg.templatable(config[CONF_SEVERITY], args, cg.std_string)
     cg.add(var.set_severity(templ))
     templ = await cg.templatable(config[CONF_DURATION], args, cg.int32)

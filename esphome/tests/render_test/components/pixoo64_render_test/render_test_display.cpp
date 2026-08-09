@@ -457,6 +457,15 @@ void RenderTestDisplay::setup() {
       ++failures;
     }
 
+    const pixoo::Notification titled{
+        "Message", pixoo::Severity::kSuccess, "Status"};
+    if (!this->render_frame_(0, "text", &titled, 0, true)) {
+      std::printf("render test: FAILED to render notify_title\n");
+      ++failures;
+    } else {
+      check("notify_title");
+    }
+
     const pixoo::Notification scrolling{
         "A long message that will not fit", pixoo::Severity::kInfo};
     if (!this->render_frame_(0, "text", &scrolling, 1500, true)) {
@@ -464,6 +473,31 @@ void RenderTestDisplay::setup() {
       ++failures;
     } else {
       check("notify_scroll");
+    }
+
+    const pixoo::Notification titled_scrolling{
+        "Message", pixoo::Severity::kInfo,
+        "A long title that will not fit"};
+    const pixoo::Notification title_only{
+        "", pixoo::Severity::kInfo, titled_scrolling.title};
+    const pixoo::Notification message_only{
+        titled_scrolling.text, pixoo::Severity::kInfo};
+    const uint32_t titled_scroll_pass =
+        this->content_controller_->NotificationMinVisibleMs(titled_scrolling);
+    const uint32_t title_scroll_pass =
+        this->content_controller_->NotificationMinVisibleMs(title_only);
+    const uint32_t message_scroll_pass =
+        this->content_controller_->NotificationMinVisibleMs(message_only);
+    if (titled_scroll_pass != title_scroll_pass ||
+        titled_scroll_pass <= message_scroll_pass) {
+      std::printf("render test: FAILED notification scroll duration\n");
+      ++failures;
+    }
+    if (!this->render_frame_(0, "text", &titled_scrolling, 1500, true)) {
+      std::printf("render test: FAILED to render notify_title_scroll\n");
+      ++failures;
+    } else {
+      check("notify_title_scroll");
     }
 
     const pixoo::FrameView boot = this->content_controller_->RenderBootAnimation(0);

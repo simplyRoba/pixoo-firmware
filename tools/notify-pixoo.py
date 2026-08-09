@@ -6,7 +6,7 @@ permission-restricted --api-encryption-key-file. The key is never read from
 repository files, accepted on the command line, or printed.
 
 Examples:
-  PIXOO_HOST=display.local PIXOO_API_ENCRYPTION_KEY=... tools/notify-pixoo.py "Message text"
+  PIXOO_HOST=display.local PIXOO_API_ENCRYPTION_KEY=... tools/notify-pixoo.py --title "System" "Message text"
   tools/notify-pixoo.py --host display.local --api-encryption-key-file ~/.config/pixoo/key --reaction laughing
   tools/notify-pixoo.py --host display.local --api-encryption-key-file ~/.config/pixoo/key --clear
 """
@@ -97,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--reaction", choices=REACTIONS, help="show a named reaction")
     mode.add_argument("--clear", action="store_true", help="clear the overlay queue")
+    parser.add_argument("--title", help="optional notification title")
     parser.add_argument("message", nargs="?", help="notification text")
     parser.add_argument("severity", nargs="?", choices=SEVERITIES, default="info")
     parser.add_argument("duration", nargs="?", type=positive_int, default=4)
@@ -123,6 +124,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("PIXOO_API_ENCRYPTION_KEY or --api-encryption-key-file is required")
     if (args.reaction or args.clear) and args.message is not None:
         parser.error("message arguments cannot be combined with --reaction or --clear")
+    if (args.reaction or args.clear) and args.title is not None:
+        parser.error("--title cannot be combined with --reaction or --clear")
     if not args.reaction and not args.clear and args.message is None:
         parser.error("provide a message, --reaction NAME, or --clear")
     return args
@@ -135,6 +138,7 @@ def service_request(args: argparse.Namespace) -> tuple[str, dict[str, object]]:
         return "reaction", {"reaction": args.reaction}
     return "notify", {
         "message": args.message,
+        "title": args.title or "",
         "severity": args.severity,
         "duration": args.duration,
         "sound": args.sound or "",

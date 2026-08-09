@@ -81,18 +81,21 @@ void FirmwareAppComponent::BrightnessButtonReleased() {
 }
 
 void FirmwareAppComponent::ShowNotification(const std::string &text,
+                                            const std::string &title,
                                             const std::string &severity,
                                             int32_t duration_seconds,
                                             const std::string &sound) {
   if (!this->started_)
     return;
-  if (text.size() > pixoo::kMaximumNotificationTextBytes) {
-    ESP_LOGW(TAG, "notification rejected: text exceeds %u bytes",
+  if (text.size() > pixoo::kMaximumNotificationTextBytes ||
+      title.size() > pixoo::kMaximumNotificationTextBytes) {
+    ESP_LOGW(TAG, "notification rejected: text or title exceeds %u bytes",
              static_cast<unsigned>(pixoo::kMaximumNotificationTextBytes));
     return;
   }
   pixoo::NotificationRequest request;
-  request.notification = pixoo::Notification{text, pixoo::ParseSeverity(severity)};
+  request.notification =
+      pixoo::Notification{text, pixoo::ParseSeverity(severity), title};
   request.requested_duration_ms =
       pixoo::NotificationDurationMsFromSeconds(duration_seconds);
   request.has_sound = ParseSound_(sound, &request.sound);

@@ -308,9 +308,9 @@ may reuse it.
 One base dashboard is active at a time. Notifications and reactions are transient
 overlays managed by a bounded FIFO in `FirmwareApp`.
 
-- A notification keeps the base dashboard live. Its banner is composited over the
-  latest base frame, and its minimum visible time may increase to accommodate text
-  animation.
+- A notification keeps the base dashboard live. An empty title produces a
+  one-line message banner; a title produces title and message lines. Its minimum
+  visible time may increase to accommodate the longer text-scroll pass.
 - A reaction freezes one clean base frame, derives a blurred and darkened
   background once, and restores that background before each animated reaction
   frame.

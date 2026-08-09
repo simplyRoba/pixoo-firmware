@@ -21,6 +21,7 @@ enum class Severity {
 struct Notification {
   std::string text;
   Severity severity{Severity::kInfo};
+  std::string title{};
 };
 
 // Closed vocabulary for renderer-owned reaction animations.

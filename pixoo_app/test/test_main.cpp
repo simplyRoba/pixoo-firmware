@@ -1371,12 +1371,23 @@ static void test_notification_text_limit_bounds_retained_queue_memory() {
   std::string maximum(kMaximumNotificationTextBytes, 'a');
   TEST_ASSERT_TRUE(app.Notify(Request(maximum.c_str(), 1), 1));
   TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
+  TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
+                    app.current_overlay()->notification.text.size());
+  app.ClearOverlayQueue();
+
+  NotificationRequest titled = Request("Message", 1);
+  titled.notification.title = maximum;
+  TEST_ASSERT_TRUE(app.Notify(std::move(titled), 1));
+  TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
+  TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
+                    app.current_overlay()->notification.title.size());
 
   std::string oversized(kMaximumNotificationTextBytes + 1, 'b');
   TEST_ASSERT_FALSE(app.Notify(Request(oversized.c_str(), 1), 2));
+  NotificationRequest oversized_title = Request("Message", 1);
+  oversized_title.notification.title = oversized;
+  TEST_ASSERT_FALSE(app.Notify(std::move(oversized_title), 2));
   TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
-  TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
-                    app.current_overlay()->notification.text.size());
 }
 
 static void test_mixed_overlay_fifo_freezes_reaction_base_and_never_sounds_it() {
