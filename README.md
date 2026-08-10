@@ -1,5 +1,3 @@
-<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-
 # Pixoo64 replacement firmware
 
 Open replacement firmware for the ESP32 on a Pixoo64 display. It uses ESPHome for

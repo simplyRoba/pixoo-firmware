@@ -71,6 +71,36 @@ Run a generator without `--check` only when intentionally changing its source
 inputs or algorithm. Commit the generator, its public inputs, and generated output
 together.
 
+## Tools
+
+Generators owning checked-in sources:
+
+- `tools/gen-reaction-art.py` — rasterize the OpenMoji SVG sources into the
+  palette-compressed reaction artwork.
+- `tools/gen-split-flap-digits.py` — rasterize the split-flap digit strokes into
+  the anti-aliased coverage table.
+
+Render-test review:
+
+- `tools/render-test-view.sh` — rebuild the render-test frames and assemble the
+  review composites.
+- `tools/render-test-contact-sheet.py` — assemble rendered frames into one sheet.
+- `tools/render-test-icon-gallery.py` — assemble the weather-icon states.
+- `tools/render-weather-gif.py` — animate a weather dashboard state.
+
+Device and capture work:
+
+- `tools/esptool-readonly.sh` — ESP32 ROM-mode chip ID, security state, flash ID,
+  and full-flash dump; refuses to dump unless security parses as disabled.
+- `tools/uart-capture.py` — passive UART boot-log capture.
+- `tools/notify-pixoo.py` — call the device `notify`, `reaction`, and
+  `clear_overlay_queue` API actions over the network.
+- `tools/decode-panel-spi.py` — decode a logic-analyzer capture into panel
+  protocol frames; optionally dump a full-frame RGB payload.
+- `tools/read-sr-capture.py` — report the structure of a sigrok/PulseView `.sr`
+  capture.
+- `tools/render-panel-frame.py` — render a 12288-byte RGB payload to a PNG.
+
 ## Render snapshots
 
 The host render binary byte-compares its output with PNG references under
