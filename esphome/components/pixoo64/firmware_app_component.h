@@ -69,6 +69,10 @@ class FirmwareAppComponent final : public PollingComponent,
   void StopwatchStart();
   void StopwatchStop();
   void StopwatchReset();
+  void TimerSet(int32_t duration_ms);
+  void TimerStart();
+  void TimerStop();
+  void TimerReset();
 
   void Publish(pixoo::LightState state) override;
   void FactoryReset() override;
@@ -179,6 +183,57 @@ class StopwatchResetAction : public Action<Ts...> {
     this->parent_->StopwatchReset();
   }
 
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class TimerSetAction : public Action<Ts...> {
+ public:
+  explicit TimerSetAction(FirmwareAppComponent *parent) : parent_(parent) {}
+
+  TEMPLATABLE_VALUE(int32_t, duration_ms)
+
+  void play(const Ts &...x) override {
+    this->parent_->TimerSet(this->duration_ms_.value(x...));
+  }
+
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class TimerStartAction : public Action<Ts...> {
+ public:
+  explicit TimerStartAction(FirmwareAppComponent *parent) : parent_(parent) {}
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->TimerStart();
+  }
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class TimerStopAction : public Action<Ts...> {
+ public:
+  explicit TimerStopAction(FirmwareAppComponent *parent) : parent_(parent) {}
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->TimerStop();
+  }
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class TimerResetAction : public Action<Ts...> {
+ public:
+  explicit TimerResetAction(FirmwareAppComponent *parent) : parent_(parent) {}
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->TimerReset();
+  }
  protected:
   FirmwareAppComponent *parent_;
 };

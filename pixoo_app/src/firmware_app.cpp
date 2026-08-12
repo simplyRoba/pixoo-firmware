@@ -107,11 +107,13 @@ bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
                         const std::string &initial_dashboard_id) {
   // A restarted application must not leave an earlier boot or overlay sound
   // running into its new lifecycle.
-  if (this->sound_player_ != nullptr)
-    this->sound_player_->Stop();
+  this->StopSound_();
   this->phase_ = Phase::kOff;
   this->stopwatch_ = {};
   this->stopwatch_last_updated_ms_ = now_ms;
+  this->timer_ = {};
+  this->timer_loaded_duration_ms_ = 0;
+  this->timer_last_updated_ms_ = now_ms;
   this->first_boot_pending_ = true;
   this->boot_sound_played_ = false;
   this->power_button_pressed_ = false;
@@ -170,6 +172,7 @@ void FirmwareApp::BeginRepowerWaiting_(uint32_t now_ms) {
 
 void FirmwareApp::Tick(uint32_t now_ms) {
   this->AdvanceStopwatch_(now_ms);
+  this->AdvanceTimer_(now_ms);
   switch (this->phase_) {
     case Phase::kOff:
       return;
@@ -185,8 +188,11 @@ void FirmwareApp::Tick(uint32_t now_ms) {
         this->phase_ = Phase::kBootAnimation;
         this->boot_started_ms_ = now_ms;
         this->boot_rendered_ = false;
-        if (!this->boot_sound_played_ && this->sound_player_ != nullptr) {
-          this->sound_player_->Play(Sound::kBoot);
+        if (!this->boot_sound_played_) {
+          // A countdown may finish while the panel is still initializing. Its
+          // alarm takes precedence over the optional startup chime.
+          if (this->sound_owner_ != SoundOwner::kTimer)
+            this->PlaySound_(Sound::kBoot, SoundOwner::kBoot);
           this->boot_sound_played_ = true;
         }
       } else {
@@ -236,6 +242,49 @@ void FirmwareApp::AdvanceStopwatch_(uint32_t now_ms) {
     this->stopwatch_.elapsed_ms += elapsed;
   }
   this->stopwatch_last_updated_ms_ = now_ms;
+}
+
+void FirmwareApp::PlaySound_(Sound sound, SoundOwner owner) {
+  if (this->sound_player_ == nullptr) {
+    this->sound_owner_ = SoundOwner::kNone;
+    return;
+  }
+  this->sound_player_->Play(sound);
+  this->sound_owner_ = owner;
+}
+
+void FirmwareApp::StopSound_() {
+  if (this->sound_player_ != nullptr)
+    this->sound_player_->Stop();
+  this->sound_owner_ = SoundOwner::kNone;
+}
+
+bool FirmwareApp::StopSoundIfOwned_(SoundOwner owner) {
+  if (this->sound_owner_ != owner)
+    return false;
+  if (this->sound_player_ != nullptr)
+    this->sound_player_->Stop();
+  this->sound_owner_ = SoundOwner::kNone;
+  return true;
+}
+
+void FirmwareApp::StopTimerAlarm_() {
+  this->StopSoundIfOwned_(SoundOwner::kTimer);
+}
+
+void FirmwareApp::AdvanceTimer_(uint32_t now_ms) {
+  if (!this->timer_.running)
+    return;
+  const uint32_t elapsed = now_ms - this->timer_last_updated_ms_;
+  if (elapsed >= this->timer_.remaining_ms) {
+    this->timer_.remaining_ms = 0;
+    this->timer_.running = false;
+    this->timer_last_updated_ms_ = now_ms;
+    this->PlaySound_(Sound::kAlarm1, SoundOwner::kTimer);
+    return;
+  }
+  this->timer_.remaining_ms -= elapsed;
+  this->timer_last_updated_ms_ = now_ms;
 }
 
 bool FirmwareApp::BaseContentVisible_() const {
@@ -292,8 +341,8 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
     if (this->frame_metrics_ != nullptr)
       this->frame_metrics_->BeginRegularFrame();
     const bool rendered = this->renderer_.RenderContent(
-        now_ms, this->selected_dashboard_.id, this->stopwatch_, nullptr, 0,
-        true, false, true, false, &frame);
+        now_ms, this->selected_dashboard_.id, this->stopwatch_, this->timer_,
+        nullptr, 0, true, false, true, false, &frame);
     if (rendered && frame.valid())
       this->panel_.Present(frame, false);
     if (this->frame_metrics_ != nullptr)
@@ -331,9 +380,9 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
   if (render_overlay && this->frame_metrics_ != nullptr)
     this->frame_metrics_->BeginRegularFrame();
   const bool rendered = this->renderer_.RenderContent(
-      now_ms, this->selected_dashboard_.id, this->stopwatch_, &request.overlay,
-      visible_elapsed_ms, this->overlay_saved_light_.on, base_frozen,
-      render_base, render_overlay, &frame);
+      now_ms, this->selected_dashboard_.id, this->stopwatch_, this->timer_,
+      &request.overlay, visible_elapsed_ms, this->overlay_saved_light_.on,
+      base_frozen, render_base, render_overlay, &frame);
   const bool presented = render_overlay && rendered && frame.valid() &&
                          this->panel_.Present(frame, !this->overlay_visible_);
   if (render_overlay && this->frame_metrics_ != nullptr)
@@ -352,8 +401,8 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
         ReactionVisibleDurationMs(request.overlay.reaction);
   }
 
-  if (request.has_sound && this->sound_player_ != nullptr) {
-    this->sound_player_->Play(request.sound);
+  if (request.has_sound) {
+    this->PlaySound_(request.sound, SoundOwner::kOverlay);
     this->overlay_sound_started_ = true;
   }
 }
@@ -392,8 +441,8 @@ void FirmwareApp::ApplyUserLight_(LightState light, uint32_t now_ms,
     // An explicit logical off is a product-level mute, including a boot chime
     // that is unrelated to any overlay. An off-state brightness update during
     // a temporary overlay wake leaves the panel and queue running.
-    if (!overlay_sound_stopped && this->sound_player_ != nullptr)
-      this->sound_player_->Stop();
+    if (!overlay_sound_stopped)
+      this->StopSound_();
     this->renderer_.HideBaseContent();
     this->panel_.SetPower(false);
     this->phase_ = Phase::kOff;
@@ -508,6 +557,48 @@ void FirmwareApp::StopwatchReset(uint32_t now_ms) {
   this->RequestVisibleRender_();
 }
 
+void FirmwareApp::TimerSet(uint32_t duration_ms, uint32_t now_ms) {
+  this->StopTimerAlarm_();
+  const uint32_t duration = std::min(duration_ms, kTimerMaximumDurationMs);
+  if (this->timer_loaded_duration_ms_ == duration &&
+      this->timer_.remaining_ms == duration && !this->timer_.running)
+    return;
+  this->timer_loaded_duration_ms_ = duration;
+  this->timer_ = TimerSnapshot{duration, false};
+  this->timer_last_updated_ms_ = now_ms;
+  this->RequestVisibleRender_();
+}
+
+void FirmwareApp::TimerStart(uint32_t now_ms) {
+  this->AdvanceTimer_(now_ms);
+  this->StopTimerAlarm_();
+  if (this->timer_.running || this->timer_.remaining_ms == 0)
+    return;
+  this->timer_.running = true;
+  this->timer_last_updated_ms_ = now_ms;
+  this->RequestVisibleRender_();
+}
+
+void FirmwareApp::TimerStop(uint32_t now_ms) {
+  this->AdvanceTimer_(now_ms);
+  this->StopTimerAlarm_();
+  if (!this->timer_.running)
+    return;
+  this->timer_.running = false;
+  this->RequestVisibleRender_();
+}
+
+void FirmwareApp::TimerReset(uint32_t now_ms) {
+  this->AdvanceTimer_(now_ms);
+  this->StopTimerAlarm_();
+  if (this->timer_.remaining_ms == this->timer_loaded_duration_ms_ &&
+      !this->timer_.running)
+    return;
+  this->timer_ = TimerSnapshot{this->timer_loaded_duration_ms_, false};
+  this->timer_last_updated_ms_ = now_ms;
+  this->RequestVisibleRender_();
+}
+
 void FirmwareApp::SelectDashboard(const std::string &dashboard_id) {
   DashboardSelection resolved = this->selected_dashboard_;
   if (!this->renderer_.ResolveDashboard(dashboard_id, &resolved))
@@ -591,8 +682,7 @@ void FirmwareApp::ClearOverlayQueue() {
 }
 
 void FirmwareApp::FactoryReset() {
-  if (this->sound_player_ != nullptr)
-    this->sound_player_->Stop();
+  this->StopSound_();
   if (this->system_ != nullptr)
     this->system_->FactoryReset();
 }
@@ -622,10 +712,9 @@ bool FirmwareApp::notification_visible() const {
 bool FirmwareApp::StopOverlaySound_() {
   if (!this->overlay_sound_started_)
     return false;
-  if (this->sound_player_ != nullptr)
-    this->sound_player_->Stop();
+  const bool stopped = this->StopSoundIfOwned_(SoundOwner::kOverlay);
   this->overlay_sound_started_ = false;
-  return true;
+  return stopped;
 }
 
 void FirmwareApp::ResetCurrentOverlayPresentation_() {
@@ -682,8 +771,8 @@ void FirmwareApp::RestoreOverlaySnapshot_() {
   this->panel_.SetBrightness(restore.brightness);
 
   if (!restore.on) {
-    if (!overlay_sound_stopped && this->sound_player_ != nullptr)
-      this->sound_player_->Stop();
+    if (!overlay_sound_stopped && this->sound_owner_ != SoundOwner::kTimer)
+      this->StopSound_();
     this->renderer_.HideBaseContent();
     this->panel_.SetPower(false);
     this->phase_ = Phase::kOff;

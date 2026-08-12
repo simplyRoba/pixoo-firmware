@@ -10,7 +10,7 @@
 #include "dashboard/dashboard.h"
 #include "dashboard/equalizer/equalizer_dashboard.h"
 #include "dashboard/game_of_life/game_of_life_dashboard.h"
-#include "dashboard/stopwatch_dashboard.h"
+#include "dashboard/timing_dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/sensor/sensor.h"
 #include "firmware_app.h"
@@ -30,8 +30,11 @@ class ContentController : public display::Display,
                          public BlendCanvas {
  public:
   void add_dashboard(Dashboard *dashboard);
-  void set_stopwatch_dashboard(dashboard::StopwatchDashboard *dashboard) {
+  void set_stopwatch_dashboard(dashboard::TimingDashboard *dashboard) {
     this->stopwatch_dashboard_ = dashboard;
+  }
+  void set_timer_dashboard(dashboard::TimingDashboard *dashboard) {
+    this->timer_dashboard_ = dashboard;
   }
   void set_default_dashboard(std::string id);
   std::vector<std::string> dashboard_ids() const;
@@ -77,6 +80,7 @@ class ContentController : public display::Display,
   void ReleaseOverlayResources() override;
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::StopwatchSnapshot &stopwatch,
+                     const pixoo::TimerSnapshot &timer,
                      const pixoo::Overlay *overlay,
                      uint32_t overlay_visible_elapsed_ms, bool base_visible,
                      bool base_frozen, bool render_base, bool render_overlay,
@@ -98,7 +102,8 @@ class ContentController : public display::Display,
 
   std::vector<Dashboard *> dashboards_;
   Dashboard *visible_{nullptr};
-  dashboard::StopwatchDashboard *stopwatch_dashboard_{nullptr};
+  dashboard::TimingDashboard *stopwatch_dashboard_{nullptr};
+  dashboard::TimingDashboard *timer_dashboard_{nullptr};
   std::string default_dashboard_id_;
   struct ReactionBackgroundDeleter {
     void operator()(pixoo::Framebuffer *framebuffer) const;

@@ -62,6 +62,7 @@ CONF_TITLE = "title"
 CONF_REACTION = "reaction"
 CONF_SEVERITY = "severity"
 CONF_DURATION = "duration"
+CONF_DURATION_MS = "duration_ms"
 CONF_SOUND = "sound"
 CONF_USE_APLL = "use_apll"
 CONF_FRAME_METRICS = "frame_metrics"
@@ -153,6 +154,11 @@ StopwatchStopAction = pixoo64_ns.class_(
 StopwatchResetAction = pixoo64_ns.class_(
     "StopwatchResetAction", automation.Action
 )
+TimerSetAction = pixoo64_ns.class_("TimerSetAction", automation.Action)
+TimerStartAction = pixoo64_ns.class_("TimerStartAction", automation.Action)
+TimerStopAction = pixoo64_ns.class_("TimerStopAction", automation.Action)
+TimerResetAction = pixoo64_ns.class_("TimerResetAction", automation.Action)
+
 
 def validate_panel_timing(config):
     duration_ms = config[CONF_PANEL_SOFT_START_DURATION].total_milliseconds
@@ -318,6 +324,15 @@ BEGIN_FIRMWARE_UPDATE_SCHEMA = automation.maybe_simple_id(
 STOPWATCH_ACTION_SCHEMA = automation.maybe_simple_id(
     {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
 )
+TIMER_SET_ACTION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(FirmwareAppComponent),
+        cv.Required(CONF_DURATION_MS): cv.templatable(cv.int_),
+    }
+)
+TIMER_ACTION_SCHEMA = automation.maybe_simple_id(
+    {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
+)
 
 
 @automation.register_action(
@@ -396,6 +411,53 @@ async def stopwatch_stop_to_code(config, action_id, template_arg, args):
     synchronous=True,
 )
 async def stopwatch_reset_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.timer_set",
+    TimerSetAction,
+    TIMER_SET_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_set_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    templ = await cg.templatable(config[CONF_DURATION_MS], args, cg.int32)
+    cg.add(var.set_duration_ms(templ))
+    return var
+
+
+@automation.register_action(
+    "pixoo64.timer_start",
+    TimerStartAction,
+    TIMER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_start_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.timer_stop",
+    TimerStopAction,
+    TIMER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_stop_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.timer_reset",
+    TimerResetAction,
+    TIMER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_reset_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 

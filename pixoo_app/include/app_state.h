@@ -20,6 +20,14 @@ struct StopwatchSnapshot {
   bool running{false};
 };
 
+constexpr uint32_t kTimerMaximumDurationMs = 100u * 60u * 1000u - 1u;
+
+// Application-owned countdown state passed by value to its renderer.
+struct TimerSnapshot {
+  uint32_t remaining_ms{0};
+  bool running{false};
+};
+
 constexpr size_t kMaximumNotificationTextBytes = 256;
 
 // Stores a NUL-terminated byte sequence without allocating. Overlong input is

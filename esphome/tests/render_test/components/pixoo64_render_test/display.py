@@ -14,6 +14,8 @@ CONF_SNAPSHOT = "snapshot"
 CONF_BASE_VISIBLE = "base_visible"
 CONF_STOPWATCH_ELAPSED_MS = "stopwatch_elapsed_ms"
 CONF_STOPWATCH_RUNNING = "stopwatch_running"
+CONF_TIMER_REMAINING_MS = "timer_remaining_ms"
+CONF_TIMER_RUNNING = "timer_running"
 
 pixoo64_ns = cg.esphome_ns.namespace("pixoo64")
 content_ns = pixoo64_ns.namespace("content")
@@ -35,6 +37,10 @@ ANIMATION_FRAME_SCHEMA = cv.Schema(
             min=0, max=3_600_000
         ),
         cv.Optional(CONF_STOPWATCH_RUNNING, default=False): cv.boolean,
+        cv.Optional(CONF_TIMER_REMAINING_MS, default=0): cv.int_range(
+            min=0, max=5_999_999
+        ),
+        cv.Optional(CONF_TIMER_RUNNING, default=False): cv.boolean,
     }
 )
 
@@ -76,6 +82,8 @@ async def to_code(config):
                 frame[CONF_BASE_VISIBLE],
                 frame[CONF_STOPWATCH_ELAPSED_MS],
                 frame[CONF_STOPWATCH_RUNNING],
+                frame[CONF_TIMER_REMAINING_MS],
+                frame[CONF_TIMER_RUNNING],
             )
         )
     cg.add(var.set_output_dir(config[CONF_OUTPUT_DIR]))

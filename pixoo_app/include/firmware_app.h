@@ -76,7 +76,7 @@ class RenderPort {
   // time base an animated dashboard has.
   virtual bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                              const StopwatchSnapshot &stopwatch,
-                             const Overlay *overlay,
+                             const TimerSnapshot &timer, const Overlay *overlay,
                              uint32_t overlay_visible_elapsed_ms,
                              bool base_visible, bool base_frozen,
                              bool render_base, bool render_overlay,
@@ -151,6 +151,14 @@ constexpr uint32_t NotificationDurationMsFromSeconds(int32_t duration_seconds) {
   return saturated_seconds * kNotificationMillisecondsPerSecond;
 }
 
+constexpr uint32_t TimerDurationMsFromApi(int32_t duration_ms) {
+  if (duration_ms <= 0)
+    return 0;
+  const uint32_t duration = static_cast<uint32_t>(duration_ms);
+  return duration > kTimerMaximumDurationMs ? kTimerMaximumDurationMs
+                                             : duration;
+}
+
 struct FirmwareAppConfig {
   uint32_t cold_init_delay_ms{1000};
   uint32_t repower_delay_ms{300};
@@ -202,6 +210,11 @@ class FirmwareApp {
   void StopwatchStop(uint32_t now_ms);
   void StopwatchReset(uint32_t now_ms);
   StopwatchSnapshot stopwatch() const { return this->stopwatch_; }
+  void TimerSet(uint32_t duration_ms, uint32_t now_ms);
+  void TimerStart(uint32_t now_ms);
+  void TimerStop(uint32_t now_ms);
+  void TimerReset(uint32_t now_ms);
+  TimerSnapshot timer() const { return this->timer_; }
   // Renders and force-presents the update frame synchronously before OTA
   // proceeds. Returns false while the panel is not ready or presentation fails.
   bool BeginFirmwareUpdate();
@@ -232,6 +245,12 @@ class FirmwareApp {
   static bool ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                               uint32_t duration_ms);
   void AdvanceStopwatch_(uint32_t now_ms);
+  void AdvanceTimer_(uint32_t now_ms);
+  enum class SoundOwner { kNone, kBoot, kOverlay, kTimer };
+  void PlaySound_(Sound sound, SoundOwner owner);
+  void StopSound_();
+  bool StopSoundIfOwned_(SoundOwner owner);
+  void StopTimerAlarm_();
 
   void ApplyUserLight_(LightState light, uint32_t now_ms, bool publish);
   bool EnqueueOverlay_(OverlayRequest request, uint32_t now_ms);
@@ -283,9 +302,13 @@ class FirmwareApp {
   bool first_boot_pending_{true};
   bool boot_sound_played_{false};
   bool microphone_enabled_{false};
+  SoundOwner sound_owner_{SoundOwner::kNone};
 
   StopwatchSnapshot stopwatch_{};
   uint32_t stopwatch_last_updated_ms_{0};
+  TimerSnapshot timer_{};
+  uint32_t timer_loaded_duration_ms_{0};
+  uint32_t timer_last_updated_ms_{0};
 
   // Current bounce point and direction, synchronized with external light
   // state. The endpoints reverse; middle steps head upward deterministically.

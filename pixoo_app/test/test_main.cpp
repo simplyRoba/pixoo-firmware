@@ -88,7 +88,8 @@ struct RecordingPanel final : PanelPort {
 
 struct RecordingRenderer final : RenderPort {
   explicit RecordingRenderer(std::vector<std::string> *events) : events(events) {
-    catalog = {{"text", false}, {"weather", true}, {"equalizer", true}};
+    catalog = {{"text", false}, {"weather", true}, {"equalizer", true},
+               {"stopwatch", false}, {"timer", false}};
   }
 
   bool ResolveDashboard(const std::string &requested,
@@ -126,12 +127,14 @@ struct RecordingRenderer final : RenderPort {
   void HideBaseContent() override { hide_base_calls++; }
   void ReleaseOverlayResources() override { release_overlay_calls++; }
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
-                     const StopwatchSnapshot &stopwatch, const Overlay *overlay,
+                     const StopwatchSnapshot &stopwatch,
+                     const TimerSnapshot &timer, const Overlay *overlay,
                      uint32_t overlay_visible_elapsed_ms, bool base_visible,
                      bool base_frozen, bool render_base, bool render_overlay,
                      FrameView *frame) override {
     last_render_now_ms = now_ms;
     last_stopwatch = stopwatch;
+    last_timer = timer;
     render_base_calls.push_back(render_base);
     render_overlay_calls.push_back(render_overlay);
     base_frozen_calls.push_back(base_frozen);
@@ -170,6 +173,7 @@ struct RecordingRenderer final : RenderPort {
   uint32_t min_visible_ms{0};
   uint32_t last_render_now_ms{0};
   StopwatchSnapshot last_stopwatch{};
+  TimerSnapshot last_timer{};
   int hide_base_calls{0};
   int release_overlay_calls{0};
   std::vector<bool> render_results;
@@ -295,6 +299,17 @@ static void test_notification_duration_seconds_convert_to_milliseconds() {
   TEST_ASSERT_EQUAL_UINT32(
       4294967000U,
       NotificationDurationMsFromSeconds(std::numeric_limits<int32_t>::max()));
+}
+
+static void test_timer_api_duration_clamps_signed_input() {
+  TEST_ASSERT_EQUAL_UINT32(0, TimerDurationMsFromApi(-1));
+  TEST_ASSERT_EQUAL_UINT32(0, TimerDurationMsFromApi(0));
+  TEST_ASSERT_EQUAL_UINT32(1, TimerDurationMsFromApi(1));
+  TEST_ASSERT_EQUAL_UINT32(kTimerMaximumDurationMs,
+                           TimerDurationMsFromApi(kTimerMaximumDurationMs));
+  TEST_ASSERT_EQUAL_UINT32(
+      kTimerMaximumDurationMs,
+      TimerDurationMsFromApi(std::numeric_limits<int32_t>::max()));
 }
 
 static void test_timezone_catalog_maps_labels_to_posix_with_valid_default() {
@@ -2179,6 +2194,203 @@ static void test_stopwatch_advances_off_overlay_and_wrap() {
   TEST_ASSERT_EQUAL_UINT32(64, app.stopwatch().elapsed_ms);
 }
 
+static void test_timer_controls_snapshots_and_limits() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.TimerSet(1000, 10);
+  app.TimerSet(1000, 10);
+  TEST_ASSERT_EQUAL_UINT32(1000, app.timer().remaining_ms);
+  TEST_ASSERT_FALSE(app.timer().running);
+  app.TimerStart(10);
+  app.TimerStart(10);
+  app.Tick(510);
+  TEST_ASSERT_EQUAL_UINT32(500, app.timer().remaining_ms);
+  TEST_ASSERT_TRUE(app.timer().running);
+  app.TimerStop(510);
+  app.TimerStop(600);
+  TEST_ASSERT_EQUAL_UINT32(500, app.timer().remaining_ms);
+  app.TimerReset(600);
+  TEST_ASSERT_EQUAL_UINT32(1000, app.timer().remaining_ms);
+  TEST_ASSERT_FALSE(app.timer().running);
+  app.TimerSet(kTimerMaximumDurationMs + 1, 700);
+  TEST_ASSERT_EQUAL_UINT32(kTimerMaximumDurationMs, app.timer().remaining_ms);
+  app.TimerSet(std::numeric_limits<uint32_t>::max(), 701);
+  TEST_ASSERT_EQUAL_UINT32(kTimerMaximumDurationMs, app.timer().remaining_ms);
+  app.TimerSet(0, 702);
+  app.TimerStart(702);
+  TEST_ASSERT_FALSE(app.timer().running);
+
+  app.SelectDashboard("timer");
+  app.TimerSet(200, 800);
+  app.TimerStart(800);
+  app.Tick(850);
+  TEST_ASSERT_EQUAL_UINT32(150, renderer.last_timer.remaining_ms);
+  TEST_ASSERT_TRUE(renderer.last_timer.running);
+}
+
+static void test_timer_expires_once_off_overlay_and_wrap_without_navigation() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app, 0xfffffff0u);
+  const std::string selected = app.selected_dashboard().id;
+  app.SetUserLight(LightState{false, 0.5f}, 0xfffffff5u);
+  const int power_calls = panel.power_calls;
+  app.TimerSet(64, 0xfffffff0u);
+  app.TimerStart(0xfffffff0u);
+  app.Tick(0x20u);
+  TEST_ASSERT_EQUAL_UINT32(16, app.timer().remaining_ms);
+  TEST_ASSERT_EQUAL(power_calls, panel.power_calls);
+  TEST_ASSERT_EQUAL_STRING(selected.c_str(), app.selected_dashboard().id.c_str());
+  app.Notify(Request("cover", 100), 0x21u);
+  app.Tick(0x21u);
+  app.Tick(0x30u);
+  TEST_ASSERT_EQUAL_UINT32(0, app.timer().remaining_ms);
+  TEST_ASSERT_FALSE(app.timer().running);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(std::count(sound.played.begin(),
+                                                    sound.played.end(),
+                                                    Sound::kAlarm1)));
+  app.Tick(0x40u);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(std::count(sound.played.begin(),
+                                                    sound.played.end(),
+                                                    Sound::kAlarm1)));
+}
+
+static void test_timer_state_is_volatile_across_start() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.TimerSet(1000, 10);
+  app.TimerStart(10);
+  app.Tick(110);
+  TEST_ASSERT_EQUAL_UINT32(900, app.timer().remaining_ms);
+
+  TEST_ASSERT_TRUE(app.Start(200, LightState{false, 0.5f}, "text"));
+  TEST_ASSERT_EQUAL_UINT32(0, app.timer().remaining_ms);
+  TEST_ASSERT_FALSE(app.timer().running);
+  app.TimerReset(201);
+  app.TimerStart(201);
+  TEST_ASSERT_EQUAL_UINT32(0, app.timer().remaining_ms);
+  TEST_ASSERT_FALSE(app.timer().running);
+}
+
+static void test_timer_alarm_preempts_boot_chime() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{100, 0, 0});
+  TEST_ASSERT_TRUE(app.Start(0, LightState{true, 0.5f}, "text"));
+  app.TimerSet(10, 0);
+  app.TimerStart(0);
+  app.Tick(10);
+  TEST_ASSERT_TRUE(sound.played.back() == Sound::kAlarm1);
+
+  app.Tick(100);
+  TEST_ASSERT_EQUAL(
+      1, static_cast<int>(std::count(sound.played.begin(), sound.played.end(),
+                                     Sound::kAlarm1)));
+  TEST_ASSERT_EQUAL(
+      0, static_cast<int>(std::count(sound.played.begin(), sound.played.end(),
+                                     Sound::kBoot)));
+}
+
+static void test_timer_sound_ownership_preserves_alarm_through_off_restore() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.SetUserLight(LightState{false, 0.5f}, 1);
+  app.TimerSet(10, 2);
+  app.TimerStart(2);
+  NotificationRequest overlay = Request("cover", 1);
+  overlay.has_sound = true;
+  overlay.sound = Sound::kChirp;
+  app.Notify(overlay, 2);
+  app.Tick(2);
+  app.Tick(3);
+  app.Tick(12);
+  const int stops_before_restore = sound.stop_calls;
+  TEST_ASSERT_TRUE(sound.played.back() == Sound::kAlarm1);
+  app.Tick(13);
+  TEST_ASSERT_FALSE(app.logical_light().on);
+  TEST_ASSERT_EQUAL(stops_before_restore, sound.stop_calls);
+  app.TimerReset(14);
+  TEST_ASSERT_EQUAL(stops_before_restore + 1, sound.stop_calls);
+}
+
+static void test_sounding_overlay_replaces_alarm_and_owns_its_sound() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.TimerSet(1, 1);
+  app.TimerStart(1);
+  app.Tick(2);
+  TEST_ASSERT_TRUE(sound.played.back() == Sound::kAlarm1);
+
+  NotificationRequest overlay = Request("sound", 2);
+  overlay.has_sound = true;
+  overlay.sound = Sound::kChirp;
+  TEST_ASSERT_TRUE(app.Notify(overlay, 3));
+  app.Tick(3);
+  TEST_ASSERT_TRUE(sound.played.back() == Sound::kChirp);
+  const int stops_after_overlay_started = sound.stop_calls;
+
+  app.TimerSet(100, 3);
+  app.TimerStart(3);
+  app.TimerStop(4);
+  app.TimerReset(4);
+  TEST_ASSERT_EQUAL(stops_after_overlay_started, sound.stop_calls);
+
+  app.Tick(5);
+  TEST_ASSERT_FALSE(app.overlay_visible());
+  TEST_ASSERT_EQUAL(stops_after_overlay_started + 1, sound.stop_calls);
+}
+
+static void test_explicit_off_and_factory_reset_stop_timer_alarm() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.TimerSet(1, 1);
+  app.TimerStart(1);
+  app.Tick(2);
+  const int stops_before_off = sound.stop_calls;
+
+  app.SetUserLight(LightState{false, 0.5f}, 3);
+  TEST_ASSERT_EQUAL(stops_before_off + 1, sound.stop_calls);
+  TEST_ASSERT_FALSE(panel.power_on);
+
+  app.TimerReset(4);
+  app.TimerStart(4);
+  app.Tick(5);
+  TEST_ASSERT_TRUE(sound.played.back() == Sound::kAlarm1);
+  const int stops_before_reset = sound.stop_calls;
+  app.FactoryReset();
+  TEST_ASSERT_EQUAL(stops_before_reset + 1, sound.stop_calls);
+}
+
 // ---- in/ (spectrum) tests ----
 
 
@@ -2196,6 +2408,7 @@ int main(int, char **) {
   RUN_TEST(test_frame_output_resends_unchanged_after_interval);
   RUN_TEST(test_frame_output_blanks_once_while_off);
   RUN_TEST(test_notification_duration_seconds_convert_to_milliseconds);
+  RUN_TEST(test_timer_api_duration_clamps_signed_input);
   RUN_TEST(test_timezone_catalog_maps_labels_to_posix_with_valid_default);
   RUN_TEST(test_severity_parse_roundtrips_and_falls_back);
   RUN_TEST(test_reaction_parse_roundtrips_and_has_designed_durations);
@@ -2264,6 +2477,13 @@ int main(int, char **) {
   RUN_TEST(test_stopwatch_actions_are_precise_idempotent_and_cap);
   RUN_TEST(test_stopwatch_actions_do_not_wake_an_off_panel);
   RUN_TEST(test_stopwatch_advances_off_overlay_and_wrap);
+  RUN_TEST(test_timer_controls_snapshots_and_limits);
+  RUN_TEST(test_timer_expires_once_off_overlay_and_wrap_without_navigation);
+  RUN_TEST(test_timer_state_is_volatile_across_start);
+  RUN_TEST(test_timer_alarm_preempts_boot_chime);
+  RUN_TEST(test_timer_sound_ownership_preserves_alarm_through_off_restore);
+  RUN_TEST(test_sounding_overlay_replaces_alarm_and_owns_its_sound);
+  RUN_TEST(test_explicit_off_and_factory_reset_stop_timer_alarm);
   RUN_TEST(test_inbound_user_light_never_publishes_to_sink);
   return UNITY_END();
 }

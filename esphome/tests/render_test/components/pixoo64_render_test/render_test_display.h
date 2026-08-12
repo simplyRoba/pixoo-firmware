@@ -28,7 +28,8 @@ class RenderTestDisplay final : public display::Display {
   void add_animation_frame(std::string dashboard_id, uint32_t now_ms,
                            std::string snapshot_id, bool base_visible,
                            uint32_t stopwatch_elapsed_ms,
-                           bool stopwatch_running);
+                           bool stopwatch_running, uint32_t timer_remaining_ms,
+                           bool timer_running);
   display::DisplayType get_display_type() override {
     return display::DISPLAY_TYPE_COLOR;
   }
@@ -43,13 +44,15 @@ class RenderTestDisplay final : public display::Display {
     std::string snapshot_id;
     bool base_visible{true};
     pixoo::StopwatchSnapshot stopwatch{};
+    pixoo::TimerSnapshot timer{};
   };
 
   bool render_frame_(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::Notification *notification,
                      uint32_t notification_visible_elapsed_ms,
                      bool base_visible,
-                     pixoo::StopwatchSnapshot stopwatch = {});
+                     pixoo::StopwatchSnapshot stopwatch = {},
+                     pixoo::TimerSnapshot timer = {});
   bool has_animation_frames_(const std::string &dashboard_id) const;
 
   pixoo64::content::ContentController *content_controller_{nullptr};

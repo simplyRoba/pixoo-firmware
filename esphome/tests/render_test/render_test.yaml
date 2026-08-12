@@ -665,9 +665,15 @@ pixoo64_content:
       face: analog
       fixed_time: 1616371200
 
-    - platform: stopwatch
+    - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
+      face: stopwatch
+
+    - platform: timing
+      id: timer_dashboard
+      dashboard_id: timer
+      face: timer
 
     # Midday: sun near the top of its arc over Berlin.
     - platform: weather
@@ -1072,6 +1078,21 @@ display:
         now_ms: 700
         stopwatch_elapsed_ms: 3600000
         snapshot: stopwatch_cap
+      # Countdown values round upward to the next displayed hundredth, so the
+      # face never reaches zero before the application timer does.
+      - dashboard: timer
+        now_ms: 0
+        timer_remaining_ms: 59991
+        timer_running: true
+        snapshot: timer_running
+      - dashboard: timer
+        now_ms: 0
+        timer_remaining_ms: 5999999
+        snapshot: timer_stopped_max
+      - dashboard: timer
+        now_ms: 0
+        timer_remaining_ms: 0
+        snapshot: timer_zero
       # The hero icon loops: rain falls through its band and every loop is a
       # pure function of the animation time, so a later frame in the loop
       # differs from its start.

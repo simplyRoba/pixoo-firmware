@@ -166,6 +166,26 @@ void FirmwareAppComponent::StopwatchReset() {
     this->app_->StopwatchReset(millis());
 }
 
+void FirmwareAppComponent::TimerSet(int32_t duration_ms) {
+  if (this->started_)
+    this->app_->TimerSet(pixoo::TimerDurationMsFromApi(duration_ms), millis());
+}
+
+void FirmwareAppComponent::TimerStart() {
+  if (this->started_)
+    this->app_->TimerStart(millis());
+}
+
+void FirmwareAppComponent::TimerStop() {
+  if (this->started_)
+    this->app_->TimerStop(millis());
+}
+
+void FirmwareAppComponent::TimerReset() {
+  if (this->started_)
+    this->app_->TimerReset(millis());
+}
+
 void FirmwareAppComponent::Publish(pixoo::LightState state) {
   if (this->light_ == nullptr)
     return;

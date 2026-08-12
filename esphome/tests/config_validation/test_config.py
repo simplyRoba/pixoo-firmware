@@ -65,6 +65,13 @@ class EspHomeConfigTest(unittest.TestCase):
         result = self.run_config(self.fixture)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_production_config_has_both_timing_faces(self):
+        text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
+        self.assertEqual(text.count("    - platform: timing\n"), 2)
+        for face in ("stopwatch", "timer"):
+            self.assertEqual(text.count(f"      dashboard_id: {face}\n"), 1)
+            self.assertEqual(text.count(f"      face: {face}\n"), 1)
+
     def test_final_validators_reject_invalid_board_wiring(self):
         cases = (
             (
@@ -100,31 +107,78 @@ class EspHomeConfigTest(unittest.TestCase):
                 "dashboard select initial_option must match the renderer default_dashboard",
             ),
             (
-                "stopwatch dashboard ID",
+                "stopwatch timing dashboard ID",
                 "esphome/pixoo64.yaml",
-                "      dashboard_id: stopwatch\n",
-                "      dashboard_id: stopwatch_other\n",
-                "the stopwatch dashboard_id must be stopwatch",
+                "      dashboard_id: stopwatch\n      frame_interval: 33ms\n      face: stopwatch\n",
+                "      dashboard_id: stopwatch_other\n      frame_interval: 33ms\n      face: stopwatch\n",
+                "the stopwatch timing dashboard_id must be stopwatch",
             ),
             (
-                "duplicate stopwatch dashboard",
+                "timer timing dashboard ID",
                 "esphome/pixoo64.yaml",
-                """    - platform: stopwatch
+                "      dashboard_id: timer\n      frame_interval: 33ms\n      face: timer\n",
+                "      dashboard_id: timer_other\n      frame_interval: 33ms\n      face: timer\n",
+                "the timer timing dashboard_id must be timer",
+            ),
+            (
+                "duplicate stopwatch timing face",
+                "esphome/pixoo64.yaml",
+                """    - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
       frame_interval: 33ms
+      face: stopwatch
 """,
-                """    - platform: stopwatch
+                """    - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
       frame_interval: 33ms
+      face: stopwatch
 
-    - platform: stopwatch
+    - platform: timing
       id: stopwatch_dashboard_other
       dashboard_id: stopwatch_other
       frame_interval: 33ms
+      face: stopwatch
 """,
-                "at most one stopwatch dashboard may be configured",
+                "at most one stopwatch timing dashboard may be configured",
+            ),
+            (
+                "duplicate timer timing face",
+                "esphome/pixoo64.yaml",
+                """    - platform: timing
+      id: timer_dashboard
+      dashboard_id: timer
+      frame_interval: 33ms
+      face: timer
+""",
+                """    - platform: timing
+      id: timer_dashboard
+      dashboard_id: timer
+      frame_interval: 33ms
+      face: timer
+
+    - platform: timing
+      id: timer_dashboard_other
+      dashboard_id: timer_other
+      frame_interval: 33ms
+      face: timer
+""",
+                "at most one timer timing dashboard may be configured",
+            ),
+            (
+                "missing timing face",
+                "esphome/pixoo64.yaml",
+                "      face: timer\n",
+                "",
+                "'face' is a required option",
+            ),
+            (
+                "invalid timing face",
+                "esphome/pixoo64.yaml",
+                "      face: timer\n",
+                "      face: countdown\n",
+                "Unknown value 'countdown'",
             ),
             (
                 "microphone stream format",

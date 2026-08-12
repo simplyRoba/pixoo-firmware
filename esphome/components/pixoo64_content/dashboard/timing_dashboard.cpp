@@ -1,4 +1,4 @@
-#include "stopwatch_dashboard.h"
+#include "timing_dashboard.h"
 
 #include <array>
 #include <cstdint>
@@ -16,6 +16,8 @@ constexpr uint8_t kSegmentE = 1u << 4;
 constexpr uint8_t kSegmentF = 1u << 5;
 constexpr uint8_t kSegmentG = 1u << 6;
 constexpr uint8_t kDecimalPoint = 1u << 7;
+constexpr uint32_t kMaximumDisplayedMs =
+    99u * 60u * 1000u + 59u * 1000u + 990u;
 constexpr std::array<uint8_t, 10> kDigitSegments{
     kSegmentA | kSegmentB | kSegmentC | kSegmentD | kSegmentE | kSegmentF,
     kSegmentB | kSegmentC,
@@ -109,10 +111,27 @@ void DrawDigit(display::Display &display, float x, float y, float width,
 uint8_t SegmentsFor(uint32_t digit) { return kDigitSegments[digit % 10u]; }
 }  // namespace
 
-void StopwatchDashboard::Render(display::Display &display) const {
+void TimingDashboard::set_stopwatch(pixoo::StopwatchSnapshot snapshot) {
+  this->display_ms_ = snapshot.elapsed_ms;
+  this->running_ = snapshot.running;
+}
+
+void TimingDashboard::set_timer(pixoo::TimerSnapshot snapshot) {
+  if (snapshot.remaining_ms == 0) {
+    this->display_ms_ = 0;
+  } else {
+    const uint32_t rounded_ms = (snapshot.remaining_ms + 9u) / 10u * 10u;
+    this->display_ms_ = rounded_ms > kMaximumDisplayedMs
+                            ? kMaximumDisplayedMs
+                            : rounded_ms;
+  }
+  this->running_ = snapshot.running;
+}
+
+void TimingDashboard::Render(display::Display &display) const {
   display.fill(kBackground);
 
-  const uint32_t elapsed = this->snapshot_.elapsed_ms;
+  const uint32_t elapsed = this->display_ms_;
   const uint32_t minutes = elapsed / 60000u;
   const uint32_t seconds = elapsed / 1000u % 60u;
   const uint32_t centiseconds = elapsed / 10u % 100u;
@@ -129,7 +148,7 @@ void StopwatchDashboard::Render(display::Display &display) const {
   DrawDigit(display, 49.0f, kMainY, kMainWidth, kMainHeight,
             SegmentsFor(seconds), kMainStyle);
 
-  if (this->snapshot_.running) {
+  if (this->running_) {
     DrawLedDot(display, 32.0f, 15.5f, kMainStyle);
     DrawLedDot(display, 32.0f, 25.5f, kMainStyle);
   } else {

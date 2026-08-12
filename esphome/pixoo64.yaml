@@ -160,6 +160,22 @@ api:
     - action: stopwatch_reset
       then:
         - pixoo64.stopwatch_reset: pixoo_firmware
+    - action: timer_set
+      variables:
+        duration_ms: int
+      then:
+        - pixoo64.timer_set:
+            id: pixoo_firmware
+            duration_ms: !lambda return duration_ms;
+    - action: timer_start
+      then:
+        - pixoo64.timer_start: pixoo_firmware
+    - action: timer_stop
+      then:
+        - pixoo64.timer_stop: pixoo_firmware
+    - action: timer_reset
+      then:
+        - pixoo64.timer_reset: pixoo_firmware
 
 ota:
   - platform: esphome
@@ -302,10 +318,17 @@ pixoo64_content:
       face: binary
       time_id: panel_time
 
-    - platform: stopwatch
+    - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
       frame_interval: 33ms
+      face: stopwatch
+
+    - platform: timing
+      id: timer_dashboard
+      dashboard_id: timer
+      frame_interval: 33ms
+      face: timer
 
 # Home Assistant controls
 select:
@@ -331,6 +354,7 @@ select:
       - clock_analog
       - clock_binary
       - stopwatch
+      - timer
     initial_option: clock_analog
     optimistic: true
     restore_value: true
