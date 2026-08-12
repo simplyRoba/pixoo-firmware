@@ -26,7 +26,9 @@ class RenderTestDisplay final : public display::Display {
   // the single-frame dashboards. An empty `snapshot_id` only advances the
   // animation. A dashboard with animation frames gets no single frame.
   void add_animation_frame(std::string dashboard_id, uint32_t now_ms,
-                           std::string snapshot_id, bool base_visible);
+                           std::string snapshot_id, bool base_visible,
+                           uint32_t stopwatch_elapsed_ms,
+                           bool stopwatch_running);
   display::DisplayType get_display_type() override {
     return display::DISPLAY_TYPE_COLOR;
   }
@@ -40,12 +42,14 @@ class RenderTestDisplay final : public display::Display {
     uint32_t now_ms{0};
     std::string snapshot_id;
     bool base_visible{true};
+    pixoo::StopwatchSnapshot stopwatch{};
   };
 
   bool render_frame_(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::Notification *notification,
                      uint32_t notification_visible_elapsed_ms,
-                     bool base_visible);
+                     bool base_visible,
+                     pixoo::StopwatchSnapshot stopwatch = {});
   bool has_animation_frames_(const std::string &dashboard_id) const;
 
   pixoo64::content::ContentController *content_controller_{nullptr};

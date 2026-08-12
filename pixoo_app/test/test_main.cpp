@@ -126,11 +126,12 @@ struct RecordingRenderer final : RenderPort {
   void HideBaseContent() override { hide_base_calls++; }
   void ReleaseOverlayResources() override { release_overlay_calls++; }
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
-                     const Overlay *overlay,
+                     const StopwatchSnapshot &stopwatch, const Overlay *overlay,
                      uint32_t overlay_visible_elapsed_ms, bool base_visible,
                      bool base_frozen, bool render_base, bool render_overlay,
                      FrameView *frame) override {
     last_render_now_ms = now_ms;
+    last_stopwatch = stopwatch;
     render_base_calls.push_back(render_base);
     render_overlay_calls.push_back(render_overlay);
     base_frozen_calls.push_back(base_frozen);
@@ -168,6 +169,7 @@ struct RecordingRenderer final : RenderPort {
   FrameView reaction_frame{kReactionToken, sizeof(kReactionToken)};
   uint32_t min_visible_ms{0};
   uint32_t last_render_now_ms{0};
+  StopwatchSnapshot last_stopwatch{};
   int hide_base_calls{0};
   int release_overlay_calls{0};
   std::vector<bool> render_results;
@@ -2102,6 +2104,81 @@ static void test_stop_counts() {
   TEST_ASSERT_EQUAL(1, player.stops);
 }
 
+static void test_stopwatch_actions_are_precise_idempotent_and_cap() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  TEST_ASSERT_EQUAL_UINT32(0, app.stopwatch().elapsed_ms);
+  TEST_ASSERT_FALSE(app.stopwatch().running);
+  app.StopwatchStart(100);
+  app.StopwatchStart(100);
+  app.Tick(1234);
+  TEST_ASSERT_EQUAL_UINT32(1134, app.stopwatch().elapsed_ms);
+  TEST_ASSERT_TRUE(app.stopwatch().running);
+  TEST_ASSERT_EQUAL_UINT32(1134, renderer.last_stopwatch.elapsed_ms);
+  TEST_ASSERT_TRUE(renderer.last_stopwatch.running);
+  app.StopwatchStop(1234);
+  app.StopwatchStop(1500);
+  TEST_ASSERT_EQUAL_UINT32(1134, app.stopwatch().elapsed_ms);
+  app.StopwatchStart(2000);
+  app.Tick(2500);
+  TEST_ASSERT_EQUAL_UINT32(1634, app.stopwatch().elapsed_ms);
+  app.StopwatchReset(2500);
+  TEST_ASSERT_EQUAL_UINT32(0, app.stopwatch().elapsed_ms);
+  TEST_ASSERT_FALSE(app.stopwatch().running);
+  app.StopwatchStart(10);
+  app.Tick(10 + kStopwatchMaximumElapsedMs + 1);
+  TEST_ASSERT_EQUAL_UINT32(kStopwatchMaximumElapsedMs, app.stopwatch().elapsed_ms);
+  TEST_ASSERT_FALSE(app.stopwatch().running);
+  app.StopwatchStart(20 + kStopwatchMaximumElapsedMs);
+  TEST_ASSERT_FALSE(app.stopwatch().running);
+  app.StopwatchReset(20 + kStopwatchMaximumElapsedMs);
+  app.StopwatchStart(21 + kStopwatchMaximumElapsedMs);
+  TEST_ASSERT_TRUE(app.stopwatch().running);
+}
+
+static void test_stopwatch_actions_do_not_wake_an_off_panel() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  app.SetUserLight(LightState{false, 0.5f}, 10);
+  const int power_calls = panel.power_calls;
+
+  app.StopwatchStart(20);
+  app.Tick(120);
+  app.StopwatchStop(120);
+  TEST_ASSERT_EQUAL_UINT32(100, app.stopwatch().elapsed_ms);
+  app.StopwatchReset(130);
+
+  TEST_ASSERT_EQUAL(power_calls, panel.power_calls);
+  TEST_ASSERT_FALSE(panel.power_on);
+  TEST_ASSERT_EQUAL(static_cast<int>(FirmwareApp::Phase::kOff),
+                    static_cast<int>(app.phase()));
+}
+
+static void test_stopwatch_advances_off_overlay_and_wrap() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app, 0xfffffff0u);
+  app.StopwatchStart(0xfffffff0u);
+  app.SetUserLight(LightState{false, 0.5f}, 0xfffffff5u);
+  app.Tick(0x20u);
+  TEST_ASSERT_EQUAL_UINT32(48, app.stopwatch().elapsed_ms);
+  app.Notify(Request("cover", 100), 0x21u);
+  app.Tick(0x21u);
+  app.Tick(0x30u);
+  TEST_ASSERT_EQUAL_UINT32(64, app.stopwatch().elapsed_ms);
+}
+
 // ---- in/ (spectrum) tests ----
 
 
@@ -2184,6 +2261,9 @@ int main(int, char **) {
   RUN_TEST(test_power_commands_cancel_a_temporary_off_state_wake);
   RUN_TEST(test_logical_off_stops_sound_before_power_off);
   RUN_TEST(test_factory_reset_uses_typed_system_port);
+  RUN_TEST(test_stopwatch_actions_are_precise_idempotent_and_cap);
+  RUN_TEST(test_stopwatch_actions_do_not_wake_an_off_panel);
+  RUN_TEST(test_stopwatch_advances_off_overlay_and_wrap);
   RUN_TEST(test_inbound_user_light_never_publishes_to_sink);
   return UNITY_END();
 }

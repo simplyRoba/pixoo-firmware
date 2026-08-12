@@ -144,6 +144,15 @@ ClearOverlayQueueAction = pixoo64_ns.class_(
 BeginFirmwareUpdateAction = pixoo64_ns.class_(
     "BeginFirmwareUpdateAction", automation.Action
 )
+StopwatchStartAction = pixoo64_ns.class_(
+    "StopwatchStartAction", automation.Action
+)
+StopwatchStopAction = pixoo64_ns.class_(
+    "StopwatchStopAction", automation.Action
+)
+StopwatchResetAction = pixoo64_ns.class_(
+    "StopwatchResetAction", automation.Action
+)
 
 def validate_panel_timing(config):
     duration_ms = config[CONF_PANEL_SOFT_START_DURATION].total_milliseconds
@@ -306,6 +315,9 @@ CLEAR_OVERLAY_QUEUE_SCHEMA = automation.maybe_simple_id(
 BEGIN_FIRMWARE_UPDATE_SCHEMA = automation.maybe_simple_id(
     {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
 )
+STOPWATCH_ACTION_SCHEMA = automation.maybe_simple_id(
+    {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
+)
 
 
 @automation.register_action(
@@ -351,6 +363,39 @@ async def show_reaction_to_code(config, action_id, template_arg, args):
     synchronous=True,
 )
 async def clear_overlay_queue_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.stopwatch_start",
+    StopwatchStartAction,
+    STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_start_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.stopwatch_stop",
+    StopwatchStopAction,
+    STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_stop_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.stopwatch_reset",
+    StopwatchResetAction,
+    STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_reset_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 

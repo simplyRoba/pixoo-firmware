@@ -268,7 +268,8 @@ application enables capture only while the selected base dashboard requires it.
 
 Each configured dashboard has a stable ID and implements the shared `Dashboard`
 interface. ESPHome's typed schema admits the closed dashboard families `text`,
-`weather`, `equalizer`, `game_of_life`, and `clock`. Final validation checks that
+`weather`, `equalizer`, `game_of_life`, `clock`, and `stopwatch`. Final
+validation checks that
 the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.
 

@@ -665,6 +665,10 @@ pixoo64_content:
       face: analog
       fixed_time: 1616371200
 
+    - platform: stopwatch
+      id: stopwatch_dashboard
+      dashboard_id: stopwatch
+
     # Midday: sun near the top of its arc over Berlin.
     - platform: weather
       id: weather_landscape_day
@@ -1050,6 +1054,24 @@ display:
       - dashboard: clock_analog_unset
         now_ms: 0
         snapshot: clock_analog_unset
+      # Stopwatch snapshots inject application-owned elapsed state.
+      - dashboard: stopwatch
+        now_ms: 0
+        stopwatch_elapsed_ms: 0
+        snapshot: stopwatch_zero
+      - dashboard: stopwatch
+        now_ms: 500
+        stopwatch_elapsed_ms: 1139270
+        stopwatch_running: true
+        snapshot: stopwatch_running
+      - dashboard: stopwatch
+        now_ms: 600
+        stopwatch_elapsed_ms: 1925430
+        snapshot: stopwatch_stopped
+      - dashboard: stopwatch
+        now_ms: 700
+        stopwatch_elapsed_ms: 3600000
+        snapshot: stopwatch_cap
       # The hero icon loops: rain falls through its band and every loop is a
       # pure function of the animation time, so a later frame in the loop
       # differs from its start.

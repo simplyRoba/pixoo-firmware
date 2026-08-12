@@ -151,6 +151,21 @@ void FirmwareAppComponent::BeginFirmwareUpdate() {
     ESP_LOGW(TAG, "firmware update screen could not be presented");
 }
 
+void FirmwareAppComponent::StopwatchStart() {
+  if (this->started_)
+    this->app_->StopwatchStart(millis());
+}
+
+void FirmwareAppComponent::StopwatchStop() {
+  if (this->started_)
+    this->app_->StopwatchStop(millis());
+}
+
+void FirmwareAppComponent::StopwatchReset() {
+  if (this->started_)
+    this->app_->StopwatchReset(millis());
+}
+
 void FirmwareAppComponent::Publish(pixoo::LightState state) {
   if (this->light_ == nullptr)
     return;

@@ -294,7 +294,7 @@ void RenderTestDisplay::setup() {
 
     for (const AnimationFrame &frame : this->animation_frames_) {
       if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
-                               frame.base_visible)) {
+                               frame.base_visible, frame.stopwatch)) {
         std::printf("render test: FAILED to render %s at %ums\n",
                     frame.dashboard_id.c_str(), frame.now_ms);
         ++failures;
@@ -472,7 +472,7 @@ void RenderTestDisplay::setup() {
       overlay.reaction = reaction;
       pixoo::FrameView frame;
       if (!this->content_controller_->RenderContent(
-              elapsed_ms, "clock_binary", &overlay, elapsed_ms, true, true,
+              elapsed_ms, "clock_binary", pixoo::StopwatchSnapshot{}, &overlay, elapsed_ms, true, true,
               false, true, &frame) ||
           !frame.valid() || frame.size != this->framebuffer_.size())
         return false;
@@ -576,14 +576,14 @@ void RenderTestDisplay::setup() {
     pixoo::FrameView base_refresh_frame;
     replacement_valid =
         replacement_valid && this->content_controller_->RenderContent(
-                                 16, "clock_binary", &replacement_overlay, 16,
+                                 16, "clock_binary", pixoo::StopwatchSnapshot{}, &replacement_overlay, 16,
                                  true, false, true, false,
                                  &base_refresh_frame) &&
         base_refresh_frame.valid();
     pixoo::FrameView replacement_frame;
     replacement_valid =
         replacement_valid && this->content_controller_->RenderContent(
-                                 33, "clock_binary", &replacement_overlay, 33,
+                                 33, "clock_binary", pixoo::StopwatchSnapshot{}, &replacement_overlay, 33,
                                  true, false, false, true,
                                  &replacement_frame) &&
         replacement_frame.valid() &&
@@ -696,7 +696,8 @@ void RenderTestDisplay::setup() {
 bool RenderTestDisplay::render_frame_(
     uint32_t now_ms, const std::string &dashboard_id,
     const pixoo::Notification *notification,
-    uint32_t notification_visible_elapsed_ms, bool base_visible) {
+    uint32_t notification_visible_elapsed_ms, bool base_visible,
+    pixoo::StopwatchSnapshot stopwatch) {
   if (this->content_controller_ == nullptr)
     return false;
   StaticWeatherSource::SetCurrentRenderTime(now_ms);
@@ -709,7 +710,7 @@ bool RenderTestDisplay::render_frame_(
   }
   pixoo::FrameView frame;
   if (!this->content_controller_->RenderContent(
-          now_ms, dashboard_id, overlay_ptr,
+          now_ms, dashboard_id, stopwatch, overlay_ptr,
           notification_visible_elapsed_ms, base_visible, false, true,
           notification != nullptr, &frame) ||
       !frame.valid() || frame.size != this->framebuffer_.size())
@@ -730,9 +731,12 @@ void RenderTestDisplay::set_output_dir(std::string dir) {
 void RenderTestDisplay::add_animation_frame(std::string dashboard_id,
                                             uint32_t now_ms,
                                             std::string snapshot_id,
-                                            bool base_visible) {
+                                            bool base_visible,
+                                            uint32_t stopwatch_elapsed_ms,
+                                            bool stopwatch_running) {
   this->animation_frames_.push_back(AnimationFrame{
-      std::move(dashboard_id), now_ms, std::move(snapshot_id), base_visible});
+      std::move(dashboard_id), now_ms, std::move(snapshot_id), base_visible,
+      pixoo::StopwatchSnapshot{stopwatch_elapsed_ms, stopwatch_running}});
 }
 
 bool RenderTestDisplay::has_animation_frames_(

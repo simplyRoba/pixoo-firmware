@@ -100,6 +100,33 @@ class EspHomeConfigTest(unittest.TestCase):
                 "dashboard select initial_option must match the renderer default_dashboard",
             ),
             (
+                "stopwatch dashboard ID",
+                "esphome/pixoo64.yaml",
+                "      dashboard_id: stopwatch\n",
+                "      dashboard_id: stopwatch_other\n",
+                "the stopwatch dashboard_id must be stopwatch",
+            ),
+            (
+                "duplicate stopwatch dashboard",
+                "esphome/pixoo64.yaml",
+                """    - platform: stopwatch
+      id: stopwatch_dashboard
+      dashboard_id: stopwatch
+      frame_interval: 33ms
+""",
+                """    - platform: stopwatch
+      id: stopwatch_dashboard
+      dashboard_id: stopwatch
+      frame_interval: 33ms
+
+    - platform: stopwatch
+      id: stopwatch_dashboard_other
+      dashboard_id: stopwatch_other
+      frame_interval: 33ms
+""",
+                "at most one stopwatch dashboard may be configured",
+            ),
+            (
                 "microphone stream format",
                 "esphome/hardware/pixoo64_rev1.yaml",
                 '  pixoo64_rev1_microphone_sample_rate: "32000"\n',

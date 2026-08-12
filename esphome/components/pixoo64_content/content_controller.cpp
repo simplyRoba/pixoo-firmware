@@ -487,7 +487,8 @@ bool ContentController::CaptureReactionBackground_() {
 
 bool ContentController::RenderContent(
     uint32_t now_ms, const std::string &dashboard_id,
-    const pixoo::Overlay *overlay, uint32_t overlay_visible_elapsed_ms,
+    const pixoo::StopwatchSnapshot &stopwatch, const pixoo::Overlay *overlay,
+    uint32_t overlay_visible_elapsed_ms,
     bool base_visible, bool base_frozen, bool render_base, bool render_overlay,
     pixoo::FrameView *frame) {
   if (frame == nullptr)
@@ -508,6 +509,8 @@ bool ContentController::RenderContent(
     this->visible_ = nullptr;
   if (base_visible && render_base) {
     this->framebuffer_.Clear();
+    if (this->stopwatch_dashboard_ != nullptr)
+      this->stopwatch_dashboard_->set_stopwatch(stopwatch);
     Dashboard *dashboard = this->find_(dashboard_id);
     if (dashboard != nullptr) {
       if (dashboard != this->visible_) {

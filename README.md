@@ -18,7 +18,8 @@ LEDBoard` REV1.0 (`20210525`). Other board revisions and variants are unknown.
   password-protected OTA updates
 - Home Assistant controls for panel power/brightness, text, timezone, weather
   location and refresh interval, dashboard selection, and sounds
-- Text, weather, microphone equalizer, Game of Life, and three clock dashboards
+- Text, weather, microphone equalizer, Game of Life, clock, and stopwatch
+  dashboards
 - Notifications, animated reactions, buzzer sounds, front-button controls, and
   diagnostic entities
 

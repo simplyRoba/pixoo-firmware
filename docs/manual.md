@@ -103,7 +103,8 @@ The configured Home Assistant/native-API surface includes:
   selects; location and weather-refresh settings; a sound switch; and diagnostic
   sensors.
 - `notify` (message, optional title, severity, duration, optional sound),
-  `reaction`, and `clear_overlay_queue` API actions. An empty notification title
+  `reaction`, `clear_overlay_queue`, `stopwatch_start`, `stopwatch_stop`, and
+  `stopwatch_reset` API actions. An empty notification title
   keeps the one-line banner; a title adds a line above the message. Notifications
   support `info`, `success`, `warning`, and `error`. Reactions are `laughing`,
   `love`, `crying`, `angry`,
@@ -124,10 +125,10 @@ release. Its exact storage scope is an ESPHome implementation detail; verify the
 resulting provisioning and settings state after reset.
 
 Available dashboards are text, forecast weather, landscape weather, equalizer
-bars, equalizer waveform, Game of Life, split-flap clock, analog clock, and
-binary clock. Weather needs configured location and network access; equalizer
-views use the panel microphone. Notifications, reactions, and sound are exposed
-through the native API.
+bars, equalizer waveform, Game of Life, split-flap clock, analog clock, binary
+clock, and stopwatch. Weather needs configured location and network access;
+equalizer views use the panel microphone. Notifications, reactions, and sound
+are exposed through the native API.
 
 ## OTA update
 

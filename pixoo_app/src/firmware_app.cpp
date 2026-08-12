@@ -110,6 +110,8 @@ bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
   if (this->sound_player_ != nullptr)
     this->sound_player_->Stop();
   this->phase_ = Phase::kOff;
+  this->stopwatch_ = {};
+  this->stopwatch_last_updated_ms_ = now_ms;
   this->first_boot_pending_ = true;
   this->boot_sound_played_ = false;
   this->power_button_pressed_ = false;
@@ -167,6 +169,7 @@ void FirmwareApp::BeginRepowerWaiting_(uint32_t now_ms) {
 }
 
 void FirmwareApp::Tick(uint32_t now_ms) {
+  this->AdvanceStopwatch_(now_ms);
   switch (this->phase_) {
     case Phase::kOff:
       return;
@@ -219,6 +222,20 @@ void FirmwareApp::Tick(uint32_t now_ms) {
   }
 
   this->RenderRunning_(now_ms);
+}
+
+void FirmwareApp::AdvanceStopwatch_(uint32_t now_ms) {
+  if (!this->stopwatch_.running)
+    return;
+  const uint32_t elapsed = now_ms - this->stopwatch_last_updated_ms_;
+  const uint32_t remaining = kStopwatchMaximumElapsedMs - this->stopwatch_.elapsed_ms;
+  if (elapsed >= remaining) {
+    this->stopwatch_.elapsed_ms = kStopwatchMaximumElapsedMs;
+    this->stopwatch_.running = false;
+  } else {
+    this->stopwatch_.elapsed_ms += elapsed;
+  }
+  this->stopwatch_last_updated_ms_ = now_ms;
 }
 
 bool FirmwareApp::BaseContentVisible_() const {
@@ -275,8 +292,8 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
     if (this->frame_metrics_ != nullptr)
       this->frame_metrics_->BeginRegularFrame();
     const bool rendered = this->renderer_.RenderContent(
-        now_ms, this->selected_dashboard_.id, nullptr, 0, true, false, true,
-        false, &frame);
+        now_ms, this->selected_dashboard_.id, this->stopwatch_, nullptr, 0,
+        true, false, true, false, &frame);
     if (rendered && frame.valid())
       this->panel_.Present(frame, false);
     if (this->frame_metrics_ != nullptr)
@@ -314,7 +331,7 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
   if (render_overlay && this->frame_metrics_ != nullptr)
     this->frame_metrics_->BeginRegularFrame();
   const bool rendered = this->renderer_.RenderContent(
-      now_ms, this->selected_dashboard_.id, &request.overlay,
+      now_ms, this->selected_dashboard_.id, this->stopwatch_, &request.overlay,
       visible_elapsed_ms, this->overlay_saved_light_.on, base_frozen,
       render_base, render_overlay, &frame);
   const bool presented = render_overlay && rendered && frame.valid() &&
@@ -462,6 +479,33 @@ void FirmwareApp::StepBrightness(uint32_t now_ms) {
   LightState light = this->logical_light_;
   light.brightness = static_cast<float>(next + 1) * 0.25f;
   this->ApplyUserLight_(light, now_ms, true);
+}
+
+void FirmwareApp::StopwatchStart(uint32_t now_ms) {
+  this->AdvanceStopwatch_(now_ms);
+  if (this->stopwatch_.elapsed_ms >= kStopwatchMaximumElapsedMs ||
+      this->stopwatch_.running)
+    return;
+  this->stopwatch_.running = true;
+  this->stopwatch_last_updated_ms_ = now_ms;
+  this->RequestVisibleRender_();
+}
+
+void FirmwareApp::StopwatchStop(uint32_t now_ms) {
+  this->AdvanceStopwatch_(now_ms);
+  if (!this->stopwatch_.running)
+    return;
+  this->stopwatch_.running = false;
+  this->RequestVisibleRender_();
+}
+
+void FirmwareApp::StopwatchReset(uint32_t now_ms) {
+  this->AdvanceStopwatch_(now_ms);
+  if (this->stopwatch_.elapsed_ms == 0 && !this->stopwatch_.running)
+    return;
+  this->stopwatch_ = {};
+  this->stopwatch_last_updated_ms_ = now_ms;
+  this->RequestVisibleRender_();
 }
 
 void FirmwareApp::SelectDashboard(const std::string &dashboard_id) {

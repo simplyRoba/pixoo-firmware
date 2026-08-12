@@ -66,6 +66,9 @@ class FirmwareAppComponent final : public PollingComponent,
   void ShowReaction(const std::string &reaction);
   void ClearOverlayQueue();
   void BeginFirmwareUpdate();
+  void StopwatchStart();
+  void StopwatchStop();
+  void StopwatchReset();
 
   void Publish(pixoo::LightState state) override;
   void FactoryReset() override;
@@ -129,6 +132,51 @@ class ShowReactionAction : public Action<Ts...> {
 
   void play(const Ts &...x) override {
     this->parent_->ShowReaction(this->reaction_.value(x...));
+  }
+
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class StopwatchStartAction : public Action<Ts...> {
+ public:
+  explicit StopwatchStartAction(FirmwareAppComponent *parent)
+      : parent_(parent) {}
+
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->StopwatchStart();
+  }
+
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class StopwatchStopAction : public Action<Ts...> {
+ public:
+  explicit StopwatchStopAction(FirmwareAppComponent *parent)
+      : parent_(parent) {}
+
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->StopwatchStop();
+  }
+
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class StopwatchResetAction : public Action<Ts...> {
+ public:
+  explicit StopwatchResetAction(FirmwareAppComponent *parent)
+      : parent_(parent) {}
+
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->StopwatchReset();
   }
 
  protected:

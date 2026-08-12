@@ -75,6 +75,7 @@ class RenderPort {
   // consumed synchronously by the caller. `now_ms` is the tick clock, the only
   // time base an animated dashboard has.
   virtual bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
+                             const StopwatchSnapshot &stopwatch,
                              const Overlay *overlay,
                              uint32_t overlay_visible_elapsed_ms,
                              bool base_visible, bool base_frozen,
@@ -197,6 +198,10 @@ class FirmwareApp {
   void StepBrightness(uint32_t now_ms);
 
   void SelectDashboard(const std::string &dashboard_id);
+  void StopwatchStart(uint32_t now_ms);
+  void StopwatchStop(uint32_t now_ms);
+  void StopwatchReset(uint32_t now_ms);
+  StopwatchSnapshot stopwatch() const { return this->stopwatch_; }
   // Renders and force-presents the update frame synchronously before OTA
   // proceeds. Returns false while the panel is not ready or presentation fails.
   bool BeginFirmwareUpdate();
@@ -226,6 +231,7 @@ class FirmwareApp {
   void SyncBrightnessBounce_(float brightness);
   static bool ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                               uint32_t duration_ms);
+  void AdvanceStopwatch_(uint32_t now_ms);
 
   void ApplyUserLight_(LightState light, uint32_t now_ms, bool publish);
   bool EnqueueOverlay_(OverlayRequest request, uint32_t now_ms);
@@ -277,6 +283,9 @@ class FirmwareApp {
   bool first_boot_pending_{true};
   bool boot_sound_played_{false};
   bool microphone_enabled_{false};
+
+  StopwatchSnapshot stopwatch_{};
+  uint32_t stopwatch_last_updated_ms_{0};
 
   // Current bounce point and direction, synchronized with external light
   // state. The endpoints reverse; middle steps head upward deterministically.

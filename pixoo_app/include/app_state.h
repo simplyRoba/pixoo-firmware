@@ -12,6 +12,14 @@ struct LightState {
   float brightness{1.0f};
 };
 
+constexpr uint32_t kStopwatchMaximumElapsedMs = 60u * 60u * 1000u;
+
+// Application-owned stopwatch state passed by value to its renderer.
+struct StopwatchSnapshot {
+  uint32_t elapsed_ms{0};
+  bool running{false};
+};
+
 constexpr size_t kMaximumNotificationTextBytes = 256;
 
 // Stores a NUL-terminated byte sequence without allocating. Overlong input is

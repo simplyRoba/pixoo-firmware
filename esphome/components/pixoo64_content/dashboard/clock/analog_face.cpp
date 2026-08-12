@@ -2,8 +2,11 @@
 
 #include <cassert>
 #include <cmath>
-#include <memory>
 #include <new>
+
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 
 #include "pixoo_cmd.h"
 
@@ -161,8 +164,14 @@ void AddHands(ShapeList<Capacity> &shapes, const HandAngles &a) {
 
 class Dial {
  public:
-  Dial() : pixels_(new (std::nothrow)
-                       uint8_t[pixoo::kWidth * pixoo::kHeight * 3]) {
+  Dial() {
+#ifdef ESP_PLATFORM
+    this->pixels_ = static_cast<uint8_t *>(heap_caps_malloc(
+        pixoo::kWidth * pixoo::kHeight * 3,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+    this->pixels_ = new (std::nothrow) uint8_t[pixoo::kWidth * pixoo::kHeight * 3];
+#endif
     if (this->pixels_ == nullptr)
       return;
 
@@ -189,6 +198,14 @@ class Dial {
     }
   }
 
+  ~Dial() {
+#ifdef ESP_PLATFORM
+    heap_caps_free(this->pixels_);
+#else
+    delete[] this->pixels_;
+#endif
+  }
+
   bool valid() const { return this->pixels_ != nullptr; }
 
   Color At(int x, int y) const {
@@ -198,7 +215,7 @@ class Dial {
   }
 
  private:
-  std::unique_ptr<uint8_t[]> pixels_;
+  uint8_t *pixels_{nullptr};
 };
 
 const Dial &StaticDial() {

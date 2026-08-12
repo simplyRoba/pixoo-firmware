@@ -71,6 +71,7 @@ EQUALIZER_FACES = {
 }
 ClockDashboard = dashboard_ns.class_("ClockDashboard", Dashboard)
 GameOfLifeDashboard = dashboard_ns.class_("GameOfLifeDashboard", Dashboard)
+StopwatchDashboard = dashboard_ns.class_("StopwatchDashboard", Dashboard)
 # Closed watch-face vocabulary; each face is a ClockDashboard subclass bound to
 # that face.
 CLOCK_FACES = {
@@ -123,6 +124,14 @@ CLOCK_SCHEMA = cv.Schema(
         cv.Optional(CONF_FIXED_TIME): cv.positive_int,
     }
 )
+STOPWATCH_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(StopwatchDashboard),
+        cv.Required(CONF_DASHBOARD_ID): cv.string_strict,
+        cv.Optional(CONF_FRAME_INTERVAL, default="33ms"):
+            cv.positive_time_period_milliseconds,
+    }
+)
 GAME_OF_LIFE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(GameOfLifeDashboard),
@@ -139,6 +148,7 @@ ENTRY_SCHEMA = cv.typed_schema(
         "equalizer": EQUALIZER_SCHEMA,
         "clock": CLOCK_SCHEMA,
         "game_of_life": GAME_OF_LIFE_SCHEMA,
+        "stopwatch": STOPWATCH_SCHEMA,
     },
     key=CONF_PLATFORM,
 )
@@ -160,6 +170,18 @@ def validate_dashboard_config(config):
             raise cv.Invalid(
                 "frame_interval must fit a positive signed 32-bit millisecond value"
             )
+    stopwatch_entries = [
+        entry
+        for entry in config[CONF_DASHBOARDS]
+        if entry[CONF_PLATFORM] == "stopwatch"
+    ]
+    if len(stopwatch_entries) > 1:
+        raise cv.Invalid("at most one stopwatch dashboard may be configured")
+    if (
+        stopwatch_entries
+        and stopwatch_entries[0][CONF_DASHBOARD_ID] != "stopwatch"
+    ):
+        raise cv.Invalid("the stopwatch dashboard_id must be stopwatch")
     if config[CONF_DEFAULT_DASHBOARD] not in ids:
         raise cv.Invalid("default_dashboard must name a configured dashboard")
     return config
@@ -276,6 +298,17 @@ async def _build_clock(entry):
     return dashboard
 
 
+async def _build_stopwatch(entry):
+    dashboard = cg.new_Pvariable(entry[CONF_ID])
+    cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
+    cg.add(
+        dashboard.set_frame_interval_ms(
+            entry[CONF_FRAME_INTERVAL].total_milliseconds
+        )
+    )
+    return dashboard
+
+
 async def _build_game_of_life(entry):
     dashboard = cg.new_Pvariable(entry[CONF_ID])
     cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
@@ -293,6 +326,7 @@ DASHBOARD_BUILDERS = {
     "equalizer": _build_equalizer,
     "clock": _build_clock,
     "game_of_life": _build_game_of_life,
+    "stopwatch": _build_stopwatch,
 }
 
 
@@ -302,6 +336,8 @@ async def build_controller(config):
     for entry in config[CONF_DASHBOARDS]:
         dashboard = await DASHBOARD_BUILDERS[entry[CONF_PLATFORM]](entry)
         cg.add(controller.add_dashboard(dashboard))
+        if entry[CONF_PLATFORM] == "stopwatch":
+            cg.add(controller.set_stopwatch_dashboard(dashboard))
     if CONF_NOTIFICATION_FONT in config:
         cg.add(
             controller.set_notification_font(

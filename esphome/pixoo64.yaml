@@ -151,6 +151,15 @@ api:
     - action: clear_overlay_queue
       then:
         - pixoo64.clear_overlay_queue: pixoo_firmware
+    - action: stopwatch_start
+      then:
+        - pixoo64.stopwatch_start: pixoo_firmware
+    - action: stopwatch_stop
+      then:
+        - pixoo64.stopwatch_stop: pixoo_firmware
+    - action: stopwatch_reset
+      then:
+        - pixoo64.stopwatch_reset: pixoo_firmware
 
 ota:
   - platform: esphome
@@ -293,6 +302,11 @@ pixoo64_content:
       face: binary
       time_id: panel_time
 
+    - platform: stopwatch
+      id: stopwatch_dashboard
+      dashboard_id: stopwatch
+      frame_interval: 33ms
+
 # Home Assistant controls
 select:
   # Timezone select backed by the C++ pixoo::TimezoneCatalog. It owns the option
@@ -316,6 +330,7 @@ select:
       - clock_split_flap
       - clock_analog
       - clock_binary
+      - stopwatch
     initial_option: clock_analog
     optimistic: true
     restore_value: true
