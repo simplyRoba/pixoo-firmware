@@ -7,6 +7,7 @@
 
 #include "analog_clock.h"
 #include "binary_clock.h"
+#include "digital_clock.h"
 #include "open_meteo_url.h"
 #include "refresh_policy.h"
 #include "sky_astronomy.h"
@@ -1291,6 +1292,195 @@ static void test_analog_second_hand_survives_millis_wraparound() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 36.0f, m.Angles().second);
 }
 
+static void test_digital_digits_split_24_hour_time() {
+  int d[clock::kDigitalDigitCount];
+  clock::DigitalClockDigits(14, 5, d);
+  TEST_ASSERT_EQUAL(1, d[0]);
+  TEST_ASSERT_EQUAL(4, d[1]);
+  TEST_ASSERT_EQUAL(0, d[2]);
+  TEST_ASSERT_EQUAL(5, d[3]);
+}
+
+static void test_digital_digits_reject_out_of_range_fields() {
+  int d[clock::kDigitalDigitCount];
+  clock::DigitalClockDigits(24, -1, d);
+  for (int digit : d)
+    TEST_ASSERT_EQUAL(-1, digit);
+}
+
+static void test_digital_segment_masks_match_decimal_digits() {
+  TEST_ASSERT_EQUAL_HEX8(
+      clock::kDigitalSegmentA | clock::kDigitalSegmentB |
+          clock::kDigitalSegmentC | clock::kDigitalSegmentD |
+          clock::kDigitalSegmentE | clock::kDigitalSegmentF,
+      clock::DigitalSegmentsFor(0));
+  TEST_ASSERT_EQUAL_HEX8(clock::kDigitalSegmentB | clock::kDigitalSegmentC,
+                         clock::DigitalSegmentsFor(1));
+  TEST_ASSERT_EQUAL_HEX8(0x7f, clock::DigitalSegmentsFor(8));
+  TEST_ASSERT_EQUAL_HEX8(0, clock::DigitalSegmentsFor(-1));
+  TEST_ASSERT_EQUAL_HEX8(0, clock::DigitalSegmentsFor(10));
+}
+
+static void settle_digital(clock::DigitalClockModel &m, int hour, int minute,
+                           int second, uint32_t now_ms) {
+  m.StartLoad(now_ms);
+  m.Update(hour, minute, second, now_ms);
+  m.Update(hour, minute, second,
+           now_ms + clock::DigitalClockModel::LoadMs());
+}
+
+static void test_digital_settles_on_every_segment_of_hhmm() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 14, 5, 38, 0);
+  int digits[clock::DigitalClockModel::kDigits];
+  clock::DigitalClockDigits(14, 5, digits);
+  for (int digit = 0; digit < clock::DigitalClockModel::kDigits; digit++) {
+    const uint8_t mask = clock::DigitalSegmentsFor(digits[digit]);
+    for (int segment = 0; segment < clock::DigitalClockModel::kSegments;
+         segment++) {
+      const bool lit = (mask & (1u << segment)) != 0;
+      TEST_ASSERT_FLOAT_WITHIN(0.001f, lit ? 1.0f : 0.0f,
+                               m.Level(digit, segment));
+    }
+  }
+}
+
+static void test_digital_segment_flares_as_it_lights() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 12, 34, 0, 0);
+  const uint32_t base = 10000;
+  // Minute ones 4 -> 5 lights the top segment.
+  m.Update(12, 35, 0, base);
+  const uint32_t peak_ms = static_cast<uint32_t>(
+      clock::DigitalClockModel::kLightMs *
+      clock::DigitalClockModel::kLightPeak);
+  m.Update(12, 35, 0, base + peak_ms);
+  const float peak = m.Level(3, 0);
+  TEST_ASSERT_TRUE(peak > 1.0f);
+  TEST_ASSERT_TRUE(
+      peak <= 1.0f + clock::DigitalClockModel::kLightOvershoot);
+  m.Update(12, 35, 0, base + clock::DigitalClockModel::kLightMs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(3, 0));
+}
+
+static void test_digital_segment_fades_as_it_extinguishes() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 12, 34, 0, 0);
+  const uint32_t base = 10000;
+  // Minute ones 4 -> 5 extinguishes the upper-right segment.
+  m.Update(12, 35, 0, base);
+  m.Update(12, 35, 0, base + clock::DigitalClockModel::kFadeMs / 2);
+  const float half = m.Level(3, 1);
+  TEST_ASSERT_TRUE(half > 0.0f);
+  TEST_ASSERT_TRUE(half < 1.0f);
+  m.Update(12, 35, 0, base + clock::DigitalClockModel::kFadeMs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.Level(3, 1));
+}
+
+static void test_digital_carry_ripples_right_to_left() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 12, 59, 0, 0);
+  const uint32_t base = 10000;
+  m.Update(13, 0, 0, base);
+  m.Update(13, 0, 0, base + 5);
+  TEST_ASSERT_TRUE(m.Level(3, 6) < 1.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(2, 6));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(1, 4));
+  m.Update(13, 0, 0, base + clock::DigitalClockModel::kRippleMs + 5);
+  TEST_ASSERT_TRUE(m.Level(2, 6) < 1.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(1, 4));
+  m.Update(13, 0, 0, base + 2 * clock::DigitalClockModel::kRippleMs + 5);
+  TEST_ASSERT_TRUE(m.Level(1, 4) < 1.0f);
+}
+
+static void test_digital_carry_leaves_unchanged_digit_segments_alone() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 14, 8, 0, 0);
+  const uint32_t base = 10000;
+  m.Update(14, 9, 0, base);
+  m.Update(14, 9, 0, base + 20);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(0, 1));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(1, 5));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(2, 0));
+}
+
+static void test_digital_load_sweeps_digits_left_to_right() {
+  clock::DigitalClockModel m;
+  m.StartLoad(0);
+  m.Update(23, 59, 0, 0);
+  const uint32_t peak_ms = static_cast<uint32_t>(
+      clock::DigitalClockModel::kLightMs *
+      clock::DigitalClockModel::kLightPeak);
+  m.Update(23, 59, 0, peak_ms);
+  TEST_ASSERT_TRUE(m.Level(0, 0) > 1.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.Level(1, 0));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.Level(3, 0));
+  m.Update(23, 59, 0, clock::DigitalClockModel::LoadMs());
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(0, 0));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(3, 0));
+}
+
+static void test_digital_entry_starts_with_a_visible_colon() {
+  clock::DigitalClockModel m;
+  m.StartLoad(0);
+  m.Update(14, 5, 0, 0);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,
+                           clock::DigitalClockModel::kColonDimLevel,
+                           m.ColonLevel());
+}
+
+static void test_digital_colon_breathes_without_disappearing() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 14, 5, 0, 0);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.ColonLevel());
+  const uint32_t base = 10000;
+  m.Update(14, 5, 1, base);
+  m.Update(14, 5, 1, base + clock::DigitalClockModel::kColonFadeMs / 2);
+  TEST_ASSERT_TRUE(m.ColonLevel() > clock::DigitalClockModel::kColonDimLevel);
+  TEST_ASSERT_TRUE(m.ColonLevel() < 1.0f);
+  m.Update(14, 5, 1, base + clock::DigitalClockModel::kColonFadeMs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,
+                           clock::DigitalClockModel::kColonDimLevel,
+                           m.ColonLevel());
+}
+
+static void test_digital_clear_removes_time_immediately() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 14, 5, 0, 0);
+  m.Clear();
+  for (int digit = 0; digit < clock::DigitalClockModel::kDigits; digit++) {
+    for (int segment = 0; segment < clock::DigitalClockModel::kSegments;
+         segment++) {
+      TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.Level(digit, segment));
+    }
+  }
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.ColonLevel());
+}
+
+static void test_digital_invalid_time_clears_a_previous_value() {
+  clock::DigitalClockModel m;
+  settle_digital(m, 14, 5, 0, 0);
+  m.Update(24, 5, 0, 1000);
+  for (int digit = 0; digit < clock::DigitalClockModel::kDigits; digit++) {
+    for (int segment = 0; segment < clock::DigitalClockModel::kSegments;
+         segment++) {
+      TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.Level(digit, segment));
+    }
+  }
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, m.ColonLevel());
+}
+
+static void test_digital_survives_millis_wraparound() {
+  clock::DigitalClockModel m;
+  const uint32_t before = 0xFFFFFFFFu - 20;
+  m.StartLoad(before);
+  m.Update(23, 59, 0, before);
+  m.Update(23, 59, 0, before + clock::DigitalClockModel::LoadMs());
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(0, 0));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.Level(3, 6));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, m.ColonLevel());
+}
+
 static void test_binary_digits_split_the_time_per_column() {
   int d[clock::BinaryClockModel::kColumns];
   clock::BinaryClockModel::Digits(14, 5, 38, d);
@@ -2102,6 +2292,20 @@ int main(int, char**) {
   RUN_TEST(test_analog_parks_every_hand_at_twelve);
   RUN_TEST(test_analog_parked_hands_step_on_the_next_time);
   RUN_TEST(test_analog_second_hand_survives_millis_wraparound);
+  RUN_TEST(test_digital_digits_split_24_hour_time);
+  RUN_TEST(test_digital_digits_reject_out_of_range_fields);
+  RUN_TEST(test_digital_segment_masks_match_decimal_digits);
+  RUN_TEST(test_digital_settles_on_every_segment_of_hhmm);
+  RUN_TEST(test_digital_segment_flares_as_it_lights);
+  RUN_TEST(test_digital_segment_fades_as_it_extinguishes);
+  RUN_TEST(test_digital_carry_ripples_right_to_left);
+  RUN_TEST(test_digital_carry_leaves_unchanged_digit_segments_alone);
+  RUN_TEST(test_digital_load_sweeps_digits_left_to_right);
+  RUN_TEST(test_digital_entry_starts_with_a_visible_colon);
+  RUN_TEST(test_digital_colon_breathes_without_disappearing);
+  RUN_TEST(test_digital_clear_removes_time_immediately);
+  RUN_TEST(test_digital_invalid_time_clears_a_previous_value);
+  RUN_TEST(test_digital_survives_millis_wraparound);
   RUN_TEST(test_binary_digits_split_the_time_per_column);
   RUN_TEST(test_binary_digits_wrap_out_of_range_fields);
   RUN_TEST(test_binary_rows_read_eight_to_one);

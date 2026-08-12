@@ -81,6 +81,7 @@ CLOCK_FACES = {
     "split_flap": dashboard_ns.class_("SplitFlapClockDashboard", ClockDashboard),
     "analog": dashboard_ns.class_("AnalogClockDashboard", ClockDashboard),
     "binary": dashboard_ns.class_("BinaryClockDashboard", ClockDashboard),
+    "digital": dashboard_ns.class_("DigitalClockDashboard", ClockDashboard),
 }
 
 TEXT_SCHEMA = cv.Schema(

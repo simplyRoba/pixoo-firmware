@@ -72,6 +72,13 @@ class EspHomeConfigTest(unittest.TestCase):
             self.assertEqual(text.count(f"      dashboard_id: {face}\n"), 1)
             self.assertEqual(text.count(f"      face: {face}\n"), 1)
 
+    def test_production_config_has_all_clock_faces(self):
+        text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
+        self.assertEqual(text.count("    - platform: clock\n"), 4)
+        for face in ("split_flap", "analog", "binary", "digital"):
+            self.assertEqual(text.count(f"      dashboard_id: clock_{face}\n"), 1)
+            self.assertEqual(text.count(f"      face: {face}\n"), 1)
+
     def test_final_validators_reject_invalid_board_wiring(self):
         cases = (
             (
@@ -179,6 +186,13 @@ class EspHomeConfigTest(unittest.TestCase):
                 "      face: timer\n",
                 "      face: countdown\n",
                 "Unknown value 'countdown'",
+            ),
+            (
+                "invalid clock face",
+                "esphome/pixoo64.yaml",
+                "      face: digital\n",
+                "      face: led\n",
+                "Unknown value 'led'",
             ),
             (
                 "microphone stream format",

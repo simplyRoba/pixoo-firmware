@@ -5,6 +5,7 @@
 
 #include "analog_face.h"
 #include "binary_face.h"
+#include "digital_face.h"
 #include "dashboard/dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/time/real_time_clock.h"
@@ -87,6 +88,14 @@ class BinaryClockDashboard : public ClockDashboard {
 
  protected:
   clockface::BinaryFace face_impl_;
+};
+
+class DigitalClockDashboard : public ClockDashboard {
+ public:
+  DigitalClockDashboard() { this->set_face(&this->face_impl_); }
+
+ protected:
+  clockface::DigitalFace face_impl_;
 };
 
 }  // namespace esphome::pixoo64::dashboard

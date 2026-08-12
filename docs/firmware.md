@@ -207,7 +207,7 @@ This layer contains models that can be compiled and tested without ESPHome:
 - weather data, WMO mapping, astronomy, refresh policy, condition transitions,
   and weather animation mechanics;
 - microphone spectrum analysis and equalizer level processing;
-- split-flap, analog, and binary clock animation state; and
+- split-flap, analog, binary, and digital clock animation state; and
 - the bounded 64×64 Game of Life board.
 
 These models do not draw through ESPHome. The concrete dashboard classes under

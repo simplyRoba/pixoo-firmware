@@ -32,6 +32,8 @@ esphome:
     - ../../../pixoo_content/src/dashboard/clock/analog_clock.cpp
     - ../../../pixoo_content/include/dashboard/clock/binary_clock.h
     - ../../../pixoo_content/src/dashboard/clock/binary_clock.cpp
+    - ../../../pixoo_content/include/dashboard/clock/digital_clock.h
+    - ../../../pixoo_content/src/dashboard/clock/digital_clock.cpp
     - ../../../pixoo_content/include/dashboard/game_of_life/game_of_life.h
     - ../../../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
     - ../../../pixoo_content/include/dashboard/equalizer/spectrum.h
@@ -975,6 +977,13 @@ pixoo64_content:
       face: binary
       fixed_time: 1616421938
 
+    # 14:05:38: four decimal digits and a breathing colon.
+    - platform: clock
+      id: clock_digital
+      dashboard_id: clock_digital
+      face: digital
+      fixed_time: 1616421938
+
 display:
   - platform: pixoo64_render_test
     id: render_test_panel
@@ -1139,6 +1148,21 @@ display:
       - dashboard: clock_binary
         now_ms: 480
         snapshot: clock_binary
+      # Rounded cyan segments sweep in left to right over a visible colon. The
+      # first digit reaches its flare at 63ms, the sweep spans the display at
+      # 240ms, and every segment has settled by 405ms.
+      - dashboard: clock_digital
+        now_ms: 0
+        snapshot: clock_digital_entry
+      - dashboard: clock_digital
+        now_ms: 63
+        snapshot: clock_digital_load_start
+      - dashboard: clock_digital
+        now_ms: 240
+        snapshot: clock_digital_load
+      - dashboard: clock_digital
+        now_ms: 405
+        snapshot: clock_digital
       # The first source condition initializes the face after its loading frame.
       - dashboard: weather_landscape_loading
         now_ms: 0

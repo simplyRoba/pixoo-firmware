@@ -55,6 +55,8 @@ esphome:
     - ../pixoo_content/src/dashboard/clock/analog_clock.cpp
     - ../pixoo_content/include/dashboard/clock/binary_clock.h
     - ../pixoo_content/src/dashboard/clock/binary_clock.cpp
+    - ../pixoo_content/include/dashboard/clock/digital_clock.h
+    - ../pixoo_content/src/dashboard/clock/digital_clock.cpp
     - ../pixoo_content/include/dashboard/game_of_life/game_of_life.h
     - ../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
     - ../pixoo_content/include/dashboard/equalizer/spectrum.h
@@ -318,6 +320,13 @@ pixoo64_content:
       face: binary
       time_id: panel_time
 
+    - platform: clock
+      id: clock_digital_dashboard
+      dashboard_id: clock_digital
+      frame_interval: 33ms
+      face: digital
+      time_id: panel_time
+
     - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
@@ -353,6 +362,7 @@ select:
       - clock_split_flap
       - clock_analog
       - clock_binary
+      - clock_digital
       - stopwatch
       - timer
     initial_option: clock_analog

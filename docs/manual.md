@@ -127,9 +127,9 @@ resulting provisioning and settings state after reset.
 
 Available dashboards are text, forecast weather, landscape weather, equalizer
 bars, equalizer waveform, Game of Life, split-flap clock, analog clock, binary
-clock, stopwatch, and timer. Weather needs configured location and network
-access; equalizer views use the panel microphone. Notifications, reactions, and
-sound are exposed through the native API.
+clock, digital clock, stopwatch, and timer. Weather needs configured location
+and network access; equalizer views use the panel microphone. Notifications,
+reactions, and sound are exposed through the native API.
 
 ## OTA update
 
