@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #endif
 
+#include "aa_draw.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -307,20 +308,26 @@ pixoo::FrameView ContentController::RenderFirmwareUpdate() {
 
   this->framebuffer_.Clear();
 
-  // The shape and lighting are mirrored around x=31.5. Color changes on every
-  // row and across every row: pale at the top-center, amber at the lower edges.
-  for (int y = 4; y <= 28; ++y) {
-    const int half_width = (y - 4) * 14 / 24;
-    const int vertical = (y - 4) * 255 / 24;
-    for (int x = 31 - half_width; x <= 32 + half_width; ++x) {
+  // The shape and lighting are mirrored around x=32. Its sub-pixel triangle
+  // coverage blends the diagonal boundary into black instead of stair-stepping
+  // one whole pixel at a time. Color remains pale at the top-center and amber
+  // at the lower edges.
+  const Triangle warning{32.0f, 3.5f, 16.5f, 29.0f, 47.5f, 29.0f};
+  for (int y = 3; y <= 29; ++y) {
+    const int vertical = std::clamp((y - 4) * 255 / 24, 0, 255);
+    for (int x = 15; x <= 48; ++x) {
+      const float coverage =
+          TriangleCoverage(x + 0.5f, y + 0.5f, warning);
+      if (coverage <= 0.0f)
+        continue;
       const int doubled_x = x * 2;
       const int center_distance =
           doubled_x < 63 ? 63 - doubled_x : doubled_x - 63;
-      const int edge = center_distance * 255 / 29;
+      const int edge = std::min(center_distance * 255 / 29, 255);
       const Color fill(0xFF - edge * 20 / 255,
                        0xF5 - vertical * 75 / 255 - edge * 60 / 255,
                        0xA0 - vertical * 125 / 255 - edge * 35 / 255);
-      this->draw_pixel_at(x, y, fill);
+      this->BlendPixel(x, y, fill, coverage);
     }
   }
 

@@ -19,10 +19,12 @@ using content::FillDisc;
 using content::FillDiscGlow;
 using content::FillDiscRadial;
 using content::FillDiscVertical;
+using content::FillTriangle;
 using content::FillUnionVertical;
 using content::Lerp;
 using content::Rect;
 using content::StrokeCapsule;
+using content::Triangle;
 using content::UnionCoverage;
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -380,48 +382,6 @@ void DrawIcePellets(display::Display &d, BlendCanvas *canvas, float cx,
 
 // ---- lightning -------------------------------------------------------------
 
-// A convex triangle, covered by how far a pixel lies inside all three edges.
-struct Tri {
-  float x0, y0, x1, y1, x2, y2;
-};
-
-float EdgeInside(float px, float py, float ax, float ay, float bx, float by,
-                 float sign) {
-  const float ex = bx - ax, ey = by - ay;
-  const float len = std::sqrt(ex * ex + ey * ey);
-  if (len <= 0.0f)
-    return 0.0f;
-  return sign * ((px - ax) * ey - (py - ay) * ex) / len;
-}
-
-float TriCoverage(float px, float py, const Tri &t) {
-  const float area = (t.x1 - t.x0) * (t.y2 - t.y0) - (t.y1 - t.y0) *
-                                                          (t.x2 - t.x0);
-  const float sign = area < 0.0f ? -1.0f : 1.0f;
-  const float a = EdgeInside(px, py, t.x0, t.y0, t.x1, t.y1, -sign);
-  const float b = EdgeInside(px, py, t.x1, t.y1, t.x2, t.y2, -sign);
-  const float c = EdgeInside(px, py, t.x2, t.y2, t.x0, t.y0, -sign);
-  const float inside = std::fmin(a, std::fmin(b, c));
-  return Clamp01(inside + 0.5f);
-}
-
-void FillTri(display::Display &d, BlendCanvas *canvas, const Tri &t,
-             Color color, float alpha) {
-  if (alpha <= 0.0f)
-    return;
-  const float lo_x = std::fmin(t.x0, std::fmin(t.x1, t.x2)) - 1.0f;
-  const float hi_x = std::fmax(t.x0, std::fmax(t.x1, t.x2)) + 1.0f;
-  const float lo_y = std::fmin(t.y0, std::fmin(t.y1, t.y2)) - 1.0f;
-  const float hi_y = std::fmax(t.y0, std::fmax(t.y1, t.y2)) + 1.0f;
-  for (int y = static_cast<int>(std::floor(lo_y));
-       y <= static_cast<int>(std::ceil(hi_y)); y++) {
-    for (int x = static_cast<int>(std::floor(lo_x));
-         x <= static_cast<int>(std::ceil(hi_x)); x++)
-      BlendAt(d, canvas, x, y, color,
-              TriCoverage(x + 0.5f, y + 0.5f, t) * alpha);
-  }
-}
-
 // The bolt stays drawn between strikes, dimmer and cooler, so the icon still
 // names the condition while the schedule drives the flash.
 constexpr float kBoltRestAlpha = 0.42f;
@@ -435,12 +395,14 @@ void DrawBolt(display::Display &d, BlendCanvas *canvas, float cx, float cy,
   if (strike > 0.0f)
     FillDiscGlow(d, canvas, Disc{cx, cy, h * 1.5f}, Color(255, 228, 150),
                  0.42f * strike, 2.0f);
-  FillTri(d, canvas, Tri{cx + 0.6f, cy - h, cx - w, cy + h / 4.0f, cx + 0.4f,
-                         cy},
-          amber, alpha);
-  FillTri(d, canvas,
-          Tri{cx - 0.4f, cy, cx + w, cy - h / 4.0f, cx - 0.6f, cy + h}, amber,
-          alpha);
+  FillTriangle(d, canvas,
+               Triangle{cx + 0.6f, cy - h, cx - w, cy + h / 4.0f, cx + 0.4f,
+                        cy},
+               amber, alpha);
+  FillTriangle(d, canvas,
+               Triangle{cx - 0.4f, cy, cx + w, cy - h / 4.0f, cx - 0.6f,
+                        cy + h},
+               amber, alpha);
   StrokeCapsule(d, canvas, cx + 0.2f, cy - h + 1.0f, cx - 0.9f, cy, 0.45f,
                 0.35f, hot, alpha);
   StrokeCapsule(d, canvas, cx + 0.2f, cy, cx - 0.4f, cy + h - 1.0f, 0.4f, 0.3f,

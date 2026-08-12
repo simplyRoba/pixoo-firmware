@@ -61,6 +61,16 @@ Bounds UnionBounds(const Disc *discs, int count, const Rect *rect) {
 // inside the edge, positive within the shape.
 float EdgeCoverage(float inside) { return Clamp01(inside + 0.5f); }
 
+float EdgeInside(float px, float py, float ax, float ay, float bx, float by,
+                 float sign) {
+  const float ex = bx - ax;
+  const float ey = by - ay;
+  const float length = std::sqrt(ex * ex + ey * ey);
+  if (length <= 0.0f)
+    return 0.0f;
+  return sign * ((px - ax) * ey - (py - ay) * ex) / length;
+}
+
 }  // namespace
 
 float Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -110,6 +120,20 @@ float RectCoverage(float px, float py, const Rect &rect) {
   return EdgeCoverage(inside_x) * EdgeCoverage(inside_y);
 }
 
+float TriangleCoverage(float px, float py, const Triangle &triangle) {
+  const float area =
+      (triangle.x1 - triangle.x0) * (triangle.y2 - triangle.y0) -
+      (triangle.y1 - triangle.y0) * (triangle.x2 - triangle.x0);
+  const float sign = area < 0.0f ? -1.0f : 1.0f;
+  const float a = EdgeInside(px, py, triangle.x0, triangle.y0, triangle.x1,
+                             triangle.y1, -sign);
+  const float b = EdgeInside(px, py, triangle.x1, triangle.y1, triangle.x2,
+                             triangle.y2, -sign);
+  const float c = EdgeInside(px, py, triangle.x2, triangle.y2, triangle.x0,
+                             triangle.y0, -sign);
+  return EdgeCoverage(std::fmin(a, std::fmin(b, c)));
+}
+
 float UnionCoverage(float px, float py, const Disc *discs, int count,
                     const Rect *rect) {
   // Coverage of the union, not the largest single coverage: where two parts
@@ -138,6 +162,26 @@ void FillDisc(display::Display &d, BlendCanvas *canvas, const Disc &disc,
     for (int x = b.x0; x <= b.x1; x++)
       BlendAt(d, canvas, x, y, color,
               DiscCoverage(x + 0.5f, y + 0.5f, disc) * alpha);
+  }
+}
+
+void FillTriangle(display::Display &d, BlendCanvas *canvas,
+                  const Triangle &triangle, Color color, float alpha) {
+  const float lo_x =
+      std::fmin(triangle.x0, std::fmin(triangle.x1, triangle.x2));
+  const float hi_x =
+      std::fmax(triangle.x0, std::fmax(triangle.x1, triangle.x2));
+  const float lo_y =
+      std::fmin(triangle.y0, std::fmin(triangle.y1, triangle.y2));
+  const float hi_y =
+      std::fmax(triangle.y0, std::fmax(triangle.y1, triangle.y2));
+  const Bounds b = BoundsOf(lo_x, lo_y, hi_x, hi_y, 1.0f);
+  if (b.empty() || alpha <= 0.0f)
+    return;
+  for (int y = b.y0; y <= b.y1; y++) {
+    for (int x = b.x0; x <= b.x1; x++)
+      BlendAt(d, canvas, x, y, color,
+              TriangleCoverage(x + 0.5f, y + 0.5f, triangle) * alpha);
   }
 }
 

@@ -57,6 +57,15 @@ struct Rect {
   float y1{0.0f};
 };
 
+struct Triangle {
+  float x0{0.0f};
+  float y0{0.0f};
+  float x1{0.0f};
+  float y1{0.0f};
+  float x2{0.0f};
+  float y2{0.0f};
+};
+
 // Fraction of the pixel whose center is (px, py) inside the shape, taking the
 // edge to be one pixel wide.
 float DiscCoverage(float px, float py, const Disc &disc);
@@ -65,6 +74,8 @@ float DiscCoverage(float px, float py, const Disc &disc);
 float CapsuleCoverage(float px, float py, float x0, float y0, float x1,
                       float y1, float r0, float r1);
 float RectCoverage(float px, float py, const Rect &rect);
+// A convex triangle, covered by how far the pixel lies inside all three edges.
+float TriangleCoverage(float px, float py, const Triangle &triangle);
 // The union of `count` discs and an optional rectangle, as the strongest
 // coverage of any of them. A union has no internal seams, so one silhouette
 // can be built from overlapping parts and shaded as a whole.
@@ -74,6 +85,8 @@ float UnionCoverage(float px, float py, const Disc *discs, int count,
 // `alpha` scales the coverage of every pixel, so a whole shape can fade.
 void FillDisc(display::Display &d, BlendCanvas *canvas, const Disc &disc,
               Color color, float alpha = 1.0f);
+void FillTriangle(display::Display &d, BlendCanvas *canvas,
+                  const Triangle &triangle, Color color, float alpha = 1.0f);
 // Vertical gradient: `top` at the top of the disc, `bottom` at its bottom.
 void FillDiscVertical(display::Display &d, BlendCanvas *canvas,
                       const Disc &disc, Color top, Color bottom,
