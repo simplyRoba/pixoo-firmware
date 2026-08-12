@@ -8,10 +8,10 @@
 
 namespace esphome::pixoo64::clockface {
 
-// Bauhaus dial: bars for the hours, shorter ones for the half hours, no
-// numerals, tapered hour and minute hands, a red second hand. Every element is
-// anti-aliased from its coverage of each pixel, so an edge at any angle reads
-// as straight rather than as a staircase.
+// Full-screen rounded-rectangle dial: a marker for every minute, longer hour
+// markers, tapered hour and minute hands, and a red second hand. Every element
+// is anti-aliased from its coverage of each pixel, so an edge at any angle
+// reads as straight rather than as a staircase.
 class AnalogFace : public WatchFace {
  public:
   void Tick(const ClockTime &time, uint32_t now_ms) override;

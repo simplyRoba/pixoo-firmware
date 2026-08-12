@@ -26,12 +26,14 @@ const Color kSecond(226, 44, 38);
 // Dial center, on the corner between the four middle pixels.
 constexpr float kCenter = 32.0f;
 
-// Radii from the dial center; negative is past the center.
-constexpr float kTickOuter = 30.0f;
-constexpr float kHourTickInner = 23.5f;
-constexpr float kHalfTickInner = 27.0f;
+// Marker tips trace a rounded rectangle. Each marker remains on its clock
+// angle, so a hand still points directly at the corresponding minute.
+constexpr float kDialHalfExtent = 29.5f;
+constexpr float kDialCornerRadius = 12.0f;
+constexpr float kHourTickLength = 6.0f;
+constexpr float kMinuteTickLength = 2.3f;
 constexpr float kHourTickHalfWidth = 0.95f;
-constexpr float kHalfTickHalfWidth = 0.55f;
+constexpr float kMinuteTickHalfWidth = 0.45f;
 
 constexpr float kHourTail = -3.5f;
 constexpr float kHourTip = 17.0f;
@@ -52,9 +54,9 @@ constexpr float kSecondWeightRadius = 1.7f;
 constexpr float kCapRadius = 1.6f;
 constexpr float kPivotRadius = 0.75f;
 
-// 12 hour ticks, 12 half ticks, two hands, the second hand and its
-// counterweight, two pivot caps.
-constexpr int kDialShapeCount = 12 + 12;
+// 60 minute markers, two hands, the second hand and its counterweight, two
+// pivot caps.
+constexpr int kDialShapeCount = 60;
 constexpr int kHandShapeCount = 2 + 2 + 2;
 constexpr int kMaxShapes = kDialShapeCount + kHandShapeCount;
 
@@ -137,14 +139,45 @@ template<int Capacity> class ShapeList {
   int count_{0};
 };
 
+// Distance from the center to the edge of the rounded rectangle along a
+// clock-angle ray. Straight-edge intersections are preferred; rays through a
+// corner intersect that corner's quarter-circle instead.
+float DialEdgeRadius(float angle_deg) {
+  const float rad = angle_deg * kPi / 180.0f;
+  const float ux = std::fabs(std::sin(rad));
+  const float uy = std::fabs(std::cos(rad));
+  const float straight = kDialHalfExtent - kDialCornerRadius;
+
+  if (ux > 0.0f) {
+    const float at_vertical = kDialHalfExtent / ux;
+    if (uy * at_vertical <= straight)
+      return at_vertical;
+  }
+  if (uy > 0.0f) {
+    const float at_horizontal = kDialHalfExtent / uy;
+    if (ux * at_horizontal <= straight)
+      return at_horizontal;
+  }
+
+  const float projection = straight * (ux + uy);
+  const float corner_center_sq = 2.0f * straight * straight;
+  const float discriminant = projection * projection -
+                             (corner_center_sq -
+                              kDialCornerRadius * kDialCornerRadius);
+  return projection + std::sqrt(discriminant > 0.0f ? discriminant : 0.0f);
+}
+
 template<int Capacity> void AddTicks(ShapeList<Capacity> &shapes) {
   static_assert(Capacity >= kDialShapeCount);
-  for (int i = 0; i < 12; i++) {
-    const float hour_angle = i * 30.0f;
-    shapes.AddRadial(hour_angle, kHourTickInner, kTickOuter,
-                     kHourTickHalfWidth, kHourTickHalfWidth, kHourTick);
-    shapes.AddRadial(hour_angle + 15.0f, kHalfTickInner, kTickOuter,
-                     kHalfTickHalfWidth, kHalfTickHalfWidth, kHalfTick);
+  for (int minute = 0; minute < 60; minute++) {
+    const float angle = minute * 6.0f;
+    const float outer = DialEdgeRadius(angle);
+    const bool hour = minute % 5 == 0;
+    const float length = hour ? kHourTickLength : kMinuteTickLength;
+    const float width =
+        hour ? kHourTickHalfWidth : kMinuteTickHalfWidth;
+    shapes.AddRadial(angle, outer - length, outer, width, width,
+                     hour ? kHourTick : kHalfTick);
   }
 }
 
