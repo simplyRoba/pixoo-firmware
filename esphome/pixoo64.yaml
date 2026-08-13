@@ -178,6 +178,9 @@ api:
     - action: timer_reset
       then:
         - pixoo64.timer_reset: pixoo_firmware
+    - action: reboot
+      then:
+        - pixoo64.reboot: pixoo_firmware
 
 ota:
   - platform: esphome

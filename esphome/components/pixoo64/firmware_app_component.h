@@ -73,8 +73,10 @@ class FirmwareAppComponent final : public PollingComponent,
   void TimerStart();
   void TimerStop();
   void TimerReset();
+  void RequestReboot();
 
   void Publish(pixoo::LightState state) override;
+  void Reboot() override;
   void FactoryReset() override;
   void BeginRegularFrame() override;
   void EndRegularFrame() override;
@@ -234,6 +236,20 @@ class TimerResetAction : public Action<Ts...> {
     (void) sizeof...(x);
     this->parent_->TimerReset();
   }
+ protected:
+  FirmwareAppComponent *parent_;
+};
+
+template<typename... Ts>
+class RebootAction : public Action<Ts...> {
+ public:
+  explicit RebootAction(FirmwareAppComponent *parent) : parent_(parent) {}
+
+  void play(const Ts &...x) override {
+    (void) sizeof...(x);
+    this->parent_->RequestReboot();
+  }
+
  protected:
   FirmwareAppComponent *parent_;
 };

@@ -681,6 +681,12 @@ void FirmwareApp::ClearOverlayQueue() {
   this->RestoreOverlaySnapshot_();
 }
 
+void FirmwareApp::Reboot() {
+  this->StopSound_();
+  if (this->system_ != nullptr)
+    this->system_->Reboot();
+}
+
 void FirmwareApp::FactoryReset() {
   this->StopSound_();
   if (this->system_ != nullptr)

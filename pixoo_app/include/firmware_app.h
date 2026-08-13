@@ -107,6 +107,7 @@ class LightStateSink {
 class SystemPort {
  public:
   virtual ~SystemPort() = default;
+  virtual void Reboot() = 0;
   virtual void FactoryReset() = 0;
 };
 
@@ -223,6 +224,7 @@ class FirmwareApp {
   bool Notify(NotificationRequest request, uint32_t now_ms);
   bool React(Reaction reaction, uint32_t now_ms);
   void ClearOverlayQueue();
+  void Reboot();
   void FactoryReset();
 
   Phase phase() const { return this->phase_; }

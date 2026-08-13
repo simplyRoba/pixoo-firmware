@@ -186,6 +186,13 @@ void FirmwareAppComponent::TimerReset() {
     this->app_->TimerReset(millis());
 }
 
+void FirmwareAppComponent::RequestReboot() {
+  if (this->app_.has_value())
+    this->app_->Reboot();
+  else
+    this->Reboot();
+}
+
 void FirmwareAppComponent::Publish(pixoo::LightState state) {
   if (this->light_ == nullptr)
     return;
@@ -195,6 +202,8 @@ void FirmwareAppComponent::Publish(pixoo::LightState state) {
       .set_transition_length(0)
       .perform();
 }
+
+void FirmwareAppComponent::Reboot() { App.safe_reboot(); }
 
 void FirmwareAppComponent::FactoryReset() {
   if (global_preferences != nullptr)

@@ -230,11 +230,16 @@ struct RecordingLightSink final : LightStateSink {
 
 struct RecordingSystem final : SystemPort {
   explicit RecordingSystem(std::vector<std::string> *events) : events(events) {}
+  void Reboot() override {
+    events->push_back("system:reboot");
+    ++reboot_calls;
+  }
   void FactoryReset() override {
     events->push_back("system:factory-reset");
     ++factory_reset_calls;
   }
   std::vector<std::string> *events;
+  int reboot_calls{0};
   int factory_reset_calls{0};
 };
 
@@ -1914,6 +1919,22 @@ static void test_logical_off_stops_sound_before_power_off() {
   TEST_ASSERT_EQUAL(2, sound.stop_calls);
 }
 
+static void test_reboot_uses_typed_system_port() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSound sound(&events);
+  RecordingSystem system(&events);
+  FirmwareApp app(panel, renderer, &sound, nullptr, nullptr,
+                  FirmwareAppConfig{}, &system);
+  app.Reboot();
+  TEST_ASSERT_EQUAL(1, sound.stop_calls);
+  TEST_ASSERT_EQUAL(1, system.reboot_calls);
+  TEST_ASSERT_EQUAL(0, system.factory_reset_calls);
+  AssertEvent(events, 0, "sound:stop");
+  AssertEvent(events, 1, "system:reboot");
+}
+
 static void test_factory_reset_uses_typed_system_port() {
   std::vector<std::string> events;
   RecordingPanel panel(&events);
@@ -1924,6 +1945,7 @@ static void test_factory_reset_uses_typed_system_port() {
                   FirmwareAppConfig{}, &system);
   app.FactoryReset();
   TEST_ASSERT_EQUAL(1, sound.stop_calls);
+  TEST_ASSERT_EQUAL(0, system.reboot_calls);
   TEST_ASSERT_EQUAL(1, system.factory_reset_calls);
   AssertEvent(events, 0, "sound:stop");
   AssertEvent(events, 1, "system:factory-reset");
@@ -2473,6 +2495,7 @@ int main(int, char **) {
   RUN_TEST(test_off_state_brightness_change_preserves_temporary_wake);
   RUN_TEST(test_power_commands_cancel_a_temporary_off_state_wake);
   RUN_TEST(test_logical_off_stops_sound_before_power_off);
+  RUN_TEST(test_reboot_uses_typed_system_port);
   RUN_TEST(test_factory_reset_uses_typed_system_port);
   RUN_TEST(test_stopwatch_actions_are_precise_idempotent_and_cap);
   RUN_TEST(test_stopwatch_actions_do_not_wake_an_off_panel);

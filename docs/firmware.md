@@ -34,7 +34,7 @@ state remain with their respective components. `FirmwareApp` decides:
   presentation, or running;
 - when the selected dashboard and any overlay must render;
 - how power, brightness, buttons, dashboard selection, notifications, reactions,
-  sounds, and factory reset interact;
+  sounds, reboot, and factory reset interact;
 - when microphone capture is required; and
 - when a rendered frame is presented to the panel.
 
@@ -57,7 +57,7 @@ FirmwareApp
         ├── SoundPlayer ─────► RTTTL adapter
         ├── MicrophonePort ──► I2S microphone adapter and equalizer DSP
         ├── LightStateSink ──► ESPHome light entity
-        ├── SystemPort ──────► preference reset and safe reboot
+        ├── SystemPort ──────► safe reboot and preference reset
         └── FrameMetricsPort ► ESPHome diagnostic sensors
 ```
 
@@ -85,7 +85,7 @@ separate content-layer boundary consumed by the weather renderer.
 | `SoundPlayer` | `FirmwareApp` | `RtttlSoundPlayer` | Play or stop a sound from the closed `pixoo::Sound` vocabulary. |
 | `MicrophonePort` | `FirmwareApp` | `MicrophoneAdapter` | Enable capture, process microphone samples, and publish normalized equalizer levels. |
 | `LightStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect application-owned light state in the ESPHome light entity. |
-| `SystemPort` | `FirmwareApp` | `FirmwareAppComponent` | Clear persisted preferences and request a safe reboot. |
+| `SystemPort` | `FirmwareApp` | `FirmwareAppComponent` | Request a safe reboot, optionally after clearing persisted preferences. |
 | `FrameMetricsPort` | `FirmwareApp` | `FirmwareAppComponent` | Measure complete regular-frame work without putting a platform clock in the application core. |
 | `WeatherSource` | weather rendering layer | `OpenMeteoSource` | Non-blocking weather refresh and coherent weather snapshots. |
 

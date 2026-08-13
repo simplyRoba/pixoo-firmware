@@ -105,8 +105,9 @@ The configured Home Assistant/native-API surface includes:
 - `notify` (message, optional title, severity, duration, optional sound),
   `reaction`, `clear_overlay_queue`, `stopwatch_start`, `stopwatch_stop`,
   `stopwatch_reset`, `timer_set` (`duration_ms`), `timer_start`, `timer_stop`,
-  and `timer_reset` API actions. An empty notification title
-  keeps the one-line banner; a title adds a line above the message. Notifications
+  `timer_reset`, and `reboot` API actions. `reboot` safely restarts the device
+  without clearing persisted preferences. An empty notification title keeps the
+  one-line banner; a title adds a line above the message. Notifications
   support `info`, `success`, `warning`, and `error`. Reactions are `laughing`,
   `love`, `crying`, `angry`,
   `poop`, `approve`, `disapprove`, `celebrate`, `thinking`, `surprised`, `fire`,

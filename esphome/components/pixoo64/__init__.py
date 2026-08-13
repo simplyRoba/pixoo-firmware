@@ -145,6 +145,7 @@ ClearOverlayQueueAction = pixoo64_ns.class_(
 BeginFirmwareUpdateAction = pixoo64_ns.class_(
     "BeginFirmwareUpdateAction", automation.Action
 )
+RebootAction = pixoo64_ns.class_("RebootAction", automation.Action)
 StopwatchStartAction = pixoo64_ns.class_(
     "StopwatchStartAction", automation.Action
 )
@@ -321,6 +322,9 @@ CLEAR_OVERLAY_QUEUE_SCHEMA = automation.maybe_simple_id(
 BEGIN_FIRMWARE_UPDATE_SCHEMA = automation.maybe_simple_id(
     {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
 )
+REBOOT_ACTION_SCHEMA = automation.maybe_simple_id(
+    {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
+)
 STOPWATCH_ACTION_SCHEMA = automation.maybe_simple_id(
     {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
 )
@@ -458,6 +462,17 @@ async def timer_stop_to_code(config, action_id, template_arg, args):
     synchronous=True,
 )
 async def timer_reset_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.reboot",
+    RebootAction,
+    REBOOT_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def reboot_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 
