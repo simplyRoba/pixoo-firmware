@@ -1,9 +1,17 @@
+from pathlib import Path
+
+import yaml
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome.components import display, font, sensor, text, time
 from esphome.const import (
+    CONF_FILE,
+    CONF_GLYPHS,
     CONF_ID,
     CONF_PLATFORM,
+    CONF_SIZE,
     CONF_TIME_ID,
     CONF_UPDATE_INTERVAL,
     ENTITY_CATEGORY_DIAGNOSTIC,
@@ -20,6 +28,7 @@ CONF_PANEL_FONT = "panel_font"
 CONF_PANEL_TEXT = "panel_text"
 CONF_FONT_SMALL = "font_small"
 CONF_FONT_BIG = "font_big"
+CONF_FONT = "font"
 CONF_FIXED_TIME = "fixed_time"
 CONF_SOURCE = "source"
 CONF_NOTIFICATION_FONT = "notification_font"
@@ -41,6 +50,7 @@ content_ns = pixoo64_ns.namespace("content")
 dashboard_ns = pixoo64_ns.namespace("dashboard")
 RenderPort = pixoo_ns.class_("RenderPort")
 WeatherSource = pixoo_ns.class_("WeatherSource")
+NowPlayingSource = pixoo_ns.namespace("now_playing").class_("NowPlayingSource")
 EqualizerLevelsSink = pixoo_ns.class_("EqualizerLevelsSink")
 Dashboard = dashboard_ns.class_("Dashboard")
 ContentController = content_ns.class_(
@@ -72,6 +82,7 @@ EQUALIZER_FACES = {
 ClockDashboard = dashboard_ns.class_("ClockDashboard", Dashboard)
 GameOfLifeDashboard = dashboard_ns.class_("GameOfLifeDashboard", Dashboard)
 TimingDashboard = dashboard_ns.class_("TimingDashboard", Dashboard)
+NowPlayingDashboard = dashboard_ns.class_("NowPlayingDashboard", Dashboard)
 # Closed timing-face vocabulary; code generation binds each instance to one
 # application-owned timing snapshot.
 TIMING_FACES = ("stopwatch", "timer")
@@ -128,6 +139,16 @@ CLOCK_SCHEMA = cv.Schema(
         cv.Optional(CONF_FIXED_TIME): cv.positive_int,
     }
 )
+NOW_PLAYING_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(NowPlayingDashboard),
+        cv.Required(CONF_DASHBOARD_ID): cv.string_strict,
+        cv.Optional(CONF_FRAME_INTERVAL, default="33ms"):
+            cv.positive_time_period_milliseconds,
+        cv.Required(CONF_SOURCE): cv.use_id(NowPlayingSource),
+        cv.Required(CONF_FONT): cv.use_id(font.Font),
+    }
+)
 TIMING_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(TimingDashboard),
@@ -154,6 +175,7 @@ ENTRY_SCHEMA = cv.typed_schema(
         "clock": CLOCK_SCHEMA,
         "game_of_life": GAME_OF_LIFE_SCHEMA,
         "timing": TIMING_SCHEMA,
+        "now_playing": NOW_PLAYING_SCHEMA,
     },
     key=CONF_PLATFORM,
 )
@@ -175,6 +197,12 @@ def validate_dashboard_config(config):
             raise cv.Invalid(
                 "frame_interval must fit a positive signed 32-bit millisecond value"
             )
+    now_playing_entries = [
+        entry for entry in config[CONF_DASHBOARDS]
+        if entry[CONF_PLATFORM] == "now_playing"
+    ]
+    if len(now_playing_entries) > 1:
+        raise cv.Invalid("at most one now_playing dashboard may be configured")
     for face in TIMING_FACES:
         entries = [
             entry
@@ -189,6 +217,49 @@ def validate_dashboard_config(config):
             raise cv.Invalid(f"the {face} timing dashboard_id must be {face}")
     if config[CONF_DEFAULT_DASHBOARD] not in ids:
         raise cv.Invalid("default_dashboard must name a configured dashboard")
+    return config
+
+
+def _pixel_operator_glyphs():
+    inventory_path = (
+        Path(__file__).resolve().parents[2] / "fonts/pixel_operator_glyphs.yaml"
+    )
+    try:
+        values = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise cv.Invalid(f"invalid Pixel Operator glyph inventory: {error}") from error
+    if not isinstance(values, list) or not all(
+        isinstance(value, str) for value in values
+    ):
+        raise cv.Invalid("Pixel Operator glyph inventory must be a list of strings")
+    return {character for value in values for character in value}
+
+
+def validate_now_playing_fonts(config):
+    full_config = fv.full_config.get()
+    expected_glyphs = _pixel_operator_glyphs()
+    for entry in config[CONF_DASHBOARDS]:
+        if entry[CONF_PLATFORM] != "now_playing":
+            continue
+        font_path = full_config.get_path_for_id(entry[CONF_FONT])[:-1]
+        font_config = full_config.get_config_for_path(font_path)
+        file_config = font_config.get(CONF_FILE, {})
+        file_path = file_config.get("path", "") if isinstance(file_config, dict) else file_config
+        glyphs = [
+            character
+            for value in font_config.get(CONF_GLYPHS, [])
+            for character in value
+        ]
+        if (
+            font_config.get(CONF_SIZE) != 8
+            or Path(str(file_path)).name != "PixelOperator8.ttf"
+            or len(glyphs) != 238
+            or set(glyphs) != expected_glyphs
+        ):
+            raise cv.Invalid(
+                "now_playing font must be the 8px PixelOperator8 font with "
+                "the complete 238-glyph inventory"
+            )
     return config
 
 
@@ -233,6 +304,8 @@ RENDER_METRICS_SCHEMA = cv.All(
     ),
     validate_render_metrics,
 )
+
+FINAL_VALIDATE_SCHEMA = validate_now_playing_fonts
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
@@ -303,6 +376,19 @@ async def _build_clock(entry):
     return dashboard
 
 
+async def _build_now_playing(entry):
+    dashboard = cg.new_Pvariable(entry[CONF_ID])
+    cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
+    cg.add(
+        dashboard.set_frame_interval_ms(
+            entry[CONF_FRAME_INTERVAL].total_milliseconds
+        )
+    )
+    cg.add(dashboard.set_source(await cg.get_variable(entry[CONF_SOURCE])))
+    cg.add(dashboard.set_font(await cg.get_variable(entry[CONF_FONT])))
+    return dashboard
+
+
 async def _build_timing(entry):
     dashboard = cg.new_Pvariable(entry[CONF_ID])
     cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
@@ -332,6 +418,7 @@ DASHBOARD_BUILDERS = {
     "clock": _build_clock,
     "game_of_life": _build_game_of_life,
     "timing": _build_timing,
+    "now_playing": _build_now_playing,
 }
 
 

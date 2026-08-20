@@ -38,6 +38,17 @@ esphome:
     - ../../../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
     - ../../../pixoo_content/include/dashboard/equalizer/spectrum.h
     - ../../../pixoo_content/include/dashboard/equalizer/equalizer_processor.h
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_data.h
+    - ../../../pixoo_content/src/dashboard/now_playing/now_playing_data.cpp
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_source.h
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_text.h
+    - ../../../pixoo_content/src/dashboard/now_playing/now_playing_text.cpp
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_art.h
+    - ../../../pixoo_content/src/dashboard/now_playing/now_playing_art.cpp
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_timing.h
+    - ../../../pixoo_content/src/dashboard/now_playing/now_playing_timing.cpp
+    - ../../../pixoo_content/include/dashboard/now_playing/metadata_policy.h
+    - ../../../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
     - ../../../pixoo_app/include/app_state.h
     - ../../../pixoo_app/src/app_state.cpp
     - ../../../pixoo_app/include/frame_metrics.h
@@ -63,11 +74,11 @@ font:
   - file: ../../fonts/PixelOperator8.ttf
     id: font_8
     size: 8
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include ../../fonts/pixel_operator_glyphs.yaml
   - file: ../../fonts/PixelOperator.ttf
     id: font_16
     size: 16
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include ../../fonts/pixel_operator_glyphs.yaml
 
 text:
   - platform: template
@@ -468,6 +479,157 @@ pixoo64_render_test:
       latitude: 52.5200
       longitude: 13.4050
 
+  - id: src_now_playing
+    snapshots:
+      - at_ms: 0
+        source_state: ready
+        playback_state: playing
+        title: "ÄÖÜ äöü ß"
+        artist: "Grüße aus Köln"
+        duration_ms: 240000
+        position_ms: 60000
+        media_identity: 1001
+        artwork_identity: 5001
+        artwork_availability: ready
+        artwork_revision: 1
+      - at_ms: 1000
+        source_state: ready
+        playback_state: playing
+        title: "Neue Grüße"
+        artist: "Derselbe Umschlag"
+        duration_ms: 240000
+        position_ms: 61000
+        media_identity: 1002
+        artwork_identity: 5001
+        artwork_availability: ready
+        artwork_revision: 1
+      - at_ms: 2000
+        source_state: ready
+        playback_state: paused
+        title: "Neue Grüße"
+        artist: "Derselbe Umschlag"
+        duration_ms: 240000
+        position_ms: 62000
+        media_identity: 1002
+        artwork_identity: 5001
+        artwork_availability: ready
+        artwork_revision: 1
+      - at_ms: 4000
+        source_state: ready
+        playback_state: buffering
+        title: "ÄÖÜ äöü ß"
+        artist: "Grüße aus Köln"
+        duration_ms: 240000
+        position_ms: 62000
+        media_identity: 1001
+        artwork_identity: 5001
+        artwork_availability: ready
+        artwork_revision: 1
+      - at_ms: 6000
+        source_state: ready
+        playback_state: playing
+        title: "A Deterministic Marquee Title Beyond Sixty Pixels"
+        artist: "Short Artist"
+        duration_ms: 180000
+        position_ms: 45000
+        media_identity: 2002
+        artwork_identity: 5002
+        artwork_availability: pending
+        artwork_revision: 1
+      - at_ms: 6300
+        source_state: ready
+        playback_state: playing
+        title: "A Deterministic Marquee Title Beyond Sixty Pixels"
+        artist: "Short Artist"
+        duration_ms: 180000
+        position_ms: 45300
+        media_identity: 2002
+        artwork_identity: 5002
+        artwork_availability: ready
+        artwork_revision: 1
+        artwork_copy_ready_at_ms: 6300
+      - at_ms: 8500
+        source_state: ready
+        playback_state: playing
+        title: "Short Title"
+        artist: "Independent Artist Credits Scrolling On Their Own Row"
+        duration_ms: 180000
+        position_ms: 47500
+        media_identity: 2003
+        artwork_identity: 5002
+        artwork_availability: ready
+        artwork_revision: 1
+      - at_ms: 10000
+        source_state: ready
+        playback_state: playing
+        title: "Short Title"
+        artist: "Independent Artist Credits Scrolling On Their Own Row"
+        duration_ms: 180000
+        position_ms: 49000
+        media_identity: 2003
+        artwork_identity: 5002
+        artwork_availability: ready
+        artwork_revision: 2
+        artwork_copy_ready_at_ms: 10000
+      - at_ms: 11000
+        source_state: ready
+        playback_state: idle
+        media_identity: 0
+      - at_ms: 13000
+        source_state: waiting
+        playback_state: unknown
+        media_identity: 0
+      - at_ms: 15000
+        source_state: unconfigured
+        playback_state: unknown
+        media_identity: 0
+      - at_ms: 17000
+        source_state: no_entity_data
+        playback_state: unknown
+        media_identity: 0
+      - at_ms: 19000
+        source_state: offline
+        playback_state: unknown
+        media_identity: 0
+      - at_ms: 21000
+        source_state: ready
+        playback_state: playing
+        title: "No Cover Available"
+        artist: "Procedural Ensemble"
+        duration_ms: 200000
+        position_ms: 50000
+        media_identity: 3003
+      - at_ms: 22500
+        source_state: stale
+        playback_state: playing
+        title: "No Cover Available"
+        artist: "Procedural Ensemble"
+        duration_ms: 200000
+        position_ms: 51500
+        media_identity: 3003
+      - at_ms: 24500
+        source_state: ready
+        playback_state: playing
+        title: "Artwork Failed"
+        artist: "Metadata Remains"
+        duration_ms: 160000
+        position_ms: 40000
+        media_identity: 4004
+        artwork_identity: 5004
+        artwork_availability: failed
+        artwork_revision: 1
+      - at_ms: 26000
+        source_state: ready
+        playback_state: playing
+        title: "Signal 🚀 Lost"
+        artist: "Fallback ?"
+        duration_ms: 160000
+        position_ms: 41500
+        media_identity: 4004
+        artwork_identity: 5004
+        artwork_availability: failed
+        artwork_revision: 1
+
 pixoo64_content:
   id: render_test_content_controller
   default_dashboard: text
@@ -480,6 +642,12 @@ pixoo64_content:
       dashboard_id: text
       panel_font: font_8
       panel_text: render_test_text
+
+    - platform: now_playing
+      id: now_playing_dashboard
+      dashboard_id: now_playing
+      source: src_now_playing
+      font: font_8
 
     - platform: text
       id: text_dashboard_16
@@ -990,11 +1158,113 @@ display:
     content_controller: render_test_content_controller
     equalizer: equalizer_dashboard
     panel_text: render_test_text
+    now_playing_source: src_now_playing
     # Showing the face sends every column to its digit the long way around,
     # staggered 120ms apart. The first flap of a run takes 350ms and later ones
     # speed up: at 120ms the leftmost leaf is falling, at 260ms it is swinging
     # out of the hinge, and the slowest column lands by 4538ms.
     animation_frames:
+      - dashboard: now_playing
+        now_ms: 0
+        snapshot: now_playing_playing_artwork
+      - dashboard: now_playing
+        now_ms: 1000
+      - dashboard: now_playing
+        now_ms: 2000
+      - dashboard: now_playing
+        now_ms: 2200
+        snapshot: now_playing_paused_midpoint
+      - dashboard: now_playing
+        now_ms: 2400
+        snapshot: now_playing_paused
+      - dashboard: now_playing
+        now_ms: 4000
+      - dashboard: now_playing
+        now_ms: 4400
+        snapshot: now_playing_buffering
+      - dashboard: now_playing
+        now_ms: 6000
+        snapshot: now_playing_track_change_start
+      - dashboard: now_playing
+        now_ms: 6300
+        snapshot: now_playing_track_change_midpoint
+      - dashboard: now_playing
+        now_ms: 6600
+        snapshot: now_playing_track_change_placeholder
+      - dashboard: now_playing
+        now_ms: 6601
+        snapshot: now_playing_title_marquee_start
+      - dashboard: now_playing
+        now_ms: 6950
+        snapshot: now_playing_artwork_crossfade_midpoint
+      - dashboard: now_playing
+        now_ms: 7300
+        snapshot: now_playing_artwork_crossfade_complete
+      - dashboard: now_playing
+        now_ms: 8000
+        snapshot: now_playing_title_marquee_scrolled
+      - dashboard: now_playing
+        now_ms: 8500
+        snapshot: now_playing_artist_marquee_start
+      - dashboard: now_playing
+        now_ms: 9900
+        snapshot: now_playing_artist_marquee_scrolled
+      - dashboard: now_playing
+        now_ms: 10000
+      - dashboard: now_playing
+        now_ms: 10350
+        snapshot: now_playing_revision_crossfade_midpoint
+      - dashboard: now_playing
+        now_ms: 10700
+        snapshot: now_playing_revision_crossfade_complete
+      - dashboard: now_playing
+        now_ms: 11000
+      - dashboard: now_playing
+        now_ms: 11600
+        snapshot: now_playing_idle
+      - dashboard: now_playing
+        now_ms: 13000
+      - dashboard: now_playing
+        now_ms: 13600
+        snapshot: now_playing_waiting_start
+      - dashboard: now_playing
+        now_ms: 13850
+        snapshot: now_playing_waiting_animated
+      - dashboard: now_playing
+        now_ms: 15000
+      - dashboard: now_playing
+        now_ms: 15600
+        snapshot: now_playing_unconfigured
+      - dashboard: now_playing
+        now_ms: 17000
+      - dashboard: now_playing
+        now_ms: 17600
+        snapshot: now_playing_no_entity_data
+      - dashboard: now_playing
+        now_ms: 19000
+      - dashboard: now_playing
+        now_ms: 19600
+        snapshot: now_playing_offline
+      - dashboard: now_playing
+        now_ms: 21000
+      - dashboard: now_playing
+        now_ms: 21600
+        snapshot: now_playing_missing_art
+      - dashboard: now_playing
+        now_ms: 22500
+      - dashboard: now_playing
+        now_ms: 23000
+        snapshot: now_playing_stale
+      - dashboard: now_playing
+        now_ms: 24500
+      - dashboard: now_playing
+        now_ms: 25100
+      - dashboard: now_playing
+        now_ms: 25500
+        snapshot: now_playing_failed_art
+      - dashboard: now_playing
+        now_ms: 26000
+        snapshot: now_playing_unsupported_fallback
       - dashboard: game_of_life
         now_ms: 0
         snapshot: game_of_life
@@ -1201,7 +1471,6 @@ display:
       - dashboard: weather_landscape_fog_transition
         now_ms: 1300
         snapshot: weather_landscape_transition_sunny_fog_complete
-      # Re-showing resumes the retained animation phase at the current tick.
       - dashboard: weather_landscape_lifecycle
         now_ms: 0
       - dashboard: weather_landscape_lifecycle

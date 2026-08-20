@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstring>
 #include <functional>
 
 #include "freertos/FreeRTOS.h"
@@ -17,27 +18,34 @@ namespace esphome::pixoo64::adapters::async {
 // tick.
 //
 // Construct with the job, call Start() once, then Wake() to request a run.
-// Wake() returns immediately and coalesces: extra Wake()s while a run is pending
-// or in progress ensure exactly one further run follows. The job runs on a
-// FreeRTOS task pinned to the application core, away from the Wi-Fi/lwIP stack.
+// Wake() returns immediately and coalesces: extra Wake()s while a run is
+// pending or in progress ensure exactly one further run follows. The job runs
+// on its configured FreeRTOS core.
 //
 // Start(), Wake(), RequestStop(), and Stop() are single-owner control methods;
 // this adapter calls them only from ESPHome's main task. RequestStop() is
 // non-blocking and asks the worker to leave at its next cooperative checkpoint.
-// Stop() is the blocking destruction join and must run before captured job state
-// is released. This class never force-deletes a running task. The job owns
-// thread-safety of any data it produces (hand results back via SnapshotBuffer).
+// Stop() is the blocking destruction join and must run before captured job
+// state is released. This class never force-deletes a running task. The job
+// owns thread-safety of any data it produces (hand results back via
+// SnapshotBuffer).
 class AsyncWorker {
- public:
-  // core: FreeRTOS core id to pin to (default 1 = APP_CPU; Wi-Fi/lwIP run on 0).
-  // stack_bytes: task stack; HTTPS(TLS) + JSON parsing needs headroom.
+public:
+  // core: FreeRTOS core id to pin to (default 1 = APP_CPU; Wi-Fi/lwIP run on
+  // 0). stack_bytes: task stack; HTTPS(TLS) + JSON parsing needs headroom.
   // priority: must stay below the ESPHome main loop (priority 1).
   explicit AsyncWorker(std::function<void()> job, uint32_t stack_bytes = 12288,
-                       UBaseType_t priority = 0, BaseType_t core = 1)
-      : job_(std::move(job)),
-        stack_bytes_(stack_bytes),
-        priority_(priority),
-        core_(core) {}
+                       UBaseType_t priority = 0, BaseType_t core = 1,
+                       bool allow_internal_stack_fallback = true,
+                       const char *task_name = "pixoo_async")
+      : job_(std::move(job)), stack_bytes_(stack_bytes), priority_(priority),
+        core_(core),
+        allow_internal_stack_fallback_(allow_internal_stack_fallback) {
+    if (task_name != nullptr) {
+      std::strncpy(this->task_name_, task_name, sizeof(this->task_name_) - 1);
+      this->task_name_[sizeof(this->task_name_) - 1] = '\0';
+    }
+  }
 
   ~AsyncWorker() { this->Stop(); }
 
@@ -64,18 +72,20 @@ class AsyncWorker {
 
     this->stopped_acknowledged_.store(false, std::memory_order_release);
 
-    // The stack is allocated in PSRAM, falling back to internal RAM. Task
-    // creation happens-before the task runs, so TaskEntry observes
-    // stack_in_psram_ without synchronization.
-    this->stack_in_psram_ = xTaskCreatePinnedToCoreWithCaps(
-                                &AsyncWorker::TaskEntry, "pixoo_async",
-                                this->stack_bytes_, this, this->priority_,
-                                &this->task_, this->core_,
-                                MALLOC_CAP_SPIRAM) == pdPASS;
+    // Task creation happens-before the task runs, so TaskEntry observes
+    // stack_in_psram_ without synchronization. Callers whose bulk work is not
+    // latency-sensitive may require PSRAM rather than consuming scarce
+    // internal RAM when external allocation fails.
+    this->stack_in_psram_ =
+        xTaskCreatePinnedToCoreWithCaps(
+            &AsyncWorker::TaskEntry, this->task_name_, this->stack_bytes_, this,
+            this->priority_, &this->task_, this->core_,
+            MALLOC_CAP_SPIRAM) == pdPASS;
     if (!this->stack_in_psram_ &&
-        xTaskCreatePinnedToCore(&AsyncWorker::TaskEntry, "pixoo_async",
-                                this->stack_bytes_, this, this->priority_,
-                                &this->task_, this->core_) != pdPASS) {
+        (!this->allow_internal_stack_fallback_ ||
+         xTaskCreatePinnedToCore(&AsyncWorker::TaskEntry, this->task_name_,
+                                 this->stack_bytes_, this, this->priority_,
+                                 &this->task_, this->core_) != pdPASS)) {
       this->task_ = nullptr;
       this->DeleteSignals_();
       this->stopped_acknowledged_.store(true, std::memory_order_release);
@@ -123,7 +133,7 @@ class AsyncWorker {
     this->DeleteSignals_();
   }
 
- private:
+private:
   static void TaskEntry(void *arg) {
     auto *self = static_cast<AsyncWorker *>(arg);
     for (;;) {
@@ -163,6 +173,8 @@ class AsyncWorker {
   uint32_t stack_bytes_;
   UBaseType_t priority_;
   BaseType_t core_;
+  bool allow_internal_stack_fallback_;
+  char task_name_[configMAX_TASK_NAME_LEN]{"pixoo_async"};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> stopped_acknowledged_{true};
   TaskHandle_t task_{nullptr};
@@ -170,4 +182,4 @@ class AsyncWorker {
   SemaphoreHandle_t stopped_signal_{nullptr};
 };
 
-}  // namespace esphome::pixoo64::adapters::async
+} // namespace esphome::pixoo64::adapters::async

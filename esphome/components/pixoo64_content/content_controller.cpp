@@ -352,8 +352,15 @@ uint32_t ContentController::NotificationMinVisibleMs(
   return this->notification_renderer_.ScrollPassMs(notification);
 }
 
-void ContentController::HideBaseContent() {
+void ContentController::HideVisible_(uint32_t now_ms) {
+  if (this->visible_ == nullptr)
+    return;
+  this->visible_->OnHide(now_ms);
   this->visible_ = nullptr;
+}
+
+void ContentController::HideBaseContent(uint32_t now_ms) {
+  this->HideVisible_(now_ms);
   this->ReleaseReactionBackground_();
 }
 
@@ -514,7 +521,7 @@ bool ContentController::RenderContent(
 
   // A base that is not drawn is not visible, so returning to it is an entry.
   if (!base_visible)
-    this->visible_ = nullptr;
+    this->HideVisible_(now_ms);
   if (base_visible && render_base) {
     this->framebuffer_.Clear();
     if (this->stopwatch_dashboard_ != nullptr)
@@ -522,11 +529,14 @@ bool ContentController::RenderContent(
     if (this->timer_dashboard_ != nullptr)
       this->timer_dashboard_->set_timer(timer);
     Dashboard *dashboard = this->find_(dashboard_id);
-    if (dashboard != nullptr) {
-      if (dashboard != this->visible_) {
+    if (dashboard != this->visible_) {
+      this->HideVisible_(now_ms);
+      if (dashboard != nullptr) {
         this->visible_ = dashboard;
         dashboard->OnShow(now_ms);
       }
+    }
+    if (dashboard != nullptr) {
       dashboard->Tick(now_ms);
       if (dashboard->available())
         dashboard->Render(*this);

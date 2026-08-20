@@ -8,13 +8,14 @@
 #include "async_worker.h"
 #include "esphome/components/http_request/http_request.h"
 #include "esphome/components/json/json_util.h"
-#include "esphome/components/number/number.h"
 #include "esphome/components/network/util.h"
+#include "esphome/components/number/number.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include "snapshot_buffer.h"
+#include "http_request_gate.h"
 #include "open_meteo_url.h"
 #include "refresh_policy.h"
+#include "snapshot_buffer.h"
 #include "wmo.h"
 
 using esphome::network::is_connected;
@@ -27,7 +28,7 @@ const char *const TAG = "pixoo64.open_meteo";
 // Cap on the response body we buffer. Current + a 12-hour hourly series (five
 // fields) + daily fits well under this; the request bounds the series length.
 constexpr size_t kMaxResponse = 16384;
-}  // namespace
+} // namespace
 
 // Background worker state is kept out of the header so FreeRTOS does not leak
 // into the host render-test build. The worker only reads a request snapshot and
@@ -49,7 +50,8 @@ struct OpenMeteoSource::Impl {
     uint32_t generation{0};
   };
 
-  explicit Impl(std::function<void()> job) : worker(std::move(job)) {}
+  explicit Impl(std::function<void()> job)
+      : worker(std::move(job), 12288, 0, 1, true, "pixoo_weather") {}
   async::AsyncWorker worker;
   pixoo::WeatherRefreshPolicy refresh;
   async::SnapshotBuffer<TaggedWeatherData> result;
@@ -62,6 +64,8 @@ struct OpenMeteoSource::Impl {
   std::atomic<uint32_t> request_generation{0};
   std::atomic<float> request_latitude{0.0f};
   std::atomic<float> request_longitude{0.0f};
+  // Updated by the render task whenever a location invalidates a request.
+  std::atomic<uint32_t> location_generation{0};
 };
 
 OpenMeteoSource::OpenMeteoSource() {
@@ -112,6 +116,8 @@ void OpenMeteoSource::ObserveLocation_(float latitude, float longitude) {
              longitude != this->observed_longitude_) {
     this->impl_->refresh.Invalidate();
   }
+  this->impl_->location_generation.store(
+      this->impl_->refresh.location_generation(), std::memory_order_release);
   this->observed_latitude_ = latitude;
   this->observed_longitude_ = longitude;
 }
@@ -132,8 +138,8 @@ void OpenMeteoSource::FetchJob_() {
 
   Impl::Completion completion;
   completion.request = request;
-  completion.succeeded =
-      this->fetch_(&completion.data, request.latitude, request.longitude);
+  completion.succeeded = this->fetch_(&completion.data, request.latitude,
+                                      request.longitude, request.generation);
   if (this->impl_->worker.StopRequested())
     return;
   // Stop may race this final checkpoint. The handoff remains in generated
@@ -145,8 +151,7 @@ void OpenMeteoSource::FetchJob_() {
 
 void OpenMeteoSource::ConsumeCompletion_(uint32_t now) {
   if (this->impl_->worker.StopRequested() ||
-      !this->impl_->completion_ready.exchange(false,
-                                               std::memory_order_acq_rel))
+      !this->impl_->completion_ready.exchange(false, std::memory_order_acq_rel))
     return;
 
   const Impl::Completion completion = this->impl_->completion.Get();
@@ -159,17 +164,16 @@ void OpenMeteoSource::ConsumeCompletion_(uint32_t now) {
 
   // Tag the visible snapshot. HasData() hides it if the location generation
   // later changes, even while a refresh is pending or repeatedly failing.
-  this->impl_->result.Publish(
-      {completion.data, completion.request.generation});
+  this->impl_->result.Publish({completion.data, completion.request.generation});
 }
 
 uint32_t OpenMeteoSource::refresh_interval_ms_() const {
   if (this->refresh_interval_ == nullptr)
-    return 1800000;  // 30 min
+    return 1800000; // 30 min
   const float minutes = this->refresh_interval_->state;
   if (!(minutes > 0.0f))
     return 1800000;
-  return (uint32_t) (minutes * 60000.0f);
+  return (uint32_t)(minutes * 60000.0f);
 }
 
 // Called by the dashboard while weather is shown. Signals the background worker
@@ -182,7 +186,8 @@ void OpenMeteoSource::RequestRefresh() {
     return;
 
   const uint32_t now = millis();
-  const float latitude = this->latitude_ != nullptr ? this->latitude_->state : 0.0f;
+  const float latitude =
+      this->latitude_ != nullptr ? this->latitude_->state : 0.0f;
   const float longitude =
       this->longitude_ != nullptr ? this->longitude_->state : 0.0f;
   this->ObserveLocation_(latitude, longitude);
@@ -210,18 +215,29 @@ void OpenMeteoSource::RequestRefresh() {
 }
 
 bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
-                             float longitude) {
-  if (this->http_ == nullptr || this->impl_->worker.StopRequested())
+                             float longitude, uint32_t generation) {
+  if (this->http_ == nullptr || this->http_gate_ == nullptr ||
+      this->impl_->worker.StopRequested())
     return false;
 
+  const auto cancelled = [this, generation]() {
+    return this->impl_->worker.StopRequested() ||
+           this->impl_->location_generation.load(std::memory_order_acquire) !=
+               generation;
+  };
+  auto lease = this->http_gate_->Acquire(cancelled);
+  if (!lease)
+    return false;
   const std::string url = pixoo::BuildOpenMeteoForecastUrl(latitude, longitude);
+  // The lease remains live through every read and container->end(); the
+  // ESPHome HTTP component is a singleton and is not safe for concurrent use.
   auto container = this->http_->get(url);
   if (container == nullptr) {
     ESP_LOGW(TAG, "fetch failed (status -1)");
     return false;
   }
   const auto end_container = [&container]() { container->end(); };
-  if (this->impl_->worker.StopRequested()) {
+  if (cancelled()) {
     end_container();
     return false;
   }
@@ -242,7 +258,7 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
   uint32_t last_data = response_started;
   bool complete = false;
   while (true) {
-    if (this->impl_->worker.StopRequested()) {
+    if (cancelled()) {
       end_container();
       return false;
     }
@@ -254,11 +270,10 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
     const size_t remaining = kMaxResponse - body.size();
     uint8_t overflow_byte;
     const bool at_limit = remaining == 0;
-    const int n = at_limit
-                      ? container->read(&overflow_byte, 1)
-                      : container->read(
-                            chunk, std::min(sizeof(chunk), remaining));
-    if (this->impl_->worker.StopRequested()) {
+    const int n =
+        at_limit ? container->read(&overflow_byte, 1)
+                 : container->read(chunk, std::min(sizeof(chunk), remaining));
+    if (cancelled()) {
       end_container();
       return false;
     }
@@ -279,7 +294,7 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
       break;
     } else if (step == http_request::HttpReadLoopResult::RETRY) {
       continue;
-    } else {  // ERROR or TIMEOUT
+    } else { // ERROR or TIMEOUT
       break;
     }
   }
@@ -288,7 +303,7 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
     ESP_LOGW(TAG, "incomplete response (%zu bytes)", body.size());
     return false;
   }
-  if (this->impl_->worker.StopRequested())
+  if (cancelled())
     return false;
 
   pixoo::WeatherData data{};
@@ -337,25 +352,25 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
           JsonArray feels = hourly["apparent_temperature"];
           JsonArray hums = hourly["relative_humidity_2m"];
           JsonArray days = hourly["is_day"];
-          // Buffer the whole series (starting at the fetch hour); which hours to
-          // show is selected from the wall clock at render time.
+          // Buffer the whole series (starting at the fetch hour); which hours
+          // to show is selected from the wall clock at render time.
           int count = 0;
           for (int i = 0; i < pixoo::kMaxHourSamples; i++) {
-            if (temps.isNull() || (int) temps.size() <= i)
+            if (temps.isNull() || (int)temps.size() <= i)
               break;
             pixoo::WeatherHourData &h = data.hours[i];
             h.valid = true;
             h.temperature = temps[i];
-            if (!feels.isNull() && (int) feels.size() > i)
+            if (!feels.isNull() && (int)feels.size() > i)
               h.feels_like = feels[i];
-            if (!hums.isNull() && (int) hums.size() > i)
+            if (!hums.isNull() && (int)hums.size() > i)
               h.humidity = hums[i];
-            h.is_night = !days.isNull() && (int) days.size() > i &&
-                         (days[i] | 1) == 0;
-            if (!codes.isNull() && (int) codes.size() > i)
+            h.is_night =
+                !days.isNull() && (int)days.size() > i && (days[i] | 1) == 0;
+            if (!codes.isNull() && (int)codes.size() > i)
               h.condition = pixoo::WmoToCondition(codes[i] | -1);
             // Hour label: parse "HH" from an ISO "YYYY-MM-DDTHH:MM" timestamp.
-            if (!times.isNull() && (int) times.size() > i) {
+            if (!times.isNull() && (int)times.size() > i) {
               const char *ts = times[i];
               if (ts != nullptr) {
                 const char *t = std::strchr(ts, 'T');
@@ -376,11 +391,11 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
     ESP_LOGW(TAG, "parse failed");
     return false;
   }
-  if (this->impl_->worker.StopRequested())
+  if (cancelled())
     return false;
   ESP_LOGD(TAG, "weather updated: %.1f C", data.temperature);
   *out = data;
   return true;
 }
 
-}  // namespace esphome::pixoo64::adapters
+} // namespace esphome::pixoo64::adapters

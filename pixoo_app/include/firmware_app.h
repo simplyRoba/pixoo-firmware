@@ -60,9 +60,10 @@ class RenderPort {
   // have an application-owned fixed duration and do not use this callback.
   virtual uint32_t NotificationMinVisibleMs(
       const Notification &notification) = 0;
-  // Ends the current base-dashboard visibility interval. The next rendered
-  // base is an entry even if its dashboard selection did not change.
-  virtual void HideBaseContent() = 0;
+  // Ends the current base-dashboard visibility interval at the application
+  // tick supplied by the caller. The next rendered base is an entry even if
+  // its dashboard selection did not change.
+  virtual void HideBaseContent(uint32_t now_ms) = 0;
   // Releases renderer-owned storage that is needed only while an overlay is
   // active without ending the base-dashboard visibility interval.
   virtual void ReleaseOverlayResources() = 0;
@@ -218,12 +219,12 @@ class FirmwareApp {
   TimerSnapshot timer() const { return this->timer_; }
   // Renders and force-presents the update frame synchronously before OTA
   // proceeds. Returns false while the panel is not ready or presentation fails.
-  bool BeginFirmwareUpdate();
+  bool BeginFirmwareUpdate(uint32_t now_ms);
   // Accepted overlays are presented in strict FIFO order. The current overlay
   // counts toward the bounded capacity; a full queue rejects the new tail.
   bool Notify(NotificationRequest request, uint32_t now_ms);
   bool React(Reaction reaction, uint32_t now_ms);
-  void ClearOverlayQueue();
+  void ClearOverlayQueue(uint32_t now_ms);
   void Reboot();
   void FactoryReset();
 
@@ -261,7 +262,7 @@ class FirmwareApp {
   bool StopOverlaySound_();
   void ResetCurrentOverlayPresentation_();
   void ResetOverlayState_();
-  void RestoreOverlaySnapshot_();
+  void RestoreOverlaySnapshot_(uint32_t now_ms);
   const OverlayRequest &CurrentOverlayRequest_() const;
   void BeginWaitingInit_(uint32_t now_ms, uint32_t delay_ms);
   void BeginRepowerWaiting_(uint32_t now_ms);

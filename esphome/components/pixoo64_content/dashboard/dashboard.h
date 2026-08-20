@@ -34,6 +34,10 @@ class Dashboard {
   // Called once when this dashboard becomes the visible one, before its first
   // Tick(). Lets a dashboard restart a presentation it only plays on entry.
   virtual void OnShow(uint32_t now_ms) { (void) now_ms; }
+  // Called once when this dashboard stops being visible. A dashboard may use
+  // this to cancel visibility-scoped background work without affecting data
+  // subscriptions that remain active for the application lifetime.
+  virtual void OnHide(uint32_t now_ms) { (void) now_ms; }
 
  protected:
   std::string id_;

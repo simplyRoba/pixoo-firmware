@@ -5,9 +5,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <numeric>
 #include <utility>
 
+#include "dashboard/now_playing/now_playing_dashboard.h"
 #include "dashboard/weather/weather_icon.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "png.h"
@@ -33,7 +35,10 @@ void RenderTestDisplay::setup() {
   this->set_timeout(100, [this]() {
     const bool update = std::getenv("PIXOO_UPDATE_SNAPSHOTS") != nullptr;
     int failures = 0;
+    std::map<std::string, std::vector<uint8_t>> now_playing_frames;
     auto check = [&](const std::string &id) {
+      if (id.rfind("now_playing_", 0) == 0)
+        now_playing_frames[id] = this->framebuffer_;
       const std::vector<uint8_t> png =
           EncodePng(this->framebuffer_.data(), 64, 64);
       const std::string path = this->output_dir_ + "/" + id + ".png";
@@ -53,6 +58,21 @@ void RenderTestDisplay::setup() {
         std::printf("render test: ok %s\n", path.c_str());
       }
     };
+
+    if (this->animation_only_) {
+      for (const AnimationFrame &frame : this->animation_frames_) {
+        if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
+                                 frame.base_visible, frame.stopwatch,
+                                 frame.timer)) {
+          std::printf("render test: FAILED to render %s at %ums\n",
+                      frame.dashboard_id.c_str(), frame.now_ms);
+          ++failures;
+        } else if (!frame.snapshot_id.empty()) {
+          check(frame.snapshot_id);
+        }
+      }
+      std::exit(failures == 0 ? 0 : 1);
+    }
 
     // Feed a strong, varied synthetic spectrum through the renderer sink, which
     // fans it out to every equalizer face. Two rising updates followed by a
@@ -302,6 +322,74 @@ void RenderTestDisplay::setup() {
       } else if (!frame.snapshot_id.empty()) {
         check(frame.snapshot_id);
       }
+    }
+
+    const char *now_playing_snapshots[] = {
+        "now_playing_playing_artwork",
+        "now_playing_paused_midpoint",
+        "now_playing_paused",
+        "now_playing_buffering",
+        "now_playing_track_change_start",
+        "now_playing_track_change_midpoint",
+        "now_playing_track_change_placeholder",
+        "now_playing_title_marquee_start",
+        "now_playing_title_marquee_scrolled",
+        "now_playing_artist_marquee_start",
+        "now_playing_artist_marquee_scrolled",
+        "now_playing_revision_crossfade_midpoint",
+        "now_playing_revision_crossfade_complete",
+        "now_playing_artwork_crossfade_midpoint",
+        "now_playing_artwork_crossfade_complete",
+        "now_playing_idle",
+        "now_playing_waiting_start",
+        "now_playing_waiting_animated",
+        "now_playing_unconfigured",
+        "now_playing_no_entity_data",
+        "now_playing_offline",
+        "now_playing_missing_art",
+        "now_playing_stale",
+        "now_playing_failed_art",
+        "now_playing_unsupported_fallback",
+    };
+    bool now_playing_valid = true;
+    for (const char *name : now_playing_snapshots) {
+      const auto found = now_playing_frames.find(name);
+      now_playing_valid &=
+          found != now_playing_frames.end() &&
+          !std::all_of(found->second.begin(), found->second.end(),
+                       [](uint8_t value) { return value == 0; });
+    }
+    const auto frames_differ = [&](const char *left, const char *right) {
+      const auto a = now_playing_frames.find(left);
+      const auto b = now_playing_frames.find(right);
+      return a != now_playing_frames.end() && b != now_playing_frames.end() &&
+             a->second != b->second;
+    };
+    now_playing_valid &= frames_differ("now_playing_playing_artwork",
+                                       "now_playing_paused_midpoint");
+    now_playing_valid &= frames_differ("now_playing_paused_midpoint",
+                                       "now_playing_paused");
+    now_playing_valid &= frames_differ("now_playing_paused",
+                                       "now_playing_buffering");
+    now_playing_valid &= frames_differ("now_playing_track_change_start",
+                                       "now_playing_track_change_midpoint");
+    now_playing_valid &= frames_differ("now_playing_track_change_midpoint",
+                                       "now_playing_track_change_placeholder");
+    now_playing_valid &= frames_differ("now_playing_title_marquee_start",
+                                       "now_playing_title_marquee_scrolled");
+    now_playing_valid &= frames_differ("now_playing_artist_marquee_start",
+                                       "now_playing_artist_marquee_scrolled");
+    now_playing_valid &= frames_differ(
+        "now_playing_artwork_crossfade_midpoint",
+        "now_playing_artwork_crossfade_complete");
+    now_playing_valid &= frames_differ(
+        "now_playing_revision_crossfade_midpoint",
+        "now_playing_revision_crossfade_complete");
+    now_playing_valid &= frames_differ("now_playing_waiting_start",
+                                       "now_playing_waiting_animated");
+    if (!now_playing_valid) {
+      std::printf("render test: FAILED now-playing visual coverage\n");
+      ++failures;
     }
 
     if (this->text_ == nullptr) {
@@ -693,6 +781,81 @@ void RenderTestDisplay::setup() {
       ++failures;
     }
 
+    // Visibility hooks are a lifecycle contract rather than a pixel snapshot.
+    // Exercise replacement, repeated hidden frames, and explicit clearing with
+    // the same deterministic tick passed to RenderContent().
+    struct LifecycleDashboard final : pixoo64::dashboard::Dashboard {
+      bool available() const override { return true; }
+      void Render(display::Display &) const override {}
+      void OnShow(uint32_t now_ms) override {
+        ++show_count;
+        last_show_ms = now_ms;
+      }
+      void OnHide(uint32_t now_ms) override {
+        ++hide_count;
+        last_hide_ms = now_ms;
+      }
+      int show_count{0};
+      int hide_count{0};
+      uint32_t last_show_ms{0};
+      uint32_t last_hide_ms{0};
+    } first, second;
+    first.set_id("__lifecycle_first");
+    second.set_id("__lifecycle_second");
+    this->content_controller_->HideBaseContent(999);
+    this->content_controller_->add_dashboard(&first);
+    this->content_controller_->add_dashboard(&second);
+    const auto render_lifecycle = [this](uint32_t now_ms, const char *id,
+                                         bool base_visible) {
+      pixoo::FrameView frame;
+      return this->content_controller_->RenderContent(
+          now_ms, id, {}, {}, nullptr, 0, base_visible, false, true, false,
+          &frame);
+    };
+    bool lifecycle_valid =
+        render_lifecycle(1000, "__lifecycle_first", true) &&
+        render_lifecycle(1001, "__lifecycle_first", true) &&
+        first.show_count == 1 && first.hide_count == 0 &&
+        render_lifecycle(1002, "__lifecycle_second", true) &&
+        first.hide_count == 1 && first.last_hide_ms == 1002 &&
+        second.show_count == 1 && second.last_show_ms == 1002 &&
+        render_lifecycle(1003, "__lifecycle_second", false) &&
+        render_lifecycle(1004, "__lifecycle_second", false) &&
+        second.hide_count == 1 && second.last_hide_ms == 1003 &&
+        render_lifecycle(1005, "__lifecycle_first", true) &&
+        first.show_count == 2 && first.last_show_ms == 1005;
+    this->content_controller_->HideBaseContent(1006);
+    this->content_controller_->HideBaseContent(1007);
+    lifecycle_valid &= first.hide_count == 2 && first.last_hide_ms == 1006;
+    if (!lifecycle_valid) {
+      std::printf("render test: FAILED dashboard visibility lifecycle\n");
+      ++failures;
+    }
+
+    const size_t now_playing_ticks = static_cast<size_t>(std::count_if(
+        this->animation_frames_.begin(), this->animation_frames_.end(),
+        [](const AnimationFrame &frame) {
+          return frame.dashboard_id == "now_playing";
+        }));
+    const bool now_playing_lifecycle_valid =
+        now_playing_ticks == 0
+            ? this->now_playing_source_ == nullptr
+            : this->now_playing_source_ != nullptr &&
+                  this->now_playing_source_->eligible_true_count() == 1 &&
+                  this->now_playing_source_->eligible_false_count() == 1 &&
+                  this->now_playing_source_->data_count() == now_playing_ticks &&
+                  this->now_playing_source_->copy_count() == 3;
+    if (!now_playing_lifecycle_valid) {
+      std::printf("render test: FAILED now-playing source lifecycle\n");
+      ++failures;
+    }
+    std::printf(
+        "render test: now-playing object=%zu bytes buffers=%zu bytes "
+        "source=%zu bytes\n",
+        sizeof(pixoo64::dashboard::NowPlayingDashboard),
+        2u * pixoo::now_playing::kArtworkRgb565Bytes,
+        sizeof(StaticNowPlayingSource));
+
     std::exit(failures == 0 ? 0 : 1);
   });
 }
@@ -705,6 +868,7 @@ bool RenderTestDisplay::render_frame_(
   if (this->content_controller_ == nullptr)
     return false;
   StaticWeatherSource::SetCurrentRenderTime(now_ms);
+  StaticNowPlayingSource::SetCurrentRenderTime(now_ms);
   pixoo::Overlay overlay;
   const pixoo::Overlay *overlay_ptr = nullptr;
   if (notification != nullptr) {

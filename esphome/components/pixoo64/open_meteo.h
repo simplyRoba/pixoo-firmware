@@ -15,6 +15,8 @@ class Number;
 
 namespace esphome::pixoo64::adapters {
 
+class HttpRequestGate;
+
 // Fetches current + hourly + daily weather from the Open-Meteo forecast API and
 // exposes it through the WeatherSource interface. RequestRefresh() is called by
 // the weather dashboard while its weather is being shown; it fetches only when
@@ -39,6 +41,7 @@ class OpenMeteoSource : public Component, public pixoo::WeatherSource {
   }
 
   void set_http_request(http_request::HttpRequestComponent *r) { this->http_ = r; }
+  void set_http_request_gate(HttpRequestGate *gate) { this->http_gate_ = gate; }
   // Location and refresh cadence are backed by persisted number entities (NVS),
   // not compiled-in constants, so they change without a reflash. The render
   // task snapshots location before each background fetch.
@@ -61,13 +64,15 @@ class OpenMeteoSource : public Component, public pixoo::WeatherSource {
   // observation establishes a baseline; later changes invalidate before a
   // request is begun.
   void ObserveLocation_(float latitude, float longitude);
-  bool fetch_(pixoo::WeatherData *out, float latitude, float longitude);
+  bool fetch_(pixoo::WeatherData *out, float latitude, float longitude,
+              uint32_t generation);
 
   // Current refresh interval in ms, read from the refresh_interval_ number
   // entity (minutes) each RequestRefresh(); falls back to 30 min if unset.
   uint32_t refresh_interval_ms_() const;
 
   http_request::HttpRequestComponent *http_{nullptr};
+  HttpRequestGate *http_gate_{nullptr};
   number::Number *latitude_{nullptr};
   number::Number *longitude_{nullptr};
   number::Number *refresh_interval_{nullptr};

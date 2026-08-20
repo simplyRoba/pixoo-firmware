@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "analog_clock.h"
@@ -18,6 +20,10 @@
 #include "equalizer_processor.h"
 #include "game_of_life.h"
 #include "spectrum.h"
+#include "metadata_policy.h"
+#include "now_playing_data.h"
+#include "now_playing_text.h"
+#include "now_playing_timing.h"
 
 using namespace pixoo;
 using pixoo::life::GameOfLifeModel;
@@ -2272,6 +2278,388 @@ static void test_life_edges_do_not_wrap() {
   AssertLifeBoard(model, {});
 }
 
+namespace np = pixoo::now_playing;
+
+static void test_now_playing_playback_states_and_seconds() {
+  struct Entry { const char *name; np::PlaybackState state; } entries[] = {
+      {"unknown", np::PlaybackState::kUnknown}, {"playing", np::PlaybackState::kPlaying},
+      {"paused", np::PlaybackState::kPaused}, {"buffering", np::PlaybackState::kBuffering},
+      {"idle", np::PlaybackState::kIdle}, {"on", np::PlaybackState::kOn},
+      {"off", np::PlaybackState::kOff}, {"standby", np::PlaybackState::kStandby},
+      {"unavailable", np::PlaybackState::kUnavailable},
+  };
+  for (const auto &entry : entries)
+    TEST_ASSERT_EQUAL(static_cast<int>(entry.state), static_cast<int>(np::ParsePlaybackState(entry.name, std::strlen(entry.name))));
+  TEST_ASSERT_TRUE(np::IsActivePlaybackState(np::PlaybackState::kPlaying));
+  TEST_ASSERT_TRUE(np::IsInactivePlaybackState(np::PlaybackState::kStandby));
+  uint32_t ms = 0;
+  TEST_ASSERT_TRUE(np::SecondsToMilliseconds(1.25, &ms)); TEST_ASSERT_EQUAL_UINT32(1250, ms);
+  TEST_ASSERT_FALSE(np::SecondsToMilliseconds(-1, &ms));
+  TEST_ASSERT_FALSE(np::SecondsToMilliseconds(std::numeric_limits<double>::infinity(), &ms));
+  TEST_ASSERT_TRUE(np::SecondsToMilliseconds(1e30, &ms)); TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, ms);
+}
+
+static void test_now_playing_progress_interpolation_and_wrap() {
+  np::NowPlayingData data{};
+  data.source_state = np::NowPlayingSourceState::kReady; data.playback_state = np::PlaybackState::kPlaying;
+  data.has_duration = data.has_position = true; data.duration_ms = 10000; data.position_ms = 1000; data.publication_time_ms = 100;
+  TEST_ASSERT_EQUAL_UINT32(1500, np::EstimateProgress(data, 600).position_ms);
+  data.position_ms = 9900; TEST_ASSERT_EQUAL_UINT32(10000, np::EstimateProgress(data, 600).position_ms);
+  data.playback_state = np::PlaybackState::kPaused; TEST_ASSERT_EQUAL_UINT32(9900, np::EstimateProgress(data, 600).position_ms);
+  data.playback_state = np::PlaybackState::kBuffering; TEST_ASSERT_EQUAL_UINT32(9900, np::EstimateProgress(data, 600).position_ms);
+  data.source_state = np::NowPlayingSourceState::kStale; data.playback_state = np::PlaybackState::kPlaying;
+  TEST_ASSERT_EQUAL_UINT32(9900, np::EstimateProgress(data, 600).position_ms);
+  data.source_state = np::NowPlayingSourceState::kReady; data.position_ms = 1000; data.publication_time_ms = UINT32_MAX - 20;
+  TEST_ASSERT_EQUAL_UINT32(1050, np::EstimateProgress(data, 29).position_ms);
+}
+
+static np::NowPlayingData publish_track(np::NowPlayingMetadataPolicy *policy, const char *id, const char *title, uint32_t now) {
+  np::NowPlayingData out{};
+  policy->OnTitle(title, std::strlen(title), now);
+  policy->OnArtist("Artist", 6, now + 1);
+  policy->OnContentId(id, std::strlen(id), now + 2);
+  policy->OnDuration(true, 10, now + 3); policy->OnPosition(true, 2, now + 4);
+  policy->OnPlaybackState(np::PlaybackState::kPlaying, now + 5);
+  TEST_ASSERT_TRUE(policy->ForcePublish(now + 5, &out)); return out;
+}
+
+static void test_now_playing_policy_generations_and_deadlines() {
+  np::NowPlayingMetadataPolicy policy; np::NowPlayingData out{};
+  policy.Reset(true, 7, true, 0, &out);
+  // Attributes before the ID are part of the new generation.
+  out = publish_track(&policy, "first", "First", 10);
+  TEST_ASSERT_EQUAL_STRING("First", out.title.bytes); TEST_ASSERT_EQUAL_UINT32(1, out.media_generation);
+  const uint64_t first_id = out.media_identity;
+  // Position-only changes retain title/artist and the explicit generation.
+  policy.OnPosition(true, 4, 100); TEST_ASSERT_TRUE(policy.PublishIfDue(220, &out));
+  TEST_ASSERT_EQUAL_STRING("First", out.title.bytes); TEST_ASSERT_EQUAL_UINT64(first_id, out.media_identity);
+  // A changed ID clears optional values absent from its burst.
+  policy.OnContentId("second", 6, 300); policy.OnPlaybackState(np::PlaybackState::kPlaying, 301);
+  TEST_ASSERT_TRUE(policy.ForcePublish(301, &out)); TEST_ASSERT_EQUAL_UINT32(2, out.media_generation);
+  TEST_ASSERT_EQUAL_UINT16(0, out.title.size); TEST_ASSERT_FALSE(out.has_duration);
+  // Quiet window and hard burst deadline use unsigned time.
+  policy.OnTitle("later", 5, 1000); TEST_ASSERT_FALSE(policy.PublishIfDue(1119, &out));
+  TEST_ASSERT_TRUE(policy.PublishIfDue(1120, &out));
+  policy.OnPosition(true, 1, 2000); policy.OnPosition(true, 1, 2100); policy.OnPosition(true, 1, 2200);
+  policy.OnPosition(true, 1, 2300); policy.OnPosition(true, 1, 2400);
+  TEST_ASSERT_TRUE(policy.PublishIfDue(2500, &out));
+}
+
+static void test_now_playing_policy_anchors_callbacks_before_publication() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  policy.OnDuration(true, 20, 0);
+  policy.OnPosition(true, 1, 0);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 0);
+  TEST_ASSERT_TRUE(policy.ForcePublish(0, &out));
+
+  policy.OnPosition(true, 5, 100);
+  TEST_ASSERT_TRUE(policy.PublishIfDue(220, &out));
+  TEST_ASSERT_EQUAL_UINT32(5120, out.position_ms);
+  TEST_ASSERT_EQUAL_UINT32(5220, np::EstimateProgress(out, 320).position_ms);
+
+  policy.OnPlaybackState(np::PlaybackState::kPaused, 400);
+  TEST_ASSERT_TRUE(policy.PublishIfDue(520, &out));
+  TEST_ASSERT_EQUAL_UINT32(5300, out.position_ms);
+  TEST_ASSERT_EQUAL_UINT32(5300, np::EstimateProgress(out, 620).position_ms);
+
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 700);
+  TEST_ASSERT_TRUE(policy.PublishIfDue(820, &out));
+  TEST_ASSERT_EQUAL_UINT32(5420, out.position_ms);
+}
+
+static void test_now_playing_artwork_publications_preserve_progress() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  policy.OnDuration(true, 20, 0);
+  policy.OnPosition(true, 1, 0);
+  policy.OnArtworkIdentity(true, 11, 0);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 0);
+  TEST_ASSERT_TRUE(policy.ForcePublish(0, &out));
+  const uint32_t artwork_revision = out.artwork_revision;
+
+  TEST_ASSERT_TRUE(
+      policy.CompleteArtwork(11, artwork_revision, false, 1000, &out));
+  TEST_ASSERT_EQUAL_UINT32(2000, out.position_ms);
+  TEST_ASSERT_TRUE(
+      policy.BeginArtworkRetry(11, artwork_revision, 1500, &out));
+  TEST_ASSERT_EQUAL_UINT32(2500, out.position_ms);
+  TEST_ASSERT_TRUE(
+      policy.CompleteArtwork(11, artwork_revision, true, 2000, &out));
+  TEST_ASSERT_EQUAL_UINT32(3000, out.position_ms);
+  TEST_ASSERT_EQUAL_UINT32(3100, np::EstimateProgress(out, 2100).position_ms);
+}
+
+static void test_now_playing_policy_reconnect_requires_fresh_root_state() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  out = publish_track(&policy, "id", "Good", 1);
+  TEST_ASSERT_TRUE(policy.SetTransportConnected(false, 20, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kStale),
+                    static_cast<int>(out.source_state));
+  TEST_ASSERT_FALSE(policy.SetTransportConnected(true, 21, &out));
+
+  policy.OnTitle("Premature", 9, 22);
+  TEST_ASSERT_FALSE(policy.PublishIfDue(142, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kStale),
+                    static_cast<int>(policy.Data().source_state));
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 143);
+  TEST_ASSERT_TRUE(policy.ForcePublish(143, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kReady),
+                    static_cast<int>(out.source_state));
+  TEST_ASSERT_EQUAL_STRING("Premature", out.title.bytes);
+}
+
+static void test_now_playing_policy_fallback_inactive_transport_and_artwork() {
+  np::NowPlayingMetadataPolicy policy; np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  policy.OnTitle("No ID", 5, 1); policy.OnArtworkIdentity(true, 11, 2);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 3); TEST_ASSERT_TRUE(policy.ForcePublish(3, &out));
+  const uint64_t fallback = out.media_identity; const uint32_t art_revision = out.artwork_revision;
+  TEST_ASSERT_EQUAL(static_cast<int>(np::ArtworkAvailability::kPending), static_cast<int>(out.artwork_availability));
+  TEST_ASSERT_FALSE(policy.CompleteArtwork(12, art_revision, true, 4, &out));
+  TEST_ASSERT_TRUE(policy.CompleteArtwork(11, art_revision, false, 4, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::ArtworkAvailability::kFailed),
+                    static_cast<int>(out.artwork_availability));
+  TEST_ASSERT_FALSE(policy.BeginArtworkRetry(12, art_revision, 5, &out));
+  TEST_ASSERT_TRUE(policy.BeginArtworkRetry(11, art_revision, 5, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::ArtworkAvailability::kPending),
+                    static_cast<int>(out.artwork_availability));
+  TEST_ASSERT_TRUE(policy.CompleteArtwork(11, art_revision, true, 6, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::ArtworkAvailability::kReady), static_cast<int>(out.artwork_availability));
+  policy.OnArtworkIdentity(true, 11, 10); TEST_ASSERT_TRUE(policy.ForcePublish(10, &out));
+  TEST_ASSERT_EQUAL_UINT32(art_revision, out.artwork_revision);  // unchanged art is reused
+  policy.OnTitle("Changed", 7, 20); TEST_ASSERT_TRUE(policy.ForcePublish(20, &out));
+  TEST_ASSERT_TRUE(out.media_identity != fallback);
+  TEST_ASSERT_TRUE(policy.OnPlaybackState(np::PlaybackState::kIdle, 30, &out));
+  TEST_ASSERT_EQUAL_UINT16(0, out.title.size); TEST_ASSERT_FALSE(out.has_artwork_identity);
+  policy.Reset(true, 2, true, 40, &out); TEST_ASSERT_TRUE(policy.MarkNoEntityData(41, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kNoEntityData), static_cast<int>(out.source_state));
+  TEST_ASSERT_TRUE(policy.SetTransportConnected(false, 42, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kOffline), static_cast<int>(out.source_state));
+  policy.Reset(true, 3, true, 50, &out); out = publish_track(&policy, "id", "Good", 51);
+  TEST_ASSERT_TRUE(policy.SetTransportConnected(false, 60, &out));
+  TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kStale), static_cast<int>(out.source_state));
+}
+
+static void stage_now_playing_attribute(np::NowPlayingMetadataPolicy *policy,
+                                        int attribute, uint32_t now) {
+  switch (attribute) {
+    case 0: policy->OnContentId("staged-id", 9, now); break;
+    case 1: policy->OnTitle("Staged", 6, now); break;
+    case 2: policy->OnArtist("Staged artist", 13, now); break;
+    case 3: policy->OnDuration(true, 42, now); break;
+    case 4: policy->OnPosition(true, 7, now); break;
+    case 5: policy->OnArtworkIdentity(true, 42, now); break;
+  }
+}
+
+static void test_now_playing_policy_drops_attributes_after_nonactive_roots() {
+  const np::PlaybackState roots[] = {
+      np::PlaybackState::kIdle, np::PlaybackState::kOn,
+      np::PlaybackState::kOff, np::PlaybackState::kStandby,
+      np::PlaybackState::kUnknown, np::PlaybackState::kUnavailable,
+  };
+  for (const np::PlaybackState root : roots) {
+    for (int attribute = 0; attribute != 6; ++attribute) {
+      np::NowPlayingMetadataPolicy policy;
+      np::NowPlayingData out{};
+      policy.Reset(true, 1, true, 0, &out);
+      // Initial attributes may be staged, but a nonactive root discards them.
+      stage_now_playing_attribute(&policy, attribute, 1);
+      TEST_ASSERT_TRUE(policy.OnPlaybackState(root, 2, &out));
+      if (np::IsInactivePlaybackState(root)) {
+        TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kReady),
+                          static_cast<int>(out.source_state));
+      } else {
+        TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kOffline),
+                          static_cast<int>(out.source_state));
+      }
+      TEST_ASSERT_EQUAL_UINT16(0, out.title.size);
+      TEST_ASSERT_FALSE(out.has_duration);
+      TEST_ASSERT_FALSE(out.has_position);
+      TEST_ASSERT_FALSE(out.has_artwork_identity);
+
+      // Attributes after that root are dropped too and cannot publish alone.
+      stage_now_playing_attribute(&policy, attribute, 3);
+      TEST_ASSERT_FALSE(policy.ForcePublish(3, &out));
+      policy.OnPlaybackState(np::PlaybackState::kPlaying, 4);
+      TEST_ASSERT_TRUE(policy.ForcePublish(4, &out));
+      TEST_ASSERT_EQUAL_UINT16(0, out.title.size);
+      TEST_ASSERT_FALSE(out.has_duration);
+      TEST_ASSERT_FALSE(out.has_position);
+      TEST_ASSERT_FALSE(out.has_artwork_identity);
+    }
+  }
+}
+
+static void test_now_playing_policy_offline_roots_keep_last_good_stale() {
+  for (const np::PlaybackState root : {np::PlaybackState::kUnknown,
+                                      np::PlaybackState::kUnavailable}) {
+    np::NowPlayingMetadataPolicy policy;
+    np::NowPlayingData out{};
+    policy.Reset(true, 1, true, 0, &out);
+    out = publish_track(&policy, "good", "Good", 1);
+    TEST_ASSERT_TRUE(policy.OnPlaybackState(root, 20, &out));
+    TEST_ASSERT_EQUAL(static_cast<int>(np::NowPlayingSourceState::kStale),
+                      static_cast<int>(out.source_state));
+    TEST_ASSERT_EQUAL_STRING("Good", out.title.bytes);
+  }
+}
+
+static void test_now_playing_policy_reconnect_stages_all_attributes_before_root() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  out = publish_track(&policy, "old", "Old", 1);
+  TEST_ASSERT_TRUE(policy.SetTransportConnected(false, 20, &out));
+  TEST_ASSERT_FALSE(policy.SetTransportConnected(true, 21, &out));
+  for (int attribute = 0; attribute != 6; ++attribute)
+    stage_now_playing_attribute(&policy, attribute, 22 + attribute);
+  TEST_ASSERT_FALSE(policy.PublishIfDue(200, &out));
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 201);
+  TEST_ASSERT_TRUE(policy.ForcePublish(201, &out));
+  TEST_ASSERT_EQUAL_STRING("Staged", out.title.bytes);
+  TEST_ASSERT_EQUAL_STRING("Staged artist", out.artist.bytes);
+  TEST_ASSERT_TRUE(out.has_duration);
+  TEST_ASSERT_EQUAL_UINT32(42000, out.duration_ms);
+  TEST_ASSERT_TRUE(out.has_position);
+  TEST_ASSERT_EQUAL_UINT32(7000, out.position_ms);
+  TEST_ASSERT_TRUE(out.has_artwork_identity);
+  TEST_ASSERT_EQUAL_UINT64(42, out.artwork_identity);
+  TEST_ASSERT_EQUAL_UINT64(np::ExplicitMediaIdentity("staged-id", 9),
+                           out.media_identity);
+}
+
+static void test_now_playing_policy_fallback_identity_matches_published_fields() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  policy.OnTitle("First", 5, 1);
+  policy.OnArtist("Artist", 6, 2);
+  policy.OnDuration(true, 30, 3);
+  policy.OnPosition(true, 1, 4);
+  policy.OnArtworkIdentity(true, 77, 5);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 6);
+  TEST_ASSERT_TRUE(policy.ForcePublish(6, &out));
+  const uint32_t first_generation = out.media_generation;
+  const uint64_t first_identity = out.media_identity;
+  TEST_ASSERT_EQUAL_UINT64(
+      np::FallbackMediaIdentity(out.title, out.artist, out.has_duration,
+                                out.duration_ms, out.has_artwork_identity,
+                                out.artwork_identity),
+      out.media_identity);
+
+  policy.OnPosition(true, 2, 20);
+  TEST_ASSERT_TRUE(policy.ForcePublish(20, &out));
+  TEST_ASSERT_EQUAL_UINT32(first_generation, out.media_generation);
+  TEST_ASSERT_EQUAL_UINT64(first_identity, out.media_identity);
+  TEST_ASSERT_EQUAL_STRING("First", out.title.bytes);
+  TEST_ASSERT_EQUAL_STRING("Artist", out.artist.bytes);
+  TEST_ASSERT_TRUE(out.has_artwork_identity);
+  TEST_ASSERT_EQUAL_UINT64(77, out.artwork_identity);
+
+  policy.OnTitle("Second", 6, 30);
+  TEST_ASSERT_TRUE(policy.ForcePublish(30, &out));
+  TEST_ASSERT_EQUAL_UINT32(first_generation + 1, out.media_generation);
+  TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
+  TEST_ASSERT_EQUAL_UINT16(0, out.artist.size);
+  TEST_ASSERT_FALSE(out.has_duration);
+  TEST_ASSERT_FALSE(out.has_artwork_identity);
+  TEST_ASSERT_EQUAL_UINT64(
+      np::FallbackMediaIdentity(out.title, out.artist, out.has_duration,
+                                out.duration_ms, out.has_artwork_identity,
+                                out.artwork_identity),
+      out.media_identity);
+
+  const uint32_t second_generation = out.media_generation;
+  const uint64_t second_identity = out.media_identity;
+  policy.OnPosition(true, 3, 40);
+  TEST_ASSERT_TRUE(policy.ForcePublish(40, &out));
+  TEST_ASSERT_EQUAL_UINT32(second_generation, out.media_generation);
+  TEST_ASSERT_EQUAL_UINT64(second_identity, out.media_identity);
+  TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
+  TEST_ASSERT_EQUAL_UINT16(0, out.artist.size);
+  TEST_ASSERT_FALSE(out.has_artwork_identity);
+}
+
+static void test_now_playing_policy_replays_position_and_state_in_order() {
+  struct OrderedEvents {
+    np::PlaybackState initial;
+    bool position_first;
+    np::PlaybackState state;
+    uint32_t expected_position_ms;
+  } cases[] = {
+      {np::PlaybackState::kPlaying, true, np::PlaybackState::kPaused, 5100},
+      {np::PlaybackState::kPlaying, false, np::PlaybackState::kPaused, 5000},
+      {np::PlaybackState::kPaused, true, np::PlaybackState::kPlaying, 5120},
+      {np::PlaybackState::kPaused, false, np::PlaybackState::kPlaying, 5120},
+  };
+  for (const OrderedEvents &events : cases) {
+    np::NowPlayingMetadataPolicy policy;
+    np::NowPlayingData out{};
+    policy.Reset(true, 1, true, 0, &out);
+    policy.OnDuration(true, 20, 0);
+    policy.OnPosition(true, 1, 0);
+    policy.OnPlaybackState(events.initial, 0);
+    TEST_ASSERT_TRUE(policy.ForcePublish(0, &out));
+    if (events.position_first) {
+      policy.OnPosition(true, 5, 100);
+      policy.OnPlaybackState(events.state, 200);
+    } else {
+      policy.OnPlaybackState(events.state, 100);
+      policy.OnPosition(true, 5, 200);
+    }
+    TEST_ASSERT_TRUE(policy.ForcePublish(320, &out));
+    TEST_ASSERT_EQUAL_UINT32(events.expected_position_ms, out.position_ms);
+  }
+
+  // The same order remains chronological when the millisecond clock wraps.
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  const uint32_t start = UINT32_MAX - 100;
+  policy.Reset(true, 1, true, start, &out);
+  policy.OnDuration(true, 20, start);
+  policy.OnPosition(true, 1, start);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, start);
+  TEST_ASSERT_TRUE(policy.ForcePublish(start, &out));
+  policy.OnPosition(true, 5, UINT32_MAX - 50);
+  policy.OnPlaybackState(np::PlaybackState::kPaused, 10);
+  TEST_ASSERT_TRUE(policy.ForcePublish(30, &out));
+  TEST_ASSERT_EQUAL_UINT32(5061, out.position_ms);
+}
+
+static void test_now_playing_text_sanitize_and_bounds() {
+  np::BoundedText text{};
+  auto result = np::SanitizeNowPlayingText("caf\xc3\xa9 \xf0\x9f\x98\x80\xc3", 11, &text);
+  TEST_ASSERT_EQUAL_STRING("caf\xc3\xa9 ??", text.bytes); // unsupported emoji and trailing malformed byte become ?
+  TEST_ASSERT_TRUE(result.replaced); TEST_ASSERT_TRUE(np::IsPixelOperatorGlyph(0x20ac));
+  char long_text[194]; for (int i = 0; i < 191; ++i) long_text[i] = 'a'; long_text[191] = static_cast<char>(0xc3); long_text[192] = static_cast<char>(0xa9); long_text[193] = '\0';
+  result = np::SanitizeNowPlayingText(long_text, 193, &text);
+  TEST_ASSERT_EQUAL_UINT16(191, text.size); TEST_ASSERT_TRUE(result.truncated); TEST_ASSERT_EQUAL_CHAR('\0', text.bytes[191]);
+}
+
+static void test_now_playing_marquee_transition_and_layout() {
+  np::MarqueeTiming marquee;
+  TEST_ASSERT_EQUAL(0, marquee.Offset(1, 20, 30, 0, 100, 10, 5));
+  TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 0, 100, 10, 5));
+  TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 99, 100, 10, 5));
+  TEST_ASSERT_EQUAL(1, marquee.Offset(2, 40, 30, 110, 100, 10, 5));
+  TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 550, 100, 10, 5));
+  TEST_ASSERT_EQUAL(0, marquee.Offset(3, 40, 30, UINT32_MAX - 5, 0, 10, 5));
+  TEST_ASSERT_EQUAL(2, marquee.Offset(3, 40, 30, 14, 0, 10, 5));
+  np::TransitionTimeline transition; transition.Start(UINT32_MAX - 10, 20);
+  TEST_ASSERT_EQUAL_UINT8(140, transition.Linear(0)); TEST_ASSERT_FALSE(transition.Complete(0));
+  TEST_ASSERT_TRUE(transition.Smooth(0) > 100); TEST_ASSERT_TRUE(transition.Complete(10));
+  transition.Start(0, 0); TEST_ASSERT_EQUAL_UINT8(255, transition.Linear(0)); TEST_ASSERT_TRUE(transition.Complete(0));
+  static_assert(std::is_trivially_copyable<np::BoundedText>::value, "snapshot text must copy plainly");
+  static_assert(std::is_trivially_copyable<np::NowPlayingData>::value, "snapshot must copy plainly");
+  static_assert(sizeof(np::NowPlayingData) <= 512, "snapshot must remain bounded");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_analog_hands_point_at_the_time);
@@ -2406,5 +2794,19 @@ int main(int, char**) {
   RUN_TEST(test_life_centered_blinker_has_period_two);
   RUN_TEST(test_life_canonical_glider_moves_one_cell_diagonally_after_four_steps);
   RUN_TEST(test_life_edges_do_not_wrap);
+  RUN_TEST(test_now_playing_playback_states_and_seconds);
+  RUN_TEST(test_now_playing_progress_interpolation_and_wrap);
+  RUN_TEST(test_now_playing_policy_generations_and_deadlines);
+  RUN_TEST(test_now_playing_policy_anchors_callbacks_before_publication);
+  RUN_TEST(test_now_playing_artwork_publications_preserve_progress);
+  RUN_TEST(test_now_playing_policy_reconnect_requires_fresh_root_state);
+  RUN_TEST(test_now_playing_policy_fallback_inactive_transport_and_artwork);
+  RUN_TEST(test_now_playing_policy_drops_attributes_after_nonactive_roots);
+  RUN_TEST(test_now_playing_policy_offline_roots_keep_last_good_stale);
+  RUN_TEST(test_now_playing_policy_reconnect_stages_all_attributes_before_root);
+  RUN_TEST(test_now_playing_policy_fallback_identity_matches_published_fields);
+  RUN_TEST(test_now_playing_policy_replays_position_and_state_in_order);
+  RUN_TEST(test_now_playing_text_sanitize_and_bounds);
+  RUN_TEST(test_now_playing_marquee_transition_and_layout);
   return UNITY_END();
 }

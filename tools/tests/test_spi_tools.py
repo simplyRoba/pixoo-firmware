@@ -341,6 +341,13 @@ class PublicCliTest(unittest.TestCase):
             WEATHER.build_binary(Path("/tmp/build-root")),
             Path("/tmp/build-root") / WEATHER.BUILD_NAME / ".pioenvs" / WEATHER.BUILD_NAME / "program",
         )
+        generated = WEATHER.build_yaml(
+            [WEATHER.Shot("sunny", "sunny", WEATHER.NOON_EPOCH, 20, [0])],
+            Path("/tmp/weather-frames"),
+        )
+        self.assertIn("    panel_text: gif_text\n", generated)
+        self.assertIn("    animation_only: true\n", generated)
+        self.assertNotIn("    now_playing_source:", generated)
 
     def test_render_test_view_requires_explicit_update(self):
         script = (ROOT / "tools" / "render-test-view.sh").read_text(encoding="utf-8")

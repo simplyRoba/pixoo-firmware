@@ -7,6 +7,7 @@
 #include "dashboard/equalizer/equalizer_dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/text/text.h"
+#include "static_now_playing_source.h"
 #include "static_weather_source.h"
 
 namespace esphome::pixoo64_render_test {
@@ -21,7 +22,13 @@ class RenderTestDisplay final : public display::Display {
     this->equalizer_ = eq;
   }
   void set_panel_text(text::Text *text) { this->text_ = text; }
+  void set_now_playing_source(StaticNowPlayingSource *source) {
+    this->now_playing_source_ = source;
+  }
   void set_output_dir(std::string dir);
+  void set_animation_only(bool animation_only) {
+    this->animation_only_ = animation_only;
+  }
   // Renders `dashboard_id` at tick time `now_ms`, in the order added and after
   // the single-frame dashboards. An empty `snapshot_id` only advances the
   // animation. A dashboard with animation frames gets no single frame.
@@ -58,8 +65,10 @@ class RenderTestDisplay final : public display::Display {
   pixoo64::content::ContentController *content_controller_{nullptr};
   pixoo64::dashboard::EqualizerDashboard *equalizer_{nullptr};
   text::Text *text_{nullptr};
+  StaticNowPlayingSource *now_playing_source_{nullptr};
   std::string output_dir_;
   std::vector<AnimationFrame> animation_frames_;
+  bool animation_only_{false};
   std::vector<uint8_t> framebuffer_ = std::vector<uint8_t>(64 * 64 * 3, 0);
 };
 

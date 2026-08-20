@@ -58,11 +58,11 @@ font:
   - file: ../../fonts/PixelOperator8.ttf
     id: font_8
     size: 8
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include ../../fonts/pixel_operator_glyphs.yaml
   - file: ../../fonts/PixelOperator.ttf
     id: font_16
     size: 16
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include ../../fonts/pixel_operator_glyphs.yaml
 
 text:
   - platform: template
@@ -134,6 +134,8 @@ def build_yaml(shots: list[Shot], output_dir: Path) -> str:
         "  - platform: pixoo64_render_test\n",
         "    id: gif_display\n",
         "    content_controller: gif_content\n",
+        "    panel_text: gif_text\n",
+        "    animation_only: true\n",
         "    animation_frames:\n",
     ])
     for shot in shots:

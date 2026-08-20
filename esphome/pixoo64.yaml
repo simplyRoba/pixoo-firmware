@@ -63,6 +63,18 @@ esphome:
     - ../pixoo_content/src/dashboard/equalizer/spectrum.cpp
     - ../pixoo_content/include/dashboard/equalizer/equalizer_processor.h
     - ../pixoo_content/src/dashboard/equalizer/equalizer_processor.cpp
+    # pixoo_content now-playing model and timing
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_data.h
+    - ../pixoo_content/src/dashboard/now_playing/now_playing_data.cpp
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_source.h
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_text.h
+    - ../pixoo_content/src/dashboard/now_playing/now_playing_text.cpp
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_art.h
+    - ../pixoo_content/src/dashboard/now_playing/now_playing_art.cpp
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_timing.h
+    - ../pixoo_content/src/dashboard/now_playing/now_playing_timing.cpp
+    - ../pixoo_content/include/dashboard/now_playing/metadata_policy.h
+    - ../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
 
 esp32:
   board: esp-wrover-kit
@@ -102,6 +114,11 @@ external_components:
 # Connectivity and device services
 logger:
   baud_rate: 115200
+  logs:
+    # Upstream http_request logs complete non-2xx URLs. Artwork proxy queries
+    # are signed credentials, so transport diagnostics stay disabled; the
+    # adapter emits query-free status and byte-count failures instead.
+    http_request.idf: NONE
 
 wifi:
   power_save_mode: none
@@ -115,6 +132,8 @@ wifi:
 captive_portal:
 
 api:
+  id: panel_api
+  homeassistant_states: true
   encryption:
     key: !secret api_encryption_key
   actions:
@@ -178,6 +197,18 @@ api:
     - action: timer_reset
       then:
         - pixoo64.timer_reset: pixoo_firmware
+    - action: now_playing_configure
+      variables:
+        entity_id: string
+        home_assistant_url: string
+      then:
+        - pixoo64.now_playing_configure:
+            id: panel_now_playing
+            entity_id: !lambda return entity_id;
+            home_assistant_url: !lambda return home_assistant_url;
+    - action: now_playing_clear
+      then:
+        - pixoo64.now_playing_clear: panel_now_playing
     - action: reboot
       then:
         - pixoo64.reboot: pixoo_firmware
@@ -189,10 +220,11 @@ ota:
       - pixoo64.begin_firmware_update: pixoo_firmware
 
 # TLS certificate verification is off: no root CA bundle is bundled on this
-# build, and the fetched weather is public data sent with no credentials.
+# build. The shared transport is serialized by panel_http_gate.
 http_request:
-  id: weather_http
+  id: panel_http
   timeout: 5s
+  follow_redirects: false
   verify_ssl: false
 
 time:
@@ -207,11 +239,11 @@ font:
   - file: fonts/PixelOperator8.ttf
     id: font_8
     size: 8
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include fonts/pixel_operator_glyphs.yaml
   - file: fonts/PixelOperator.ttf
     id: font_16
     size: 16
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°'
+    glyphs: !include fonts/pixel_operator_glyphs.yaml
 
 text:
   - platform: template
@@ -230,13 +262,22 @@ pixoo64:
   update_interval: 5ms
   panel:
     id: panel
+  http_gate:
+    id: panel_http_gate
   weather:
     platform: open_meteo
     id: weather_source
-    http_request_id: weather_http
+    http_request_id: panel_http
+    http_gate: panel_http_gate
     latitude: location_latitude
     longitude: location_longitude
     refresh_interval: weather_refresh_minutes
+  now_playing:
+    id: panel_now_playing
+    api_server: panel_api
+    http_request_id: panel_http
+    http_gate: panel_http_gate
+    clock: panel_time
   renderer: panel_content_controller
 
   sound:
@@ -264,6 +305,13 @@ pixoo64_content:
       frame_interval: 33ms
       panel_font: font_8
       panel_text: panel_content
+
+    - platform: now_playing
+      id: now_playing_dashboard
+      dashboard_id: now_playing
+      frame_interval: 33ms
+      source: panel_now_playing
+      font: font_8
 
     - platform: equalizer
       id: equalizer_bars_dashboard
@@ -357,6 +405,7 @@ select:
     name: Pixoo64 Dashboard
     options:
       - text
+      - now_playing
       - weather_forecast
       - weather_landscape
       - equalizer_bars

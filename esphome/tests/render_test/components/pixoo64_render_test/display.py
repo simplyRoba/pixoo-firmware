@@ -8,6 +8,7 @@ CONF_OUTPUT_DIR = "output_dir"
 CONF_EQUALIZER = "equalizer"
 CONF_PANEL_TEXT = "panel_text"
 CONF_ANIMATION_FRAMES = "animation_frames"
+CONF_ANIMATION_ONLY = "animation_only"
 CONF_DASHBOARD = "dashboard"
 CONF_NOW_MS = "now_ms"
 CONF_SNAPSHOT = "snapshot"
@@ -16,6 +17,10 @@ CONF_STOPWATCH_ELAPSED_MS = "stopwatch_elapsed_ms"
 CONF_STOPWATCH_RUNNING = "stopwatch_running"
 CONF_TIMER_REMAINING_MS = "timer_remaining_ms"
 CONF_TIMER_RUNNING = "timer_running"
+CONF_NOW_PLAYING_SOURCE = "now_playing_source"
+
+pixoo_ns = cg.global_ns.namespace("pixoo")
+NowPlayingSource = pixoo_ns.namespace("now_playing").class_("NowPlayingSource")
 
 pixoo64_ns = cg.esphome_ns.namespace("pixoo64")
 content_ns = pixoo64_ns.namespace("content")
@@ -50,9 +55,11 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
         cv.Required(CONF_CONTENT_CONTROLLER): cv.use_id(ContentController),
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
         cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
+        cv.Optional(CONF_NOW_PLAYING_SOURCE): cv.use_id(NowPlayingSource),
         cv.Optional(CONF_ANIMATION_FRAMES, default=[]): cv.ensure_list(
             ANIMATION_FRAME_SCHEMA
         ),
+        cv.Optional(CONF_ANIMATION_ONLY, default=False): cv.boolean,
         cv.Required(CONF_OUTPUT_DIR): cv.string_strict,
     }
 )
@@ -73,6 +80,13 @@ async def to_code(config):
             )
         )
     cg.add(var.set_panel_text(await cg.get_variable(config[CONF_PANEL_TEXT])))
+    if CONF_NOW_PLAYING_SOURCE in config:
+        cg.add(
+            var.set_now_playing_source(
+                await cg.get_variable(config[CONF_NOW_PLAYING_SOURCE])
+            )
+        )
+    cg.add(var.set_animation_only(config[CONF_ANIMATION_ONLY]))
     for frame in config[CONF_ANIMATION_FRAMES]:
         cg.add(
             var.add_animation_frame(

@@ -143,11 +143,11 @@ void FirmwareAppComponent::ShowReaction(const std::string &reaction_name) {
 
 void FirmwareAppComponent::ClearOverlayQueue() {
   if (this->started_)
-    this->app_->ClearOverlayQueue();
+    this->app_->ClearOverlayQueue(millis());
 }
 
 void FirmwareAppComponent::BeginFirmwareUpdate() {
-  if (this->started_ && !this->app_->BeginFirmwareUpdate())
+  if (this->started_ && !this->app_->BeginFirmwareUpdate(millis()))
     ESP_LOGW(TAG, "firmware update screen could not be presented");
 }
 

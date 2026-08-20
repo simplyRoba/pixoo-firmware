@@ -124,7 +124,10 @@ struct RecordingRenderer final : RenderPort {
     events->push_back("min-visible:" + std::string(notification.text.c_str()));
     return min_visible_ms;
   }
-  void HideBaseContent() override { hide_base_calls++; }
+  void HideBaseContent(uint32_t now_ms) override {
+    ++hide_base_calls;
+    hide_base_times.push_back(now_ms);
+  }
   void ReleaseOverlayResources() override { release_overlay_calls++; }
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                      const StopwatchSnapshot &stopwatch,
@@ -175,6 +178,7 @@ struct RecordingRenderer final : RenderPort {
   StopwatchSnapshot last_stopwatch{};
   TimerSnapshot last_timer{};
   int hide_base_calls{0};
+  std::vector<uint32_t> hide_base_times;
   int release_overlay_calls{0};
   std::vector<bool> render_results;
   size_t render_result_index{0};
@@ -422,8 +426,10 @@ static void test_firmware_update_presents_static_frame_synchronously() {
   app.Tick(10);
   events.clear();
 
-  TEST_ASSERT_TRUE(app.BeginFirmwareUpdate());
+  TEST_ASSERT_TRUE(app.BeginFirmwareUpdate(10));
 
+  TEST_ASSERT_EQUAL(2, renderer.hide_base_calls);
+  TEST_ASSERT_EQUAL_UINT32(10, renderer.hide_base_times.back());
   TEST_ASSERT_EQUAL(static_cast<int>(FirmwareApp::Phase::kRunning),
                     static_cast<int>(app.phase()));
   TEST_ASSERT_TRUE(app.notification_visible());
@@ -449,19 +455,19 @@ static void test_firmware_update_skips_unready_or_failed_presentation() {
 
   app.Start(0, LightState{false, 0.5f}, "text");
   events.clear();
-  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate());
+  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate(0));
   TEST_ASSERT_TRUE(events.empty());
 
   app.SetUserLight(LightState{true, 0.5f}, 1);
   events.clear();
-  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate());
+  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate(1));
   TEST_ASSERT_TRUE(events.empty());
 
   app.Tick(101);
   app.Tick(101);
   events.clear();
   renderer.firmware_update_frame = {};
-  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate());
+  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate(101));
   TEST_ASSERT_EQUAL(1, events.size());
   AssertEvent(events, 0, "firmware-update");
 
@@ -473,7 +479,7 @@ static void test_firmware_update_skips_unready_or_failed_presentation() {
                                     sizeof(kFirmwareUpdateToken)};
   panel.present_results = {false};
   events.clear();
-  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate());
+  TEST_ASSERT_FALSE(app.BeginFirmwareUpdate(102));
   AssertEvent(events, 0, "firmware-update");
   AssertEvent(events, 1, "present:force:firmware-update");
   TEST_ASSERT_EQUAL(static_cast<int>(FirmwareApp::Phase::kRunning),
@@ -552,7 +558,7 @@ static void test_regular_frame_metrics_cover_render_through_present_only() {
   TEST_ASSERT_EQUAL(4, metrics.begin_calls);
   TEST_ASSERT_EQUAL(4, metrics.end_calls);
 
-  app.BeginFirmwareUpdate();
+  app.BeginFirmwareUpdate(13);
   TEST_ASSERT_EQUAL(4, metrics.begin_calls);
   TEST_ASSERT_EQUAL(4, metrics.end_calls);
 
@@ -797,7 +803,8 @@ static void test_completed_cold_boot_does_not_replay_after_repower() {
   app.Tick(10);  // Normal content after boot completes.
 
   app.SetUserLight(LightState{false, 0.5f}, 11);
-  TEST_ASSERT_EQUAL(1, renderer.hide_base_calls);
+  TEST_ASSERT_EQUAL(2, renderer.hide_base_calls);
+  TEST_ASSERT_EQUAL_UINT32(11, renderer.hide_base_times.back());
   app.SetUserLight(LightState{true, 0.5f}, 12);
   app.Tick(12);  // Runtime repower initializes directly into running.
   app.Tick(12);
@@ -807,6 +814,20 @@ static void test_completed_cold_boot_does_not_replay_after_repower() {
   TEST_ASSERT_EQUAL(1, CountEvent(events, "boot:0"));
   TEST_ASSERT_EQUAL(static_cast<int>(FirmwareApp::Phase::kRunning),
                     static_cast<int>(app.phase()));
+}
+
+static void test_restart_hides_base_at_restart_tick() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  StartRunning(&app);
+  const int previous_hide_calls = renderer.hide_base_calls;
+
+  TEST_ASSERT_TRUE(app.Start(123, LightState{false, 0.5f}, "text"));
+  TEST_ASSERT_EQUAL(previous_hide_calls + 1, renderer.hide_base_calls);
+  TEST_ASSERT_EQUAL_UINT32(123, renderer.hide_base_times.back());
 }
 
 static void test_interrupted_initial_boot_does_not_replay_after_repower() {
@@ -1145,7 +1166,7 @@ static void test_visible_state_changes_bypass_dashboard_cadence() {
                            app.current_overlay()->notification.text.c_str());
   TEST_ASSERT_EQUAL(2u, app.overlay_queue_size());
 
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(4);
   app.Tick(4);
   AssertEvent(events, events.size() - 2, "content:weather:base");
 
@@ -1278,8 +1299,9 @@ static void test_clear_overlay_queue_pending_and_visible_restores_snapshot() {
                   FirmwareAppConfig{0, 10, 0});
   app.Start(0, LightState{false, 0.4f}, "text");
   app.Notify(Request("Pending", 10), 1);
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(2);
   TEST_ASSERT_FALSE(app.notification_pending());
+  TEST_ASSERT_EQUAL_UINT32(2, renderer.hide_base_times.back());
   TEST_ASSERT_EQUAL(1, renderer.release_overlay_calls);
   AssertLight(app.logical_light(), false, 0.4f);
   const int initialize_calls = panel.initialize_calls;
@@ -1295,7 +1317,7 @@ static void test_clear_overlay_queue_pending_and_visible_restores_snapshot() {
   app.Notify(visible, 31);
   app.Tick(31);
   TEST_ASSERT_TRUE(app.notification_visible());
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(31);
   TEST_ASSERT_FALSE(app.notification_visible());
   TEST_ASSERT_EQUAL(2, renderer.release_overlay_calls);
   AssertLight(app.logical_light(), true, 0.4f);
@@ -1399,7 +1421,7 @@ static void test_notification_text_limit_bounds_retained_queue_memory() {
   TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
   TEST_ASSERT_EQUAL(kMaximumNotificationTextBytes,
                     app.current_overlay()->notification.text.size());
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(1);
 
   NotificationRequest titled = Request("Message", 1);
   titled.notification.title = maximum;
@@ -1531,7 +1553,7 @@ static void test_clear_and_explicit_off_cancel_the_entire_overlay_queue() {
   app.React(Reaction::kApprove, 1);
   app.Notify(Request("Tail", 10), 2);
   app.Tick(1);
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(2);
   TEST_ASSERT_EQUAL(0u, app.overlay_queue_size());
   AssertLight(app.logical_light(), true, 0.5f);
 
@@ -1728,7 +1750,7 @@ static void test_pending_notification_cancellation_does_not_stop_unrelated_sound
   TEST_ASSERT_TRUE(app.notification_pending());
   app.Notify(Request("Silent tail", 20), 11);
   TEST_ASSERT_TRUE(app.notification_pending());
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(11);
 
   TEST_ASSERT_EQUAL(stop_calls_before, sound.stop_calls);
   TEST_ASSERT_EQUAL(0, CountEvent(events, "sound:stop"));
@@ -1748,7 +1770,7 @@ static void test_presented_silent_notification_preserves_unrelated_sound_when_on
   app.Notify(Request("Silent", 20), 10);
   app.Tick(10);
   TEST_ASSERT_TRUE(app.notification_visible());
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(10);
 
   TEST_ASSERT_TRUE(app.logical_light().on);
   TEST_ASSERT_EQUAL(stop_calls_before, sound.stop_calls);
@@ -1794,8 +1816,9 @@ static void test_pending_off_notification_stops_boot_sound_before_power_restore(
   TEST_ASSERT_EQUAL(1, CountEvent(events, "sound:boot"));
   events.clear();
 
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(2);
   TEST_ASSERT_FALSE(app.logical_light().on);
+  TEST_ASSERT_EQUAL_UINT32(2, renderer.hide_base_times.back());
   AssertEvent(events, 0, "brightness:40");
   AssertEvent(events, 1, "sound:stop");
   AssertEvent(events, 2, "power:off");
@@ -1815,7 +1838,8 @@ static void test_silent_off_notification_stops_boot_sound_before_restore() {
   TEST_ASSERT_TRUE(app.notification_visible());
   events.clear();
 
-  app.ClearOverlayQueue();
+  app.ClearOverlayQueue(2);
+  TEST_ASSERT_EQUAL_UINT32(2, renderer.hide_base_times.back());
   AssertEvent(events, 0, "brightness:40");
   AssertEvent(events, 1, "sound:stop");
   AssertEvent(events, 2, "power:off");
@@ -2450,6 +2474,7 @@ int main(int, char **) {
   RUN_TEST(test_nonfinite_brightness_clamps_to_zero);
   RUN_TEST(test_cold_init_boot_and_repower_cross_uint32_wrap);
   RUN_TEST(test_completed_cold_boot_does_not_replay_after_repower);
+  RUN_TEST(test_restart_hides_base_at_restart_tick);
   RUN_TEST(test_interrupted_initial_boot_does_not_replay_after_repower);
   RUN_TEST(test_start_stops_stale_sound_before_boot_lifecycle);
   RUN_TEST(test_initialize_failure_retries_before_boot);

@@ -105,8 +105,9 @@ void FirmwareApp::SyncBrightnessBounce_(float brightness) {
 
 bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
                         const std::string &initial_dashboard_id) {
-  // A restarted application must not leave an earlier boot or overlay sound
-  // running into its new lifecycle.
+  // A restarted application must not leave an earlier dashboard, boot, or
+  // overlay presentation running into its new lifecycle.
+  this->renderer_.HideBaseContent(now_ms);
   this->StopSound_();
   this->phase_ = Phase::kOff;
   this->stopwatch_ = {};
@@ -309,7 +310,7 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
       ElapsedAtLeast_(now_ms, this->overlay_visible_started_ms_,
                       this->overlay_visible_duration_ms_)) {
     if (this->overlay_queue_size_ == 1) {
-      this->RestoreOverlaySnapshot_();
+      this->RestoreOverlaySnapshot_(now_ms);
       if (this->phase_ == Phase::kOff)
         return;
     } else {
@@ -443,7 +444,7 @@ void FirmwareApp::ApplyUserLight_(LightState light, uint32_t now_ms,
     // a temporary overlay wake leaves the panel and queue running.
     if (!overlay_sound_stopped)
       this->StopSound_();
-    this->renderer_.HideBaseContent();
+    this->renderer_.HideBaseContent(now_ms);
     this->panel_.SetPower(false);
     this->phase_ = Phase::kOff;
   } else if (light.on && this->phase_ == Phase::kOff) {
@@ -611,11 +612,12 @@ void FirmwareApp::SelectDashboard(const std::string &dashboard_id) {
   this->ReconcileMicrophone_();
 }
 
-bool FirmwareApp::BeginFirmwareUpdate() {
+bool FirmwareApp::BeginFirmwareUpdate(uint32_t now_ms) {
   if (this->phase_ != Phase::kBootAnimation &&
       this->phase_ != Phase::kRunning)
     return false;
 
+  this->renderer_.HideBaseContent(now_ms);
   const FrameView frame = this->renderer_.RenderFirmwareUpdate();
   // The update screen replaces the renderer's retained base pixels even when
   // presentation fails. Rebuild both the base and any active overlay next.
@@ -675,10 +677,10 @@ bool FirmwareApp::EnqueueOverlay_(OverlayRequest request, uint32_t now_ms) {
   return true;
 }
 
-void FirmwareApp::ClearOverlayQueue() {
+void FirmwareApp::ClearOverlayQueue(uint32_t now_ms) {
   if (this->overlay_queue_size_ == 0)
     return;
-  this->RestoreOverlaySnapshot_();
+  this->RestoreOverlaySnapshot_(now_ms);
 }
 
 void FirmwareApp::Reboot() {
@@ -770,7 +772,7 @@ bool FirmwareApp::CancelOverlayQueueWithoutRestore_() {
   return overlay_sound_stopped;
 }
 
-void FirmwareApp::RestoreOverlaySnapshot_() {
+void FirmwareApp::RestoreOverlaySnapshot_(uint32_t now_ms) {
   const LightState restore = this->overlay_saved_light_;
   const bool overlay_sound_stopped = this->CancelOverlayQueueWithoutRestore_();
   this->logical_light_ = restore;
@@ -779,7 +781,7 @@ void FirmwareApp::RestoreOverlaySnapshot_() {
   if (!restore.on) {
     if (!overlay_sound_stopped && this->sound_owner_ != SoundOwner::kTimer)
       this->StopSound_();
-    this->renderer_.HideBaseContent();
+    this->renderer_.HideBaseContent(now_ms);
     this->panel_.SetPower(false);
     this->phase_ = Phase::kOff;
   } else {

@@ -19,12 +19,33 @@ CONF_LOCATION = "location"
 CONF_AVAILABLE_AT_MS = "available_at_ms"
 CONF_CONDITION_AFTER = "condition_after"
 CONF_CONDITION_AFTER_MS = "condition_after_ms"
+CONF_SNAPSHOTS = "snapshots"
+CONF_AT_MS = "at_ms"
+CONF_SOURCE_STATE = "source_state"
+CONF_PLAYBACK_STATE = "playback_state"
+CONF_TITLE = "title"
+CONF_ARTIST = "artist"
+CONF_DURATION_MS = "duration_ms"
+CONF_POSITION_MS = "position_ms"
+CONF_MEDIA_IDENTITY = "media_identity"
+CONF_ARTWORK_IDENTITY = "artwork_identity"
+CONF_ARTWORK_AVAILABILITY = "artwork_availability"
+CONF_ARTWORK_REVISION = "artwork_revision"
+CONF_ARTWORK_COPY_READY_AT_MS = "artwork_copy_ready_at_ms"
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 WeatherCondition = pixoo_ns.enum("WeatherCondition", is_class=True)
 WeatherSource = pixoo_ns.class_("WeatherSource")
+now_playing_ns = pixoo_ns.namespace("now_playing")
+NowPlayingSource = now_playing_ns.class_("NowPlayingSource")
+NowPlayingSourceState = now_playing_ns.enum("NowPlayingSourceState", is_class=True)
+PlaybackState = now_playing_ns.enum("PlaybackState", is_class=True)
+ArtworkAvailability = now_playing_ns.enum("ArtworkAvailability", is_class=True)
 render_test_ns = cg.esphome_ns.namespace("pixoo64_render_test")
 StaticWeatherSource = render_test_ns.class_("StaticWeatherSource", WeatherSource)
+StaticNowPlayingSource = render_test_ns.class_(
+    "StaticNowPlayingSource", NowPlayingSource
+)
 
 # The renderer's condition vocabulary, named so the test config stays inside the
 # closed set the domain enum defines.
@@ -44,6 +65,31 @@ CONDITIONS = {
     "hail-thunderstorm": WeatherCondition.HAIL_THUNDERSTORM,
     "unknown": WeatherCondition.UNKNOWN,
 }
+SOURCE_STATES = {
+    "unconfigured": NowPlayingSourceState.kUnconfigured,
+    "waiting": NowPlayingSourceState.kWaiting,
+    "no_entity_data": NowPlayingSourceState.kNoEntityData,
+    "ready": NowPlayingSourceState.kReady,
+    "offline": NowPlayingSourceState.kOffline,
+    "stale": NowPlayingSourceState.kStale,
+}
+PLAYBACK_STATES = {
+    "unknown": PlaybackState.kUnknown,
+    "playing": PlaybackState.kPlaying,
+    "paused": PlaybackState.kPaused,
+    "buffering": PlaybackState.kBuffering,
+    "idle": PlaybackState.kIdle,
+    "on": PlaybackState.kOn,
+    "off": PlaybackState.kOff,
+    "standby": PlaybackState.kStandby,
+    "unavailable": PlaybackState.kUnavailable,
+}
+ARTWORK_AVAILABILITY = {
+    "none": ArtworkAvailability.kNone,
+    "pending": ArtworkAvailability.kPending,
+    "ready": ArtworkAvailability.kReady,
+    "failed": ArtworkAvailability.kFailed,
+}
 
 MULTI_CONF = True
 
@@ -58,7 +104,7 @@ def validate_condition_after(config):
     return config
 
 
-CONFIG_SCHEMA = cv.All(
+WEATHER_CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.Required(CONF_ID): cv.declare_id(StaticWeatherSource),
@@ -89,8 +135,106 @@ CONFIG_SCHEMA = cv.All(
     validate_condition_after,
 )
 
+SNAPSHOT_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_AT_MS): cv.int_range(min=0, max=0xFFFFFFFF),
+        cv.Required(CONF_SOURCE_STATE): cv.enum(SOURCE_STATES, lower=True),
+        cv.Required(CONF_PLAYBACK_STATE): cv.enum(PLAYBACK_STATES, lower=True),
+        cv.Optional(CONF_TITLE, default=""): cv.string_strict,
+        cv.Optional(CONF_ARTIST, default=""): cv.string_strict,
+        cv.Optional(CONF_DURATION_MS): cv.int_range(min=0, max=0xFFFFFFFF),
+        cv.Optional(CONF_POSITION_MS): cv.int_range(min=0, max=0xFFFFFFFF),
+        cv.Required(CONF_MEDIA_IDENTITY): cv.int_range(
+            min=0, max=0xFFFFFFFFFFFFFFFF
+        ),
+        cv.Optional(CONF_ARTWORK_IDENTITY): cv.int_range(
+            min=0, max=0xFFFFFFFFFFFFFFFF
+        ),
+        cv.Optional(CONF_ARTWORK_AVAILABILITY, default="none"): cv.enum(
+            ARTWORK_AVAILABILITY, lower=True
+        ),
+        cv.Optional(CONF_ARTWORK_REVISION, default=0): cv.int_range(
+            min=0, max=0xFFFFFFFF
+        ),
+        cv.Optional(CONF_ARTWORK_COPY_READY_AT_MS): cv.int_range(
+            min=0, max=0xFFFFFFFF
+        ),
+    }
+)
+
+
+def validate_now_playing_snapshots(config):
+    snapshots = config[CONF_SNAPSHOTS]
+    if len(snapshots) > 32:
+        raise cv.Invalid("now-playing fixtures support at most 32 snapshots")
+    if not snapshots or snapshots[0][CONF_AT_MS] != 0:
+        raise cv.Invalid("now-playing fixture snapshots must start at 0ms")
+    previous = -1
+    for snapshot in snapshots:
+        at_ms = snapshot[CONF_AT_MS]
+        if at_ms <= previous:
+            raise cv.Invalid("now-playing fixture snapshots must be strictly ordered")
+        previous = at_ms
+        has_artwork = CONF_ARTWORK_IDENTITY in snapshot
+        availability = snapshot[CONF_ARTWORK_AVAILABILITY]
+        if has_artwork != (availability != "none"):
+            raise cv.Invalid(
+                "artwork_identity and non-none artwork_availability must appear together"
+            )
+        if has_artwork and snapshot[CONF_ARTWORK_REVISION] == 0:
+            raise cv.Invalid("artwork fixtures require a nonzero artwork_revision")
+    return config
+
+
+NOW_PLAYING_CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.declare_id(StaticNowPlayingSource),
+            cv.Required(CONF_SNAPSHOTS): cv.ensure_list(SNAPSHOT_SCHEMA),
+        }
+    ),
+    validate_now_playing_snapshots,
+)
+
+def validate_fixture(config):
+    if CONF_SNAPSHOTS in config:
+        return NOW_PLAYING_CONFIG_SCHEMA(config)
+    return WEATHER_CONFIG_SCHEMA(config)
+
+
+CONFIG_SCHEMA = validate_fixture
+
 
 async def to_code(config):
+    if CONF_SNAPSHOTS in config:
+        var = cg.new_Pvariable(config[CONF_ID])
+        for snapshot in config[CONF_SNAPSHOTS]:
+            has_duration = CONF_DURATION_MS in snapshot
+            has_position = CONF_POSITION_MS in snapshot
+            has_artwork = CONF_ARTWORK_IDENTITY in snapshot
+            cg.add(
+                var.add_snapshot(
+                    snapshot[CONF_AT_MS],
+                    snapshot[CONF_SOURCE_STATE],
+                    snapshot[CONF_PLAYBACK_STATE],
+                    snapshot[CONF_TITLE],
+                    snapshot[CONF_ARTIST],
+                    has_duration,
+                    snapshot.get(CONF_DURATION_MS, 0),
+                    has_position,
+                    snapshot.get(CONF_POSITION_MS, 0),
+                    snapshot[CONF_MEDIA_IDENTITY],
+                    has_artwork,
+                    snapshot.get(CONF_ARTWORK_IDENTITY, 0),
+                    snapshot[CONF_ARTWORK_AVAILABILITY],
+                    snapshot[CONF_ARTWORK_REVISION],
+                    snapshot.get(
+                        CONF_ARTWORK_COPY_READY_AT_MS, snapshot[CONF_AT_MS]
+                    ),
+                )
+            )
+        return var
+
     var = cg.new_Pvariable(config[CONF_ID])
     cg.add(var.set_condition(config[CONF_CONDITION]))
     if CONF_AVAILABLE_AT_MS in config:

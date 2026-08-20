@@ -10,6 +10,7 @@
 #include "dashboard/dashboard.h"
 #include "dashboard/equalizer/equalizer_dashboard.h"
 #include "dashboard/game_of_life/game_of_life_dashboard.h"
+#include "dashboard/now_playing/now_playing_dashboard.h"
 #include "dashboard/timing_dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/sensor/sensor.h"
@@ -76,7 +77,7 @@ class ContentController : public display::Display,
   pixoo::FrameView RenderFirmwareUpdate() override;
   uint32_t NotificationMinVisibleMs(
       const pixoo::Notification &notification) override;
-  void HideBaseContent() override;
+  void HideBaseContent(uint32_t now_ms) override;
   void ReleaseOverlayResources() override;
   bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::StopwatchSnapshot &stopwatch,
@@ -91,6 +92,7 @@ class ContentController : public display::Display,
   int get_height_internal() override { return pixoo::kHeight; }
 
   Dashboard *find_(const std::string &id) const;
+  void HideVisible_(uint32_t now_ms);
   void DrawBootWordmark(uint32_t elapsed_ms);
   static int cos_deg_(int degrees);
   bool CaptureReactionBackground_();
