@@ -14,6 +14,10 @@
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "png.h"
 
+#ifdef USE_PIXOO64_NOW_PLAYING
+#include "now_playing_adapter_test.h"
+#endif
+
 namespace esphome::pixoo64_render_test {
 namespace {
 
@@ -855,6 +859,10 @@ void RenderTestDisplay::setup() {
         sizeof(pixoo64::dashboard::NowPlayingDashboard),
         2u * pixoo::now_playing::kArtworkRgb565Bytes,
         sizeof(StaticNowPlayingSource));
+
+#ifdef USE_PIXOO64_NOW_PLAYING
+    failures += RunNowPlayingAdapterTests();
+#endif
 
     std::exit(failures == 0 ? 0 : 1);
   });

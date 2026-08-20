@@ -1,5 +1,6 @@
 #include <unity.h>
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -21,6 +22,7 @@
 #include "game_of_life.h"
 #include "spectrum.h"
 #include "metadata_policy.h"
+#include "now_playing_art.h"
 #include "now_playing_data.h"
 #include "now_playing_text.h"
 #include "now_playing_timing.h"
@@ -2660,6 +2662,25 @@ static void test_now_playing_marquee_transition_and_layout() {
   static_assert(sizeof(np::NowPlayingData) <= 512, "snapshot must remain bounded");
 }
 
+static void test_now_playing_placeholder_is_deterministic() {
+  std::array<uint16_t, pixoo::now_playing::kArtworkPixelCount> first{};
+  std::array<uint16_t, pixoo::now_playing::kArtworkPixelCount> second{};
+  std::array<uint16_t, pixoo::now_playing::kArtworkPixelCount> other{};
+  TEST_ASSERT_TRUE(pixoo::now_playing::GenerateArtworkPlaceholder(
+      0x123456789abcdef0ull, first.data(), first.size()));
+  TEST_ASSERT_TRUE(pixoo::now_playing::GenerateArtworkPlaceholder(
+      0x123456789abcdef0ull, second.data(), second.size()));
+  TEST_ASSERT_TRUE(pixoo::now_playing::GenerateArtworkPlaceholder(
+      0x123456789abcdef1ull, other.data(), other.size()));
+  TEST_ASSERT_EQUAL_MEMORY(first.data(), second.data(),
+                           pixoo::now_playing::kArtworkRgb565Bytes);
+  TEST_ASSERT_NOT_EQUAL(0, std::memcmp(
+                               first.data(), other.data(),
+                               pixoo::now_playing::kArtworkRgb565Bytes));
+  TEST_ASSERT_FALSE(pixoo::now_playing::GenerateArtworkPlaceholder(
+      1, first.data(), 4095));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_analog_hands_point_at_the_time);
@@ -2808,5 +2829,6 @@ int main(int, char**) {
   RUN_TEST(test_now_playing_policy_replays_position_and_state_in_order);
   RUN_TEST(test_now_playing_text_sanitize_and_bounds);
   RUN_TEST(test_now_playing_marquee_transition_and_layout);
+  RUN_TEST(test_now_playing_placeholder_is_deterministic);
   return UNITY_END();
 }

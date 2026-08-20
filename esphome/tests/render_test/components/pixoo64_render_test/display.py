@@ -18,6 +18,7 @@ CONF_STOPWATCH_RUNNING = "stopwatch_running"
 CONF_TIMER_REMAINING_MS = "timer_remaining_ms"
 CONF_TIMER_RUNNING = "timer_running"
 CONF_NOW_PLAYING_SOURCE = "now_playing_source"
+CONF_ADAPTER_CHECKS = "adapter_checks"
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 NowPlayingSource = pixoo_ns.namespace("now_playing").class_("NowPlayingSource")
@@ -56,6 +57,7 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
         cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
         cv.Optional(CONF_NOW_PLAYING_SOURCE): cv.use_id(NowPlayingSource),
+        cv.Optional(CONF_ADAPTER_CHECKS, default=False): cv.boolean,
         cv.Optional(CONF_ANIMATION_FRAMES, default=[]): cv.ensure_list(
             ANIMATION_FRAME_SCHEMA
         ),
@@ -66,6 +68,18 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
 
 
 async def to_code(config):
+    if config[CONF_ADAPTER_CHECKS]:
+        cg.add_build_flag("-DUSE_PIXOO64_NOW_PLAYING")
+        cg.add_build_flag("-DPNGLE_NO_GAMMA_CORRECTION")
+        cg.add_build_flag("-Isrc")
+        cg.add_library(
+            "JPEGDEC",
+            "1.8.4",
+            "https://github.com/bitbank2/JPEGDEC#1.8.4",
+        )
+        cg.add_library("pngle", "1.1.0")
+        cg.add_library("Unity", "2.6.1")
+
     var = cg.new_Pvariable(config[CONF_ID])
     await display.register_display(var, config)
     cg.add(

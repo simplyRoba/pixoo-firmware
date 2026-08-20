@@ -1,3 +1,7 @@
+#ifdef USE_PIXOO64_NOW_PLAYING
+
+#include "now_playing_adapter_test.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -7,6 +11,9 @@
 #include <vector>
 
 #include <unity.h>
+
+extern "C" void setUp() {}
+extern "C" void tearDown() {}
 
 #include "now_playing_config.h"
 #include "artwork_decoder.h"
@@ -458,23 +465,6 @@ static void test_artwork_crop_mapping_and_color_math() {
       artwork::CompositeRgbaOverRgb565(1, 2, 3, 255, 0xffff));
 }
 
-static void test_placeholder_is_deterministic() {
-  std::array<uint16_t, artwork::kArtworkPixelCount> first{};
-  std::array<uint16_t, artwork::kArtworkPixelCount> second{};
-  std::array<uint16_t, artwork::kArtworkPixelCount> other{};
-  TEST_ASSERT_TRUE(artwork::GenerateArtworkPlaceholder(
-      0x123456789abcdef0ull, first.data(), first.size()));
-  TEST_ASSERT_TRUE(artwork::GenerateArtworkPlaceholder(
-      0x123456789abcdef0ull, second.data(), second.size()));
-  TEST_ASSERT_TRUE(artwork::GenerateArtworkPlaceholder(
-      0x123456789abcdef1ull, other.data(), other.size()));
-  TEST_ASSERT_EQUAL_MEMORY(first.data(), second.data(),
-                           artwork::kArtworkRgb565Bytes);
-  TEST_ASSERT_NOT_EQUAL(0, std::memcmp(first.data(), other.data(),
-                                      artwork::kArtworkRgb565Bytes));
-  TEST_ASSERT_FALSE(artwork::GenerateArtworkPlaceholder(1, first.data(), 4095));
-}
-
 static void test_png_chunk_validation() {
   std::vector<uint8_t> pixels(2 * 2 * 4, 0xff);
   const std::vector<uint8_t> png = MakeRgbaPng(2, 2, pixels);
@@ -766,14 +756,15 @@ static void test_record_and_redaction() {
                            cfg::RedactUrlForDiagnostics("https://user@panel.invalid/path", 31).c_str());
 }
 
-int main(int, char **) {
+namespace esphome::pixoo64_render_test {
+
+int RunNowPlayingAdapterTests() {
   UNITY_BEGIN();
   RUN_TEST(test_entity_ids);
   RUN_TEST(test_home_assistant_urls);
   RUN_TEST(test_artwork_urls);
   RUN_TEST(test_artwork_fetch_policy_and_magic);
   RUN_TEST(test_artwork_crop_mapping_and_color_math);
-  RUN_TEST(test_placeholder_is_deterministic);
   RUN_TEST(test_png_chunk_validation);
   RUN_TEST(test_jpeg_marker_validation);
   RUN_TEST(test_actual_png_decode_crop_scale_and_alpha);
@@ -783,3 +774,7 @@ int main(int, char **) {
   RUN_TEST(test_record_and_redaction);
   return UNITY_END();
 }
+
+}  // namespace esphome::pixoo64_render_test
+
+#endif  // USE_PIXOO64_NOW_PLAYING

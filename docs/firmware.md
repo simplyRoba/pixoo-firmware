@@ -53,7 +53,8 @@ FirmwareAppComponent
 FirmwareApp
         ├── PanelPort ───────► Pixoo64Panel ─────► panel transport and power output
         ├── RenderPort ──────► ContentController ─► dashboards and overlays
-        │                                           └► WeatherSource adapter
+        │                                           ├► WeatherSource adapter
+        │                                           └► NowPlayingSource adapter
         ├── SoundPlayer ─────► RTTTL adapter
         ├── MicrophonePort ──► I2S microphone adapter and equalizer DSP
         ├── LightStateSink ──► ESPHome light entity
@@ -75,8 +76,8 @@ sound, and light state remains in `FirmwareApp`.
 ### 2.2 Ports and adapters
 
 Coarse interfaces are used at boundaries that have a hardware, framework, or
-test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` is a
-separate content-layer boundary consumed by the weather renderer.
+test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` and
+`NowPlayingSource` are content-layer boundaries consumed by their renderers.
 
 | Port | Consumer | Production adapter | Responsibility |
 |---|---|---|---|
@@ -88,6 +89,7 @@ separate content-layer boundary consumed by the weather renderer.
 | `SystemPort` | `FirmwareApp` | `FirmwareAppComponent` | Request a safe reboot, optionally after clearing persisted preferences. |
 | `FrameMetricsPort` | `FirmwareApp` | `FirmwareAppComponent` | Measure complete regular-frame work without putting a platform clock in the application core. |
 | `WeatherSource` | weather rendering layer | `OpenMeteoSource` | Non-blocking weather refresh and coherent weather snapshots. |
+| `NowPlayingSource` | now-playing rendering layer | `HomeAssistantMediaSource` | Native-API media metadata, visibility-scoped artwork work, and coherent media/artwork snapshots. |
 
 `ContentController` implements both `RenderPort` and
 `EqualizerLevelsSink`. The microphone adapter publishes levels to the controller,
@@ -157,13 +159,13 @@ pixoo_app/
                        output, and metrics tests using fake ports
 
 pixoo_content/
-  include/ src/        framework-independent weather, equalizer, clock,
-                       and Game of Life models
+  include/ src/        framework-independent weather, now-playing, equalizer,
+                       clock, and Game of Life models
   test/                content-model, animation, DSP, and clock tests
 
 esphome/
-  components/pixoo64/          ESPHome application, panel, weather, sound,
-                               microphone, and timezone adapters
+  components/pixoo64/          ESPHome application, panel, weather, now-playing,
+                               sound, microphone, and timezone adapters
   components/pixoo64_content/  renderer, dashboards, drawing utilities,
                                notifications, and reactions
   hardware/pixoo64_rev1.yaml   production board profile
@@ -206,6 +208,8 @@ This layer contains models that can be compiled and tested without ESPHome:
 
 - weather data, WMO mapping, astronomy, refresh policy, condition transitions,
   and weather animation mechanics;
+- now-playing snapshots, metadata publication policy, playback progress,
+  media/artwork identities, text timing, and deterministic fallback artwork;
 - microphone spectrum analysis and equalizer level processing;
 - split-flap, analog, binary, and digital clock animation state; and
 - the bounded 64×64 Game of Life board.
@@ -222,8 +226,9 @@ validate references and values before C++ generation.
 
 `FirmwareAppComponent` adapts ESPHome lifecycle and commands. `Pixoo64Panel`
 implements the panel boundary. `ContentController` is the rendering boundary and
-owns the configured dashboards. The remaining classes adapt Open-Meteo, RTTTL,
-I2S microphone capture, and timezone selection.
+owns the configured dashboards. The remaining classes adapt Open-Meteo, Home
+Assistant media metadata and artwork, RTTTL, I2S microphone capture, and timezone
+selection.
 
 ## 4. Lifecycle and scheduling
 
@@ -268,8 +273,8 @@ application enables capture only while the selected base dashboard requires it.
 
 Each configured dashboard has a stable ID and implements the shared `Dashboard`
 interface. ESPHome's typed schema admits the closed dashboard families `text`,
-`weather`, `equalizer`, `game_of_life`, `clock`, and `timing`. Final
-validation checks that
+`now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
+Final validation checks that
 the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.
 
@@ -321,12 +326,28 @@ overlays managed by a bounded FIFO in `FirmwareApp`.
 - Queue timing, wake/restore behavior, and notification sound coordination belong
   to `FirmwareApp`; pixel composition belongs to `ContentController`.
 
-### 5.4 Weather and microphone work
+### 5.4 External data and microphone work
 
 `OpenMeteoSource` performs HTTP work outside the rendering path and exposes a
 coherent weather snapshot through `WeatherSource`. Requests are made only while
 the weather dashboard is relevant, Wi-Fi is connected, and cached data needs a
 refresh.
+
+`HomeAssistantMediaSource` receives media state and attributes through encrypted
+native-API subscriptions. The entity and Home Assistant base URL persist in
+adapter preferences; a successful change safely reboots before registering the
+replacement subscriptions because native-API subscriptions cannot be removed at
+runtime. The source fetches only the referenced artwork body over HTTP,
+and only while the now-playing dashboard is visible and an artwork reference is
+pending.
+The low-priority HTTP/TLS worker runs on core 0 below the Wi-Fi and lwIP tasks;
+the low-priority decoder runs on core 1. Encoded input, decoder workspaces,
+artwork slots, and both worker stacks use PSRAM. Completed artwork is published
+through two fixed slots with reader pinning; rendering never reads a slot being
+written.
+
+A shared `HttpRequestGate` serializes Open-Meteo and artwork use of ESPHome's HTTP
+client.
 
 The microphone adapter captures I2S samples into retained windows. Completed
 windows pass through the framework-independent spectrum and equalizer processors,
@@ -361,7 +382,7 @@ profile; cold-start and repower settle delays are `FirmwareAppConfig` policy.
 | Build composition | Board/framework, fonts, adapters, dashboard catalog, frame intervals | `esphome/pixoo64.yaml` | Yes |
 | Deployment secrets | API encryption key, OTA password, fallback-AP password | local `esphome/secrets.yaml` | Yes |
 | Provisioned state | Wi-Fi credentials | ESPHome/NVS | No |
-| Runtime settings | Light state, dashboard, text, timezone, weather location and refresh interval, sound enable | persisted ESPHome entities | No |
+| Runtime settings | Light state, dashboard, text, timezone, weather location and refresh interval, now-playing entity and Home Assistant base URL, sound enable | persisted entities and adapter preferences | No |
 | Product policy | Lifecycle delays, button behavior, overlay queue and restore rules | `pixoo_app` | Yes |
 | Runtime state | Current phase, deadlines, framebuffers, weather cache, DSP windows | application and adapter memory | No |
 
@@ -410,9 +431,9 @@ be tested at its natural level:
 |---|---|
 | `pixoo_protocol` | Native tests for frame encoding, framebuffer geometry, and UART parsing. |
 | `pixoo_app` | Native tests for lifecycle and product policy using fake ports. |
-| `pixoo_content` | Native tests for weather, DSP, clock, and Game of Life models. |
+| `pixoo_content` | Native tests for weather, now-playing, DSP, clock, and Game of Life models. |
 | ESPHome composition | Configuration tests for schemas, references, and expected invalid wiring. |
-| Renderer integration | Deterministic host snapshots using the production content pipeline and substituted external sources. |
+| Host integration | Deterministic render snapshots plus now-playing configuration, artwork-policy, and bounded JPEG/PNG decoder fixtures. |
 | Hardware adapters | ESP32 target compilation plus behavior on the documented board. |
 
 The commands and snapshot-update procedure are owned by

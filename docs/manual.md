@@ -103,15 +103,28 @@ The configured Home Assistant/native-API surface includes:
   selects; location and weather-refresh settings; a sound switch; and diagnostic
   sensors.
 - `notify` (message, optional title, severity, duration, optional sound),
-  `reaction`, `clear_overlay_queue`, `stopwatch_start`, `stopwatch_stop`,
-  `stopwatch_reset`, `timer_set` (`duration_ms`), `timer_start`, `timer_stop`,
-  `timer_reset`, and `reboot` API actions. `reboot` safely restarts the device
+  `reaction`, `clear_overlay_queue`, `now_playing_configure` (`entity_id`,
+  `home_assistant_url`), `now_playing_clear`, `stopwatch_start`,
+  `stopwatch_stop`, `stopwatch_reset`, `timer_set` (`duration_ms`),
+  `timer_start`, `timer_stop`, `timer_reset`, and `reboot` API actions. `reboot`
+  safely restarts the device
   without clearing persisted preferences. An empty notification title keeps the
   one-line banner; a title adds a line above the message. Notifications
   support `info`, `success`, `warning`, and `error`. Reactions are `laughing`,
   `love`, `crying`, `angry`,
   `poop`, `approve`, `disapprove`, `celebrate`, `thinking`, `surprised`, `fire`,
   and `eyes`.
+
+`now_playing_configure` stores one `media_player.*` entity ID and the Home
+Assistant HTTP base URL used for relative artwork references. The URL must be
+absolute `http://` or `https://`, with no query, fragment, or embedded
+credentials; include any reverse-proxy path prefix. The firmware does not derive
+it from the native API connection. A successful configure or clear action safely
+reboots the display. Playback metadata uses the encrypted native API; artwork is
+fetched only while the now-playing dashboard is visible and a reference is
+pending. Supported JPEG and PNG bodies must be no larger than 512 KiB;
+progressive JPEG and animated or interlaced PNG are rejected. Missing,
+unsupported, and failed artwork use a deterministic 64×64 fallback.
 
 ## Controls and features
 
@@ -126,11 +139,11 @@ longer than 60 seconds have no defined firmware action. The reset occurs on
 release. Its exact storage scope is an ESPHome implementation detail; verify the
 resulting provisioning and settings state after reset.
 
-Available dashboards are text, forecast weather, landscape weather, equalizer
-bars, equalizer waveform, Game of Life, split-flap clock, analog clock, binary
-clock, digital clock, stopwatch, and timer. Weather needs configured location
-and network access; equalizer views use the panel microphone. Notifications,
-reactions, and sound are exposed through the native API.
+Available dashboards are text, now-playing, forecast weather, landscape weather,
+equalizer bars, equalizer waveform, Game of Life, split-flap clock, analog clock,
+binary clock, digital clock, stopwatch, and timer. Weather needs configured
+location and network access; equalizer views use the panel microphone.
+Notifications, reactions, and sound are exposed through the native API.
 
 ## OTA update
 
@@ -198,17 +211,29 @@ not provide serial data.
 - **Weather is unavailable:** check location, Wi-Fi, and the external weather
   service; the weather dashboard fetches only when it is visible and its data is
   stale.
+- **Now-playing shows unconfigured:** invoke `now_playing_configure` with a valid
+  `media_player.*` entity and the Home Assistant HTTP base URL to use for relative
+  artwork references.
+- **Metadata appears without cover artwork:** check the resolved artwork URL from
+  the display's network. It must return HTTP 200 without a redirect. The response
+  must be a supported JPEG or PNG body no larger than 512 KiB; progressive JPEG
+  and animated or interlaced PNG are rejected.
 
 ## Privacy and limitations
 
 The configuration contains no Divoom cloud client, MQTT client, web server, or
 raw-frame API. Weather requests go to `https://api.open-meteo.com/v1/forecast`
 and include latitude and longitude rounded to four decimal places plus weather
-query fields. The request sends no credentials, but TLS certificate verification
-is disabled in the current configuration. SNTP is enabled; its server is not
-specified here.
+query fields. The request sends no credentials.
+
+Now-playing metadata uses the encrypted native API. The configured entity ID and
+Home Assistant base URL persist in device preferences. Artwork requests use the
+relative or absolute URL supplied by Home Assistant; signed query values are not
+written to logs. The shared HTTP client follows no redirects, and TLS certificate
+verification is disabled for weather and artwork. SNTP is enabled; its server is
+not specified here.
 
 Current limitations include no SD-card reading, no raw RGB streaming API, no
-Divoom app/cloud compatibility, no panel-MCU reflashing, disabled certificate
-verification for weather, and no full-operation HTTP cancellation. Hardware
-compatibility beyond the documented target is unknown.
+Divoom app/cloud compatibility, no panel-MCU reflashing, disabled HTTP certificate
+verification, and no full-operation HTTP cancellation. Hardware compatibility
+beyond the documented target is unknown.

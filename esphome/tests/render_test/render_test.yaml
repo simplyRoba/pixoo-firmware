@@ -49,6 +49,12 @@ esphome:
     - ../../../pixoo_content/src/dashboard/now_playing/now_playing_timing.cpp
     - ../../../pixoo_content/include/dashboard/now_playing/metadata_policy.h
     - ../../../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
+    - ../../components/pixoo64/artwork_decoder.h
+    - ../../components/pixoo64/artwork_decoder.cpp
+    - ../../components/pixoo64/artwork_fetch_policy.h
+    - ../../components/pixoo64/now_playing_config.h
+    - ../../components/pixoo64/now_playing_config.cpp
+    - components/pixoo64_render_test/unity_config.h
     - ../../../pixoo_app/include/app_state.h
     - ../../../pixoo_app/src/app_state.cpp
     - ../../../pixoo_app/include/frame_metrics.h
@@ -1159,6 +1165,7 @@ display:
     equalizer: equalizer_dashboard
     panel_text: render_test_text
     now_playing_source: src_now_playing
+    adapter_checks: true
     # Showing the face sends every column to its digit the long way around,
     # staggered 120ms apart. The first flap of a run takes 350ms and later ones
     # speed up: at 120ms the leftmost leaf is falling, at 260ms it is swinging

@@ -57,7 +57,8 @@ esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-re
 The native suites test the framework-independent protocol, application-policy,
 and content layers. Configuration tests validate the production composition and
 expected failures for invalid wiring or schema combinations. The host render
-target exercises the real renderer, fonts, and deterministic animation states.
+target exercises the real renderer, fonts, deterministic animation states, and
+now-playing adapter and image-decoder fixtures.
 
 ## Generated sources
 
