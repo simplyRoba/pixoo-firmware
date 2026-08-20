@@ -11,7 +11,7 @@ namespace esphome::pixoo64_render_test {
 class StaticNowPlayingSource final
     : public pixoo::now_playing::NowPlayingSource {
  public:
-  static constexpr size_t kMaxSnapshots = 32;
+  static constexpr size_t kMaxSnapshots = 40;
 
   void add_snapshot(
       uint32_t at_ms, pixoo::now_playing::NowPlayingSourceState source_state,

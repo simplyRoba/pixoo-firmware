@@ -2672,6 +2672,9 @@ static void test_now_playing_marquee_transition_and_layout() {
   np::TransitionTimeline transition; transition.Start(UINT32_MAX - 10, 20);
   TEST_ASSERT_EQUAL_UINT8(140, transition.Linear(0)); TEST_ASSERT_FALSE(transition.Complete(0));
   TEST_ASSERT_TRUE(transition.Smooth(0) > 100); TEST_ASSERT_TRUE(transition.Complete(10));
+  transition.Start(100, 700); transition.Delay(500);
+  TEST_ASSERT_EQUAL_UINT8(0, transition.Linear(600));
+  TEST_ASSERT_FALSE(transition.Complete(600));
   transition.Start(0, 0); TEST_ASSERT_EQUAL_UINT8(255, transition.Linear(0)); TEST_ASSERT_TRUE(transition.Complete(0));
   static_assert(std::is_trivially_copyable<np::BoundedText>::value, "snapshot text must copy plainly");
   static_assert(std::is_trivially_copyable<np::NowPlayingData>::value, "snapshot must copy plainly");

@@ -333,10 +333,18 @@ void RenderTestDisplay::setup() {
         "now_playing_paused_midpoint",
         "now_playing_paused",
         "now_playing_buffering",
+        "now_playing_track_change_old",
         "now_playing_track_change_pending",
+        "now_playing_track_change_ready_start",
+        "now_playing_track_change_midpoint",
+        "now_playing_track_change_fade_in",
         "now_playing_track_change_ready",
         "now_playing_title_marquee_start",
         "now_playing_title_marquee_scrolled",
+        "now_playing_text_only_start",
+        "now_playing_text_only_midpoint",
+        "now_playing_text_only_fade_in",
+        "now_playing_text_only_complete",
         "now_playing_artist_marquee_start",
         "now_playing_artist_marquee_scrolled",
         "now_playing_revision_crossfade_midpoint",
@@ -355,9 +363,17 @@ void RenderTestDisplay::setup() {
         "now_playing_stale",
         "now_playing_failed_art",
         "now_playing_unsupported_fallback",
+        "now_playing_interrupted_old",
+        "now_playing_interrupted_pending",
+        "now_playing_interrupted_failed_midpoint",
+        "now_playing_interrupted_idle_start",
+        "now_playing_interrupted_ready_start",
+        "now_playing_interrupted_ready_complete",
         "now_playing_metadata_before_timeout",
         "now_playing_metadata_after_timeout",
         "now_playing_fallback_change_pending",
+        "now_playing_fallback_change_ready_start",
+        "now_playing_fallback_change_midpoint",
         "now_playing_fallback_change_ready",
         "now_playing_metadata_long_after_twenty_seconds",
         "now_playing_metadata_long_after_two_marquees",
@@ -391,24 +407,57 @@ void RenderTestDisplay::setup() {
     const auto artwork_pixels_equal = [&](const char *left, const char *right) {
       return frame_rows_equal(left, right, 0, 39);
     };
+    const auto cover_pixels_equal = [&](const char *left, const char *right) {
+      return frame_rows_equal(left, right, 15, 24);
+    };
     now_playing_valid &= frames_differ("now_playing_playing_artwork",
                                        "now_playing_paused_midpoint");
     now_playing_valid &= frames_differ("now_playing_paused_midpoint",
                                        "now_playing_paused");
     now_playing_valid &= frames_differ("now_playing_paused",
                                        "now_playing_buffering");
+    // Pending media keeps the old pixels and rows. A ready replacement begins
+    // at that same image, crosses through a distinct blend, then reaches the
+    // replacement image rather than cutting to it.
+    now_playing_valid &= cover_pixels_equal(
+        "now_playing_track_change_old", "now_playing_track_change_pending");
     now_playing_valid &= frame_rows_equal(
-        "now_playing_buffering", "now_playing_track_change_pending", 45, 18);
+        "now_playing_track_change_old", "now_playing_track_change_pending", 45, 18);
+    now_playing_valid &= cover_pixels_equal(
+        "now_playing_track_change_pending",
+        "now_playing_track_change_ready_start");
+    now_playing_valid &= frame_rows_equal(
+        "now_playing_track_change_pending",
+        "now_playing_track_change_ready_start", 45, 18);
+    now_playing_valid &= !cover_pixels_equal(
+        "now_playing_track_change_pending", "now_playing_track_change_midpoint");
+    now_playing_valid &= !cover_pixels_equal(
+        "now_playing_track_change_midpoint", "now_playing_track_change_fade_in");
+    now_playing_valid &= !cover_pixels_equal(
+        "now_playing_track_change_fade_in", "now_playing_track_change_ready");
     now_playing_valid &= !frame_rows_equal(
-        "now_playing_track_change_pending", "now_playing_track_change_ready",
-        45, 18);
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_track_change_pending", "now_playing_track_change_ready");
+        "now_playing_track_change_midpoint", "now_playing_track_change_fade_in", 45, 18);
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_track_change_fade_in", "now_playing_track_change_ready", 45, 18);
     now_playing_valid &= frames_differ("now_playing_title_marquee_start",
                                        "now_playing_title_marquee_scrolled");
-    now_playing_valid &= frames_differ("now_playing_artist_marquee_start",
-                                       "now_playing_artist_marquee_scrolled");
-    now_playing_valid &= frames_differ(
+    // Metadata-only changes retain the cover while their rows fade through a
+    // distinct midpoint and a partially visible replacement.
+    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_start",
+                                               "now_playing_text_only_midpoint");
+    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_midpoint",
+                                               "now_playing_text_only_fade_in");
+    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_fade_in",
+                                               "now_playing_text_only_complete");
+    now_playing_valid &= !frame_rows_equal("now_playing_text_only_start",
+                                            "now_playing_text_only_midpoint", 45, 18);
+    now_playing_valid &= !frame_rows_equal("now_playing_text_only_midpoint",
+                                            "now_playing_text_only_fade_in", 45, 18);
+    now_playing_valid &= !frame_rows_equal("now_playing_text_only_fade_in",
+                                            "now_playing_text_only_complete", 45, 18);
+    now_playing_valid &= !frame_rows_equal("now_playing_artist_marquee_start",
+                                            "now_playing_artist_marquee_scrolled", 53, 8);
+    now_playing_valid &= !artwork_pixels_equal(
         "now_playing_revision_crossfade_midpoint",
         "now_playing_revision_crossfade_complete");
     now_playing_valid &= artwork_pixels_equal(
@@ -417,13 +466,11 @@ void RenderTestDisplay::setup() {
     now_playing_valid &= artwork_pixels_equal("now_playing_duplicate_pending",
                                                "now_playing_duplicate_ready");
     now_playing_valid &= !frame_rows_equal("now_playing_duplicate_pending",
-                                           "now_playing_duplicate_ready", 45,
-                                           18);
+                                            "now_playing_duplicate_ready", 45, 18);
     now_playing_valid &= artwork_pixels_equal(
         "now_playing_duplicate_ready", "now_playing_stable_id_change_pending");
     now_playing_valid &= frame_rows_equal(
-        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending",
-        45, 18);
+        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending", 45, 18);
     now_playing_valid &= !artwork_pixels_equal(
         "now_playing_stable_id_change_pending",
         "now_playing_stable_id_change_ready");
@@ -433,12 +480,34 @@ void RenderTestDisplay::setup() {
     now_playing_valid &= !frame_rows_equal(
         "now_playing_metadata_before_timeout",
         "now_playing_metadata_after_timeout", 45, 18);
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_fallback_change_pending",
+        "now_playing_fallback_change_ready_start");
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_fallback_change_ready_start",
+        "now_playing_fallback_change_midpoint");
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_fallback_change_midpoint",
+        "now_playing_fallback_change_ready");
     now_playing_valid &= !frame_rows_equal(
         "now_playing_fallback_change_pending",
         "now_playing_fallback_change_ready", 45, 18);
     now_playing_valid &= !artwork_pixels_equal(
         "now_playing_fallback_change_pending",
         "now_playing_fallback_change_ready");
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_interrupted_old", "now_playing_interrupted_pending");
+    now_playing_valid &= frame_rows_equal(
+        "now_playing_interrupted_old", "now_playing_interrupted_pending", 45, 18);
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_interrupted_old", "now_playing_interrupted_failed_midpoint");
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_interrupted_old", "now_playing_interrupted_idle_start");
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_interrupted_old", "now_playing_interrupted_ready_start");
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_interrupted_ready_start",
+        "now_playing_interrupted_ready_complete");
     now_playing_valid &= !frame_rows_equal(
         "now_playing_metadata_long_after_twenty_seconds",
         "now_playing_metadata_long_after_two_marquees", 45, 18);
@@ -901,7 +970,7 @@ void RenderTestDisplay::setup() {
                   this->now_playing_source_->eligible_true_count() == 1 &&
                   this->now_playing_source_->eligible_false_count() == 1 &&
                   this->now_playing_source_->data_count() == now_playing_ticks &&
-                  this->now_playing_source_->copy_count() == 6;
+                  this->now_playing_source_->copy_count() == 8;
     if (!now_playing_lifecycle_valid) {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;

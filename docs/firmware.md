@@ -333,27 +333,12 @@ coherent weather snapshot through `WeatherSource`. Requests are made only while
 the weather dashboard is relevant, Wi-Fi is connected, and cached data needs a
 refresh.
 
-`HomeAssistantMediaSource` receives media state and attributes through encrypted
-native-API subscriptions. The entity and Home Assistant base URL persist in
-adapter preferences; a successful change safely reboots before registering the
-replacement subscriptions because native-API subscriptions cannot be removed at
-runtime. The source fetches only the referenced artwork body over HTTP,
-and only while the now-playing dashboard is visible and an artwork reference is
-pending.
-The low-priority HTTP/TLS worker runs on core 0 below the Wi-Fi and lwIP tasks;
-the low-priority decoder runs on core 1. Encoded input, decoder workspaces,
-artwork slots, and both worker stacks use PSRAM. Completed artwork is published
-through two fixed slots with reader pinning; rendering never reads a slot being
-written. The published slot retains its validated PSRAM-allocated encoded body,
-up to the 512 KiB body limit. A changed URL is still fetched; an exact byte match
-then re-labels the existing pixels without decoding or crossfading. A replacement
-may temporarily hold two encoded bodies. While replacement artwork for a new
-track is pending, the renderer keeps the previous artwork and metadata together.
-When ready, the new track metadata and artwork replace them in one frame; artwork
-changes within the current track still crossfade. A failed body switches the new
-metadata and deterministic fallback into view together. Title and artist
-rows remain visible for at least 20 seconds and until
-each scrolling row has completed two full passes.
+`HomeAssistantMediaSource` receives media metadata through native-API
+subscriptions and fetches artwork asynchronously only while the dashboard is
+visible. It publishes complete decoded images through fixed slots so rendering
+never waits for network or decoder work. Exact body comparison reuses an existing
+image when only its URL changed. The renderer retains one coherent presentation
+while replacement artwork is pending, then fades to the ready image or fallback.
 
 A shared `HttpRequestGate` serializes Open-Meteo and artwork use of ESPHome's HTTP
 client.

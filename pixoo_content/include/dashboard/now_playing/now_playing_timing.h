@@ -28,6 +28,7 @@ class TransitionTimeline {
   uint8_t Linear(uint32_t now_ms) const;
   uint8_t Smooth(uint32_t now_ms) const;
   bool Complete(uint32_t now_ms) const;
+  void Delay(uint32_t duration_ms);
 
  private:
   uint32_t started_ms_{0};

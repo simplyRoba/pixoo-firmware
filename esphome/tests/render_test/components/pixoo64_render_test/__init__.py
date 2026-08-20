@@ -173,8 +173,8 @@ SNAPSHOT_SCHEMA = cv.Schema(
 
 def validate_now_playing_snapshots(config):
     snapshots = config[CONF_SNAPSHOTS]
-    if len(snapshots) > 32:
-        raise cv.Invalid("now-playing fixtures support at most 32 snapshots")
+    if len(snapshots) > 40:
+        raise cv.Invalid("now-playing fixtures support at most 40 snapshots")
     if not snapshots or snapshots[0][CONF_AT_MS] != 0:
         raise cv.Invalid("now-playing fixture snapshots must start at 0ms")
     previous = -1

@@ -59,4 +59,9 @@ bool TransitionTimeline::Complete(uint32_t now_ms) const {
   return !started_ || duration_ms_ == 0 || now_ms - started_ms_ >= duration_ms_;
 }
 
+void TransitionTimeline::Delay(uint32_t duration_ms) {
+  if (started_)
+    started_ms_ += duration_ms;
+}
+
 }  // namespace pixoo::now_playing

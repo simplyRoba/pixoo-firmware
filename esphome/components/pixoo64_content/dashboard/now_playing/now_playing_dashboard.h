@@ -33,6 +33,7 @@ class NowPlayingDashboard final : public Dashboard {
     kNone,
     kIdentityPlaceholder,
     kArtwork,
+    kText,
   };
 
   struct BufferInfo {
@@ -53,11 +54,10 @@ class NowPlayingDashboard final : public Dashboard {
   static constexpr int kTextLeft = 2;
   static constexpr int kTextRight = 62;
   static constexpr int kTextWidth = kTextRight - kTextLeft;
+  static constexpr int kTextRowHeight = 8;
+  static constexpr size_t kTextMaskPixels = 64u * kTextRowHeight;
 
   static uint64_t VisualKey_(const pixoo::now_playing::NowPlayingData &data);
-  static bool ReadyArtwork_(
-      const pixoo::now_playing::NowPlayingData &data,
-      uint64_t identity, uint32_t revision);
   static uint8_t DesiredDim_(
       const pixoo::now_playing::NowPlayingData &data);
   static uint8_t Red_(uint16_t pixel);
@@ -65,20 +65,29 @@ class NowPlayingDashboard final : public Dashboard {
   static uint8_t Blue_(uint16_t pixel);
 
   void InitializeVisual_(uint64_t visual_key, uint32_t now_ms);
-  void StartIdentityTransition_(uint64_t visual_key, uint32_t now_ms,
-                                bool immediate = false);
+  void StartIdentityTransition_(
+      const pixoo::now_playing::NowPlayingData &data, uint64_t visual_key,
+      uint32_t now_ms);
   bool StartArtworkTransition_(
       const pixoo::now_playing::NowPlayingData &data, uint64_t visual_key,
-      uint32_t now_ms, bool immediate = false);
+      uint32_t now_ms);
+  void StartTextTransition_(const pixoo::now_playing::NowPlayingData &data,
+                            uint32_t now_ms);
+  void StageMetadata_(const pixoo::now_playing::NowPlayingData &data);
+  bool TransitionMatches_(const pixoo::now_playing::NowPlayingData &data) const;
   void CancelTransition_();
   void AdvanceTransition_(uint32_t now_ms);
   void AdvanceDim_(uint32_t now_ms);
   int Measure_(const char *text) const;
   void UpdateTextLayout_(uint32_t now_ms);
+  void RasterizeRows_();
+  void RasterizeRow_(uint8_t *mask, const char *text, int width,
+                     int offset);
+  void RasterizeText_(uint8_t *mask, const char *text, int origin);
   void DrawBackground_(display::Display &display) const;
   void DrawRows_(display::Display &display) const;
-  void DrawRow_(display::Display &display, const char *text, int width,
-                int offset, int y, Color color) const;
+  void DrawRow_(display::Display &display, const uint8_t *mask, int y,
+                Color color) const;
   void DrawStatusMessage_(display::Display &display) const;
   void DrawMarks_(display::Display &display) const;
   void DrawProgress_(display::Display &display) const;
@@ -87,11 +96,15 @@ class NowPlayingDashboard final : public Dashboard {
   font::Font *font_{nullptr};
   pixoo::now_playing::NowPlayingData snapshot_{};
   pixoo::now_playing::NowPlayingData displayed_{};
+  pixoo::now_playing::NowPlayingData transition_from_data_{};
+  pixoo::now_playing::NowPlayingData transition_data_{};
   pixoo::now_playing::MarqueeTiming title_marquee_{};
   pixoo::now_playing::MarqueeTiming artist_marquee_{};
   pixoo::now_playing::TransitionTimeline visual_timeline_{};
   pixoo::now_playing::TransitionTimeline dim_timeline_{};
   BufferInfo buffer_info_[2]{};
+  uint8_t title_mask_[kTextMaskPixels]{};
+  uint8_t artist_mask_[kTextMaskPixels]{};
   uint32_t current_ms_{0};
   uint32_t hidden_started_ms_{0};
   uint32_t metadata_rows_started_ms_{0};
@@ -106,11 +119,14 @@ class NowPlayingDashboard final : public Dashboard {
   int8_t transition_buffer_{1};
   TransitionKind transition_kind_{TransitionKind::kNone};
   uint8_t crossfade_{0};
+  uint8_t text_opacity_{255};
   uint8_t dim_from_{255};
   uint8_t dim_value_{255};
   uint8_t dim_target_{255};
   bool initialized_{false};
   bool dim_transitioning_{false};
+  bool text_transitioning_{false};
+  bool text_data_switched_{false};
   bool metadata_rows_initialized_{false};
   bool metadata_rows_visible_{false};
   bool hidden_{false};
