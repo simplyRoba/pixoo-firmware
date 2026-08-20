@@ -41,6 +41,9 @@ class NowPlayingDashboard final : public Dashboard {
     uint64_t artwork_identity{0};
     uint32_t artwork_revision{0};
     BufferKind kind{BufferKind::kPlaceholder};
+    uint8_t average_red{0};
+    uint8_t average_green{0};
+    uint8_t average_blue{0};
   };
 
   static constexpr uint32_t kIdentityTransitionMs = 600;
@@ -48,6 +51,7 @@ class NowPlayingDashboard final : public Dashboard {
   static constexpr uint32_t kDimTransitionMs = 400;
   static constexpr uint32_t kMarqueePauseMs = 900;
   static constexpr uint32_t kMarqueeStepMs = 80;
+  static constexpr uint8_t kProgressMinimumLuma = 96;
   static constexpr int kMarqueeGapPx = 12;
   static constexpr int kTextLeft = 2;
   static constexpr int kTextRight = 62;
@@ -76,6 +80,8 @@ class NowPlayingDashboard final : public Dashboard {
   void CancelTransition_();
   void AdvanceTransition_(uint32_t now_ms);
   void AdvanceDim_(uint32_t now_ms);
+  void UpdateBufferAverage_(int8_t buffer);
+  Color ProgressColor_() const;
   int Measure_(const char *text) const;
   void UpdateTextLayout_(uint32_t now_ms);
   void RasterizeRows_();

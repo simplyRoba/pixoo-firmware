@@ -156,6 +156,51 @@ uint8_t NowPlayingDashboard::Blue_(uint16_t pixel) {
   return static_cast<uint8_t>((pixel & 0x1f) * 255 / 31);
 }
 
+void NowPlayingDashboard::UpdateBufferAverage_(int8_t buffer) {
+  uint64_t red = 0;
+  uint64_t green = 0;
+  uint64_t blue = 0;
+  for (size_t index = 0; index < pixoo::now_playing::kArtworkPixelCount;
+       ++index) {
+    const uint16_t pixel = transition_buffers_[buffer][index];
+    red += Red_(pixel);
+    green += Green_(pixel);
+    blue += Blue_(pixel);
+  }
+  constexpr uint64_t count = pixoo::now_playing::kArtworkPixelCount;
+  BufferInfo &info = this->buffer_info_[buffer];
+  info.average_red = static_cast<uint8_t>((red + count / 2) / count);
+  info.average_green = static_cast<uint8_t>((green + count / 2) / count);
+  info.average_blue = static_cast<uint8_t>((blue + count / 2) / count);
+}
+
+Color NowPlayingDashboard::ProgressColor_() const {
+  const BufferInfo &front = this->buffer_info_[this->front_buffer_];
+  const bool blends_artwork =
+      this->transition_kind_ == TransitionKind::kArtwork ||
+      this->transition_kind_ == TransitionKind::kIdentityPlaceholder;
+  const BufferInfo &target = blends_artwork
+                                 ? this->buffer_info_[this->transition_buffer_]
+                                 : front;
+  const uint8_t amount = blends_artwork ? this->crossfade_ : 0;
+  uint8_t red = MixChannel(front.average_red, target.average_red, amount);
+  uint8_t green = MixChannel(front.average_green, target.average_green, amount);
+  uint8_t blue = MixChannel(front.average_blue, target.average_blue, amount);
+  const uint16_t luma = static_cast<uint16_t>(
+      (54u * red + 183u * green + 19u * blue + 128u) / 256u);
+  if (luma < kProgressMinimumLuma) {
+    // Mixing toward white raises brightness while reducing the saturation that
+    // would make a scaled dark color look neon.
+    const uint8_t lift = static_cast<uint8_t>(
+        ((kProgressMinimumLuma - luma) * 255u + (255u - luma) / 2u) /
+        (255u - luma));
+    red = MixChannel(red, 255, lift);
+    green = MixChannel(green, 255, lift);
+    blue = MixChannel(blue, 255, lift);
+  }
+  return Color(red, green, blue);
+}
+
 void NowPlayingDashboard::InitializeVisual_(uint64_t visual_key,
                                             uint32_t now_ms) {
   (void) now_ms;
@@ -165,7 +210,8 @@ void NowPlayingDashboard::InitializeVisual_(uint64_t visual_key,
       visual_key, transition_buffers_[this->front_buffer_],
       pixoo::now_playing::kArtworkPixelCount);
   this->buffer_info_[this->front_buffer_] = {
-      visual_key, 0, 0, BufferKind::kPlaceholder};
+      visual_key, 0, 0, BufferKind::kPlaceholder, 0, 0, 0};
+  this->UpdateBufferAverage_(this->front_buffer_);
   this->displayed_ = this->snapshot_;
   this->transition_from_data_ = this->snapshot_;
   this->transition_data_ = this->snapshot_;
@@ -180,7 +226,8 @@ void NowPlayingDashboard::InitializeVisual_(uint64_t visual_key,
           pixoo::now_playing::kArtworkPixelCount)) {
     this->buffer_info_[this->front_buffer_] = {
         visual_key, this->snapshot_.artwork_identity,
-        this->snapshot_.artwork_revision, BufferKind::kArtwork};
+        this->snapshot_.artwork_revision, BufferKind::kArtwork, 0, 0, 0};
+    this->UpdateBufferAverage_(this->front_buffer_);
   }
 }
 
@@ -202,15 +249,17 @@ void NowPlayingDashboard::StartIdentityTransition_(
   pixoo::now_playing::GenerateArtworkPlaceholder(
       visual_key, transition_buffers_[this->transition_buffer_],
       pixoo::now_playing::kArtworkPixelCount);
-  const BufferInfo info{visual_key, 0, 0, BufferKind::kPlaceholder};
+  this->buffer_info_[this->transition_buffer_] = {
+      visual_key, 0, 0, BufferKind::kPlaceholder, 0, 0, 0};
+  this->UpdateBufferAverage_(this->transition_buffer_);
   if (std::memcmp(transition_buffers_[this->front_buffer_],
                   transition_buffers_[this->transition_buffer_],
                   pixoo::now_playing::kArtworkRgb565Bytes) == 0) {
-    this->buffer_info_[this->front_buffer_] = info;
+    this->buffer_info_[this->front_buffer_] =
+        this->buffer_info_[this->transition_buffer_];
     this->StartTextTransition_(data, now_ms);
     return;
   }
-  this->buffer_info_[this->transition_buffer_] = info;
   this->StageMetadata_(data);
   this->transition_kind_ = TransitionKind::kIdentityPlaceholder;
   this->crossfade_ = 0;
@@ -228,16 +277,18 @@ bool NowPlayingDashboard::StartArtworkTransition_(
           transition_buffers_[this->transition_buffer_],
           pixoo::now_playing::kArtworkPixelCount))
     return false;
-  const BufferInfo info{visual_key, data.artwork_identity, data.artwork_revision,
-                        BufferKind::kArtwork};
+  this->buffer_info_[this->transition_buffer_] = {
+      visual_key, data.artwork_identity, data.artwork_revision,
+      BufferKind::kArtwork, 0, 0, 0};
+  this->UpdateBufferAverage_(this->transition_buffer_);
   if (std::memcmp(transition_buffers_[this->front_buffer_],
                   transition_buffers_[this->transition_buffer_],
                   pixoo::now_playing::kArtworkRgb565Bytes) == 0) {
-    this->buffer_info_[this->front_buffer_] = info;
+    this->buffer_info_[this->front_buffer_] =
+        this->buffer_info_[this->transition_buffer_];
     this->StartTextTransition_(data, now_ms);
     return true;
   }
-  this->buffer_info_[this->transition_buffer_] = info;
   this->StageMetadata_(data);
   this->transition_kind_ = TransitionKind::kArtwork;
   this->crossfade_ = 0;
@@ -665,7 +716,7 @@ void NowPlayingDashboard::DrawProgress_(display::Display &display) const {
   if (progress.position_ms != 0 && width == 0)
     width = 1;
   if (width > 0)
-    display.horizontal_line(0, 63, width, Color(70, 225, 255));
+    display.horizontal_line(0, 63, width, this->ProgressColor_());
 }
 
 void NowPlayingDashboard::Render(display::Display &display) const {
