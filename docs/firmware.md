@@ -344,7 +344,16 @@ The low-priority HTTP/TLS worker runs on core 0 below the Wi-Fi and lwIP tasks;
 the low-priority decoder runs on core 1. Encoded input, decoder workspaces,
 artwork slots, and both worker stacks use PSRAM. Completed artwork is published
 through two fixed slots with reader pinning; rendering never reads a slot being
-written.
+written. The published slot retains its validated PSRAM-allocated encoded body,
+up to the 512 KiB body limit. A changed URL is still fetched; an exact byte match
+then re-labels the existing pixels without decoding or crossfading. A replacement
+may temporarily hold two encoded bodies. While replacement artwork for a new
+track is pending, the renderer keeps the previous artwork and metadata together.
+When ready, the new track metadata and artwork replace them in one frame; artwork
+changes within the current track still crossfade. A failed body switches the new
+metadata and deterministic fallback into view together. Title and artist
+rows remain visible for at least 20 seconds and until
+each scrolling row has completed two full passes.
 
 A shared `HttpRequestGate` serializes Open-Meteo and artwork use of ESPHome's HTTP
 client.

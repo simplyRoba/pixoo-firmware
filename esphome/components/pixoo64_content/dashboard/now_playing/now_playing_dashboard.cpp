@@ -1,6 +1,7 @@
 #include "now_playing_dashboard.h"
 
 #include <algorithm>
+#include <cstring>
 
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
@@ -31,6 +32,15 @@ bool ShowsMetadata(const NowPlayingData &data) {
          pixoo::now_playing::IsActivePlaybackState(data.playback_state);
 }
 
+bool SameTrackPresentation(const NowPlayingData &left,
+                           const NowPlayingData &right) {
+  return left.media_identity == right.media_identity &&
+         left.title.size == right.title.size &&
+         std::memcmp(left.title.bytes, right.title.bytes, left.title.size) == 0 &&
+         left.artist.size == right.artist.size &&
+         std::memcmp(left.artist.bytes, right.artist.bytes, left.artist.size) == 0;
+}
+
 uint8_t MixChannel(uint8_t from, uint8_t to, uint8_t amount) {
   return static_cast<uint8_t>(
       (static_cast<uint32_t>(from) * (255u - amount) +
@@ -52,11 +62,21 @@ uint16_t NowPlayingDashboard::transition_buffers_[2]
                                                     [pixoo::now_playing::kArtworkPixelCount]{};
 
 void NowPlayingDashboard::OnShow(uint32_t now_ms) {
+  if (this->hidden_) {
+    const uint32_t hidden_ms = now_ms - this->hidden_started_ms_;
+    if (this->metadata_rows_initialized_)
+      this->metadata_rows_started_ms_ += hidden_ms;
+    this->title_marquee_.Delay(hidden_ms);
+    this->artist_marquee_.Delay(hidden_ms);
+    this->hidden_ = false;
+  }
   if (this->source_ != nullptr)
     this->source_->SetArtworkEligible(true, now_ms);
 }
 
 void NowPlayingDashboard::OnHide(uint32_t now_ms) {
+  this->hidden_started_ms_ = now_ms;
+  this->hidden_ = true;
   if (this->source_ != nullptr)
     this->source_->SetArtworkEligible(false, now_ms);
 }
@@ -133,23 +153,30 @@ void NowPlayingDashboard::InitializeVisual_(uint64_t visual_key,
 }
 
 void NowPlayingDashboard::StartIdentityTransition_(uint64_t visual_key,
-                                                    uint32_t now_ms) {
+                                                    uint32_t now_ms,
+                                                    bool immediate) {
   this->transition_buffer_ = static_cast<int8_t>(1 - this->front_buffer_);
   pixoo::now_playing::GenerateArtworkPlaceholder(
       visual_key, transition_buffers_[this->transition_buffer_],
       pixoo::now_playing::kArtworkPixelCount);
   this->buffer_info_[this->transition_buffer_] = {
       visual_key, 0, 0, BufferKind::kPlaceholder};
-  // Metadata belongs to the newly published source snapshot immediately. Only
-  // the old artwork remains during this fade toward the new placeholder.
   this->displayed_ = this->snapshot_;
+  if (immediate) {
+    this->front_buffer_ = this->transition_buffer_;
+    this->transition_buffer_ = static_cast<int8_t>(1 - this->front_buffer_);
+    this->transition_kind_ = TransitionKind::kNone;
+    this->crossfade_ = 0;
+    return;
+  }
   this->transition_kind_ = TransitionKind::kIdentityPlaceholder;
   this->crossfade_ = 0;
   this->visual_timeline_.Start(now_ms, kIdentityTransitionMs);
 }
 
 bool NowPlayingDashboard::StartArtworkTransition_(
-    const NowPlayingData &data, uint64_t visual_key, uint32_t now_ms) {
+    const NowPlayingData &data, uint64_t visual_key, uint32_t now_ms,
+    bool immediate) {
   if (!data.has_artwork_identity ||
       data.artwork_availability != ArtworkAvailability::kReady)
     return false;
@@ -159,9 +186,24 @@ bool NowPlayingDashboard::StartArtworkTransition_(
           transition_buffers_[this->transition_buffer_],
           pixoo::now_playing::kArtworkPixelCount))
     return false;
-  this->buffer_info_[this->transition_buffer_] = {
-      visual_key, data.artwork_identity, data.artwork_revision,
-      BufferKind::kArtwork};
+  const BufferInfo info{visual_key, data.artwork_identity,
+                        data.artwork_revision, BufferKind::kArtwork};
+  this->buffer_info_[this->transition_buffer_] = info;
+  if (immediate) {
+    this->front_buffer_ = this->transition_buffer_;
+    this->transition_buffer_ = static_cast<int8_t>(1 - this->front_buffer_);
+    this->transition_kind_ = TransitionKind::kNone;
+    this->crossfade_ = 0;
+    return true;
+  }
+  if (std::memcmp(transition_buffers_[this->front_buffer_],
+                  transition_buffers_[this->transition_buffer_],
+                  pixoo::now_playing::kArtworkRgb565Bytes) == 0) {
+    this->buffer_info_[this->front_buffer_] = info;
+    this->transition_kind_ = TransitionKind::kNone;
+    this->crossfade_ = 0;
+    return true;
+  }
   this->transition_kind_ = TransitionKind::kArtwork;
   this->crossfade_ = 0;
   this->visual_timeline_.Start(now_ms, kArtworkTransitionMs);
@@ -182,6 +224,10 @@ void NowPlayingDashboard::AdvanceTransition_(uint32_t now_ms) {
       (this->transition_kind_ == TransitionKind::kArtwork &&
        !ReadyArtwork_(this->snapshot_, target.artwork_identity,
                       target.artwork_revision))) {
+    if (target.visual_key == VisualKey_(this->displayed_)) {
+      this->front_buffer_ = this->transition_buffer_;
+      this->transition_buffer_ = static_cast<int8_t>(1 - this->front_buffer_);
+    }
     this->CancelTransition_();
     return;
   }
@@ -231,6 +277,8 @@ void NowPlayingDashboard::UpdateTextLayout_(uint32_t now_ms) {
     this->artist_width_ = 0;
     this->title_offset_ = 0;
     this->artist_offset_ = 0;
+    this->metadata_rows_initialized_ = false;
+    this->metadata_rows_visible_ = false;
     return;
   }
   const char *title = this->displayed_.title.size == 0
@@ -239,18 +287,53 @@ void NowPlayingDashboard::UpdateTextLayout_(uint32_t now_ms) {
   const char *artist = this->displayed_.artist.bytes;
   this->title_width_ = this->Measure_(title);
   this->artist_width_ = this->Measure_(artist);
+  const uint64_t title_text_identity =
+      pixoo::now_playing::HashNowPlayingBytes(
+          kTitleDomain, title, this->displayed_.title.size == 0
+                                   ? sizeof("NOW PLAYING") - 1
+                                   : this->displayed_.title.size);
+  const uint64_t artist_text_identity =
+      pixoo::now_playing::HashNowPlayingBytes(
+          kArtistDomain, artist, this->displayed_.artist.size);
   const uint64_t title_identity = pixoo::now_playing::HashNowPlayingBytes(
-      kTitleDomain, title, this->displayed_.title.size == 0
-                               ? sizeof("NOW PLAYING") - 1
-                               : this->displayed_.title.size);
+      title_text_identity, &this->displayed_.media_identity,
+      sizeof(this->displayed_.media_identity));
   const uint64_t artist_identity = pixoo::now_playing::HashNowPlayingBytes(
-      kArtistDomain, artist, this->displayed_.artist.size);
+      artist_text_identity, &this->displayed_.media_identity,
+      sizeof(this->displayed_.media_identity));
+  if (!this->metadata_rows_initialized_ ||
+      this->metadata_rows_media_identity_ != this->displayed_.media_identity ||
+      this->metadata_rows_title_identity_ != title_identity ||
+      this->metadata_rows_artist_identity_ != artist_identity) {
+    this->metadata_rows_started_ms_ = now_ms;
+    this->metadata_rows_media_identity_ = this->displayed_.media_identity;
+    this->metadata_rows_title_identity_ = title_identity;
+    this->metadata_rows_artist_identity_ = artist_identity;
+    this->metadata_rows_initialized_ = true;
+    this->metadata_rows_visible_ = true;
+  }
   this->title_offset_ = this->title_marquee_.Offset(
       title_identity, this->title_width_, kTextWidth, now_ms,
       kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx);
   this->artist_offset_ = this->artist_marquee_.Offset(
       artist_identity, this->artist_width_, kTextWidth, now_ms,
       kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx);
+
+  const bool title_complete =
+      this->title_width_ <= kTextWidth ||
+      this->title_marquee_.CompletedCycles(
+          title_identity, this->title_width_, kTextWidth, now_ms,
+          kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx) >=
+          kMetadataRowsMinimumCycles;
+  const bool artist_complete =
+      this->artist_width_ <= kTextWidth ||
+      this->artist_marquee_.CompletedCycles(
+          artist_identity, this->artist_width_, kTextWidth, now_ms,
+          kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx) >=
+          kMetadataRowsMinimumCycles;
+  this->metadata_rows_visible_ =
+      now_ms - this->metadata_rows_started_ms_ < kMetadataRowsMinimumMs ||
+      !title_complete || !artist_complete;
 }
 
 void NowPlayingDashboard::Tick(uint32_t now_ms) {
@@ -267,23 +350,57 @@ void NowPlayingDashboard::Tick(uint32_t now_ms) {
   } else {
     this->AdvanceTransition_(now_ms);
     if (this->transition_kind_ == TransitionKind::kNone) {
-      if (this->buffer_info_[this->front_buffer_].visual_key != desired_key) {
-        this->StartIdentityTransition_(desired_key, now_ms);
-      } else {
-        this->displayed_ = this->snapshot_;
-        const BufferInfo &front = this->buffer_info_[this->front_buffer_];
+      const BufferInfo &front = this->buffer_info_[this->front_buffer_];
+      const bool pending_artwork =
+          ShowsMetadata(this->displayed_) &&
+          this->snapshot_.has_artwork_identity &&
+          this->snapshot_.artwork_availability == ArtworkAvailability::kPending;
+      if (pending_artwork) {
+        // Keep the previous media and artwork together until the replacement
+        // is ready or has failed.
+      } else if (front.visual_key != desired_key) {
         if (this->snapshot_.has_artwork_identity &&
             this->snapshot_.artwork_availability ==
-                ArtworkAvailability::kReady &&
-            !(front.kind == BufferKind::kArtwork &&
-              front.artwork_identity == this->snapshot_.artwork_identity &&
-              front.artwork_revision == this->snapshot_.artwork_revision)) {
-          this->StartArtworkTransition_(this->snapshot_, desired_key, now_ms);
+                ArtworkAvailability::kReady) {
+          const bool presentation_changed =
+              !SameTrackPresentation(this->displayed_, this->snapshot_);
+          this->displayed_ = this->snapshot_;
+          if (!this->StartArtworkTransition_(this->snapshot_, desired_key,
+                                             now_ms, presentation_changed))
+            this->StartIdentityTransition_(desired_key, now_ms, true);
+        } else {
+          this->StartIdentityTransition_(
+              desired_key, now_ms,
+              this->snapshot_.artwork_availability ==
+                  ArtworkAvailability::kFailed);
         }
+      } else if (this->snapshot_.has_artwork_identity &&
+                 this->snapshot_.artwork_availability ==
+                     ArtworkAvailability::kReady &&
+                 !(front.kind == BufferKind::kArtwork &&
+                   front.artwork_identity == this->snapshot_.artwork_identity &&
+                   front.artwork_revision ==
+                       this->snapshot_.artwork_revision)) {
+        const bool presentation_changed =
+            !SameTrackPresentation(this->displayed_, this->snapshot_);
+        this->displayed_ = this->snapshot_;
+        if (!this->StartArtworkTransition_(this->snapshot_, desired_key, now_ms,
+                                           presentation_changed))
+          this->StartIdentityTransition_(desired_key, now_ms, true);
+      } else if (front.kind == BufferKind::kArtwork &&
+                 this->snapshot_.has_artwork_identity &&
+                 this->snapshot_.artwork_availability ==
+                     ArtworkAvailability::kFailed) {
+        this->StartIdentityTransition_(desired_key, now_ms, true);
+      } else {
+        this->displayed_ = this->snapshot_;
       }
-    } else {
-      // Only pixels are retained across a visual transition. Metadata and
-      // playback corrections continue to follow every accepted source update.
+    } else if (!(ShowsMetadata(this->displayed_) &&
+                 this->snapshot_.has_artwork_identity &&
+                 this->snapshot_.artwork_availability ==
+                     ArtworkAvailability::kPending)) {
+      // Playback corrections continue to follow accepted source updates while
+      // a visual transition is active.
       this->displayed_ = this->snapshot_;
     }
   }
@@ -346,7 +463,7 @@ void NowPlayingDashboard::DrawRow_(display::Display &display, const char *text,
 }
 
 void NowPlayingDashboard::DrawRows_(display::Display &display) const {
-  if (!ShowsMetadata(this->displayed_))
+  if (!ShowsMetadata(this->displayed_) || !this->metadata_rows_visible_)
     return;
   const char *title = this->displayed_.title.size == 0
                           ? "NOW PLAYING"

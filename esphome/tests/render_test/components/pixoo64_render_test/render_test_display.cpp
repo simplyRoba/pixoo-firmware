@@ -333,17 +333,18 @@ void RenderTestDisplay::setup() {
         "now_playing_paused_midpoint",
         "now_playing_paused",
         "now_playing_buffering",
-        "now_playing_track_change_start",
-        "now_playing_track_change_midpoint",
-        "now_playing_track_change_placeholder",
+        "now_playing_track_change_pending",
+        "now_playing_track_change_ready",
         "now_playing_title_marquee_start",
         "now_playing_title_marquee_scrolled",
         "now_playing_artist_marquee_start",
         "now_playing_artist_marquee_scrolled",
         "now_playing_revision_crossfade_midpoint",
         "now_playing_revision_crossfade_complete",
-        "now_playing_artwork_crossfade_midpoint",
-        "now_playing_artwork_crossfade_complete",
+        "now_playing_duplicate_pending",
+        "now_playing_duplicate_ready",
+        "now_playing_stable_id_change_pending",
+        "now_playing_stable_id_change_ready",
         "now_playing_idle",
         "now_playing_waiting_start",
         "now_playing_waiting_animated",
@@ -354,6 +355,12 @@ void RenderTestDisplay::setup() {
         "now_playing_stale",
         "now_playing_failed_art",
         "now_playing_unsupported_fallback",
+        "now_playing_metadata_before_timeout",
+        "now_playing_metadata_after_timeout",
+        "now_playing_fallback_change_pending",
+        "now_playing_fallback_change_ready",
+        "now_playing_metadata_long_after_twenty_seconds",
+        "now_playing_metadata_long_after_two_marquees",
     };
     bool now_playing_valid = true;
     for (const char *name : now_playing_snapshots) {
@@ -369,26 +376,72 @@ void RenderTestDisplay::setup() {
       return a != now_playing_frames.end() && b != now_playing_frames.end() &&
              a->second != b->second;
     };
+    const auto frame_rows_equal = [&](const char *left, const char *right,
+                                      size_t first_row, size_t row_count) {
+      const auto a = now_playing_frames.find(left);
+      const auto b = now_playing_frames.find(right);
+      if (a == now_playing_frames.end() || b == now_playing_frames.end())
+        return false;
+      constexpr size_t kRowBytes = 64 * 3;
+      const size_t first = first_row * kRowBytes;
+      const size_t last = first + row_count * kRowBytes;
+      return std::equal(a->second.begin() + first, a->second.begin() + last,
+                        b->second.begin() + first);
+    };
+    const auto artwork_pixels_equal = [&](const char *left, const char *right) {
+      return frame_rows_equal(left, right, 0, 39);
+    };
     now_playing_valid &= frames_differ("now_playing_playing_artwork",
                                        "now_playing_paused_midpoint");
     now_playing_valid &= frames_differ("now_playing_paused_midpoint",
                                        "now_playing_paused");
     now_playing_valid &= frames_differ("now_playing_paused",
                                        "now_playing_buffering");
-    now_playing_valid &= frames_differ("now_playing_track_change_start",
-                                       "now_playing_track_change_midpoint");
-    now_playing_valid &= frames_differ("now_playing_track_change_midpoint",
-                                       "now_playing_track_change_placeholder");
+    now_playing_valid &= frame_rows_equal(
+        "now_playing_buffering", "now_playing_track_change_pending", 45, 18);
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_track_change_pending", "now_playing_track_change_ready",
+        45, 18);
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_track_change_pending", "now_playing_track_change_ready");
     now_playing_valid &= frames_differ("now_playing_title_marquee_start",
                                        "now_playing_title_marquee_scrolled");
     now_playing_valid &= frames_differ("now_playing_artist_marquee_start",
                                        "now_playing_artist_marquee_scrolled");
     now_playing_valid &= frames_differ(
-        "now_playing_artwork_crossfade_midpoint",
-        "now_playing_artwork_crossfade_complete");
-    now_playing_valid &= frames_differ(
         "now_playing_revision_crossfade_midpoint",
         "now_playing_revision_crossfade_complete");
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_revision_crossfade_complete",
+        "now_playing_duplicate_pending");
+    now_playing_valid &= artwork_pixels_equal("now_playing_duplicate_pending",
+                                               "now_playing_duplicate_ready");
+    now_playing_valid &= !frame_rows_equal("now_playing_duplicate_pending",
+                                           "now_playing_duplicate_ready", 45,
+                                           18);
+    now_playing_valid &= artwork_pixels_equal(
+        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending");
+    now_playing_valid &= frame_rows_equal(
+        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending",
+        45, 18);
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_stable_id_change_pending",
+        "now_playing_stable_id_change_ready");
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_stable_id_change_pending",
+        "now_playing_stable_id_change_ready", 45, 18);
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_metadata_before_timeout",
+        "now_playing_metadata_after_timeout", 45, 18);
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_fallback_change_pending",
+        "now_playing_fallback_change_ready", 45, 18);
+    now_playing_valid &= !artwork_pixels_equal(
+        "now_playing_fallback_change_pending",
+        "now_playing_fallback_change_ready");
+    now_playing_valid &= !frame_rows_equal(
+        "now_playing_metadata_long_after_twenty_seconds",
+        "now_playing_metadata_long_after_two_marquees", 45, 18);
     now_playing_valid &= frames_differ("now_playing_waiting_start",
                                        "now_playing_waiting_animated");
     if (!now_playing_valid) {
@@ -848,7 +901,7 @@ void RenderTestDisplay::setup() {
                   this->now_playing_source_->eligible_true_count() == 1 &&
                   this->now_playing_source_->eligible_false_count() == 1 &&
                   this->now_playing_source_->data_count() == now_playing_ticks &&
-                  this->now_playing_source_->copy_count() == 3;
+                  this->now_playing_source_->copy_count() == 6;
     if (!now_playing_lifecycle_valid) {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;

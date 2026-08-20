@@ -360,6 +360,16 @@ static void test_artwork_fetch_policy_and_magic() {
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(3, 4, false, true));
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(4, 4, true, false));
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(artwork::kMaxEncodedBytes + 1, 0, true, true));
+  const uint8_t body_a[] = {0x89, 'P', 'N', 'G'};
+  const uint8_t body_b[] = {0x89, 'P', 'N', 'G'};
+  const uint8_t body_c[] = {0x89, 'P', 'N', 'X'};
+  TEST_ASSERT_TRUE(artwork::EncodedBodiesEqual(body_a, sizeof(body_a), body_b,
+                                                sizeof(body_b)));
+  TEST_ASSERT_FALSE(artwork::EncodedBodiesEqual(body_a, sizeof(body_a), body_c,
+                                                 sizeof(body_c)));
+  TEST_ASSERT_FALSE(artwork::EncodedBodiesEqual(body_a, sizeof(body_a), body_b,
+                                                 sizeof(body_b) - 1));
+  TEST_ASSERT_FALSE(artwork::EncodedBodiesEqual(nullptr, 0, nullptr, 0));
 
   artwork::FetchPolicy policy;
   policy.SetDesired(17);
@@ -570,6 +580,36 @@ static void test_actual_png_decode_crop_scale_and_alpha() {
                                        placeholder[63 * 64]),
       output[63 * 64]);
   TEST_ASSERT_EQUAL_HEX16(0xffff, output[63 * 64 + 63]);
+
+  std::array<uint16_t, artwork::kArtworkPixelCount> url_seed_a{};
+  std::array<uint16_t, artwork::kArtworkPixelCount> url_seed_b{};
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          alpha_png.data(), alpha_png.size(), 11, nullptr, url_seed_a.data(),
+          url_seed_a.size())));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          alpha_png.data(), alpha_png.size(), 12, nullptr, url_seed_b.data(),
+          url_seed_b.size())));
+  TEST_ASSERT_NOT_EQUAL(
+      0, std::memcmp(url_seed_a.data(), url_seed_b.data(),
+                     artwork::kArtworkRgb565Bytes));
+  const uint64_t body_seed = artwork::EncodedBodyPlaceholderSeed(
+      alpha_png.data(), alpha_png.size());
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          alpha_png.data(), alpha_png.size(), body_seed, nullptr,
+          url_seed_a.data(), url_seed_a.size())));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          alpha_png.data(), alpha_png.size(), body_seed, nullptr,
+          url_seed_b.data(), url_seed_b.size())));
+  TEST_ASSERT_EQUAL_MEMORY(url_seed_a.data(), url_seed_b.data(),
+                           artwork::kArtworkRgb565Bytes);
 
   constexpr uint32_t width = 128;
   constexpr uint32_t height = 96;

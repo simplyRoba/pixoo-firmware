@@ -17,6 +17,27 @@ int MarqueeTiming::Offset(uint64_t text_identity, int text_width, int viewport_w
   return loop == 0 ? 0 : static_cast<int>(steps % loop);
 }
 
+uint32_t MarqueeTiming::CompletedCycles(
+    uint64_t text_identity, int text_width, int viewport_width,
+    uint32_t now_ms, uint32_t pause_ms, uint32_t step_ms, int gap_px) const {
+  if (!initialized_ || identity_ != text_identity ||
+      text_width <= viewport_width || step_ms == 0)
+    return 0;
+  const uint32_t elapsed = now_ms - started_ms_;
+  if (elapsed < pause_ms)
+    return 0;
+  const int gap = gap_px < 0 ? 0 : gap_px;
+  const uint32_t loop = static_cast<uint32_t>(text_width + gap);
+  if (loop == 0)
+    return 0;
+  return ((elapsed - pause_ms) / step_ms) / loop;
+}
+
+void MarqueeTiming::Delay(uint32_t duration_ms) {
+  if (initialized_)
+    started_ms_ += duration_ms;
+}
+
 void TransitionTimeline::Start(uint32_t now_ms, uint32_t duration_ms) {
   started_ms_ = now_ms; duration_ms_ = duration_ms; started_ = true;
 }

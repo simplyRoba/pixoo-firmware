@@ -47,6 +47,8 @@ class NowPlayingDashboard final : public Dashboard {
   static constexpr uint32_t kDimTransitionMs = 400;
   static constexpr uint32_t kMarqueePauseMs = 900;
   static constexpr uint32_t kMarqueeStepMs = 80;
+  static constexpr uint32_t kMetadataRowsMinimumMs = 20000;
+  static constexpr uint32_t kMetadataRowsMinimumCycles = 2;
   static constexpr int kMarqueeGapPx = 12;
   static constexpr int kTextLeft = 2;
   static constexpr int kTextRight = 62;
@@ -63,10 +65,11 @@ class NowPlayingDashboard final : public Dashboard {
   static uint8_t Blue_(uint16_t pixel);
 
   void InitializeVisual_(uint64_t visual_key, uint32_t now_ms);
-  void StartIdentityTransition_(uint64_t visual_key, uint32_t now_ms);
+  void StartIdentityTransition_(uint64_t visual_key, uint32_t now_ms,
+                                bool immediate = false);
   bool StartArtworkTransition_(
       const pixoo::now_playing::NowPlayingData &data, uint64_t visual_key,
-      uint32_t now_ms);
+      uint32_t now_ms, bool immediate = false);
   void CancelTransition_();
   void AdvanceTransition_(uint32_t now_ms);
   void AdvanceDim_(uint32_t now_ms);
@@ -90,6 +93,11 @@ class NowPlayingDashboard final : public Dashboard {
   pixoo::now_playing::TransitionTimeline dim_timeline_{};
   BufferInfo buffer_info_[2]{};
   uint32_t current_ms_{0};
+  uint32_t hidden_started_ms_{0};
+  uint32_t metadata_rows_started_ms_{0};
+  uint64_t metadata_rows_media_identity_{0};
+  uint64_t metadata_rows_title_identity_{0};
+  uint64_t metadata_rows_artist_identity_{0};
   int title_width_{0};
   int artist_width_{0};
   int title_offset_{0};
@@ -103,6 +111,9 @@ class NowPlayingDashboard final : public Dashboard {
   uint8_t dim_target_{255};
   bool initialized_{false};
   bool dim_transitioning_{false};
+  bool metadata_rows_initialized_{false};
+  bool metadata_rows_visible_{false};
+  bool hidden_{false};
 
   // One configured now-playing renderer owns exactly these two 64x64 RGB565
   // buffers. Both sides of a crossfade are read on every frame, so production

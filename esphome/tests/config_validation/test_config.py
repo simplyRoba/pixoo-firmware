@@ -171,6 +171,33 @@ class EspHomeConfigTest(unittest.TestCase):
         result = self.run_config(self.fixture, render_path)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_render_fixture_rejects_unpaired_artwork_content_identity(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            shutil.copytree(self.fixture, repo)
+            render_path = repo / "esphome/tests/render_test/render_test.yaml"
+            text = render_path.read_text(encoding="utf-8")
+            old = (
+                "        artwork_content_identity: 5002\n"
+                "        artwork_content_revision: 2\n"
+            )
+            self.assertIn(old, text)
+            render_path.write_text(
+                text.replace(
+                    old, "        artwork_content_identity: 5002\n", 1
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_config(
+                repo, "esphome/tests/render_test/render_test.yaml"
+            )
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, output)
+            self.assertIn(
+                "artwork_content_identity and artwork_content_revision must appear together",
+                output,
+            )
+
     def test_now_playing_uses_project_decoder_libraries(self):
         text = (
             self.fixture / "esphome/components/pixoo64/__init__.py"
@@ -228,6 +255,9 @@ class EspHomeConfigTest(unittest.TestCase):
         )
         self.assertIn("kArtworkReadChunkBytes = 512", source)
         self.assertIn("std::min(remaining, kArtworkReadChunkBytes)", source)
+        self.assertIn("published_encoded", source)
+        self.assertIn("artwork::EncodedBodiesEqual", source)
+        self.assertIn('ESP_LOGD(TAG, "artwork reused")', source)
         self.assertNotIn("vTaskDelay", source)
         self.assertNotIn("YieldArtworkWorker", source)
         for diagnostic in (

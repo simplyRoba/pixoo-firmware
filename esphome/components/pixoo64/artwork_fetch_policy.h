@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "artwork_decoder.h"
+#include "now_playing_data.h"
 
 namespace esphome::pixoo64::artwork {
 
@@ -15,6 +17,20 @@ inline bool IsCompleteBody(size_t received_size, size_t advertised_size,
                            bool chunked, bool transfer_complete) {
   return received_size <= kMaxEncodedBytes && transfer_complete &&
          (chunked || received_size == advertised_size);
+}
+
+// Content identity is exact: hashes are useful as stable decoder seeds, but
+// never establish artwork-body equality.
+inline bool EncodedBodiesEqual(const uint8_t *left, size_t left_size,
+                               const uint8_t *right, size_t right_size) {
+  return left != nullptr && right != nullptr && left_size == right_size &&
+         std::memcmp(left, right, left_size) == 0;
+}
+
+inline uint64_t EncodedBodyPlaceholderSeed(const uint8_t *body,
+                                           size_t body_size) {
+  constexpr uint64_t kDomain = 0x415254424f445931ull;  // ARTBODY1
+  return pixoo::now_playing::HashNowPlayingBytes(kDomain, body, body_size);
 }
 
 constexpr size_t kArtworkSlotCount = 2;

@@ -2650,9 +2650,25 @@ static void test_now_playing_marquee_transition_and_layout() {
   TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 0, 100, 10, 5));
   TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 99, 100, 10, 5));
   TEST_ASSERT_EQUAL(1, marquee.Offset(2, 40, 30, 110, 100, 10, 5));
+  TEST_ASSERT_EQUAL_UINT32(
+      0, marquee.CompletedCycles(2, 40, 30, 549, 100, 10, 5));
   TEST_ASSERT_EQUAL(0, marquee.Offset(2, 40, 30, 550, 100, 10, 5));
+  TEST_ASSERT_EQUAL_UINT32(
+      1, marquee.CompletedCycles(2, 40, 30, 550, 100, 10, 5));
+  TEST_ASSERT_EQUAL_UINT32(
+      2, marquee.CompletedCycles(2, 40, 30, 1000, 100, 10, 5));
   TEST_ASSERT_EQUAL(0, marquee.Offset(3, 40, 30, UINT32_MAX - 5, 0, 10, 5));
   TEST_ASSERT_EQUAL(2, marquee.Offset(3, 40, 30, 14, 0, 10, 5));
+  TEST_ASSERT_EQUAL_UINT32(
+      0, marquee.CompletedCycles(3, 40, 30, 14, 0, 10, 5));
+  marquee.Delay(10);
+  TEST_ASSERT_EQUAL(2, marquee.Offset(3, 40, 30, 24, 0, 10, 5));
+  np::MarqueeTiming long_marquee;
+  TEST_ASSERT_EQUAL(0, long_marquee.Offset(4, 160, 60, 0, 900, 80, 12));
+  TEST_ASSERT_EQUAL_UINT32(
+      1, long_marquee.CompletedCycles(4, 160, 60, 28419, 900, 80, 12));
+  TEST_ASSERT_EQUAL_UINT32(
+      2, long_marquee.CompletedCycles(4, 160, 60, 28420, 900, 80, 12));
   np::TransitionTimeline transition; transition.Start(UINT32_MAX - 10, 20);
   TEST_ASSERT_EQUAL_UINT8(140, transition.Linear(0)); TEST_ASSERT_FALSE(transition.Complete(0));
   TEST_ASSERT_TRUE(transition.Smooth(0) > 100); TEST_ASSERT_TRUE(transition.Complete(10));

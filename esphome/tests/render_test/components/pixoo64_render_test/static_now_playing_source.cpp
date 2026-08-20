@@ -16,12 +16,17 @@ void StaticNowPlayingSource::add_snapshot(
     uint64_t media_identity, bool has_artwork_identity,
     uint64_t artwork_identity,
     pixoo::now_playing::ArtworkAvailability artwork_availability,
-    uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms) {
+    uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms,
+    bool has_artwork_content_identity, uint64_t artwork_content_identity,
+    uint32_t artwork_content_revision) {
   if (this->snapshot_count_ >= kMaxSnapshots)
     return;
   TimedSnapshot &entry = this->snapshots_[this->snapshot_count_];
   entry.at_ms = at_ms;
   entry.artwork_copy_ready_at_ms = artwork_copy_ready_at_ms;
+  entry.has_artwork_content_identity = has_artwork_content_identity;
+  entry.artwork_content_identity = artwork_content_identity;
+  entry.artwork_content_revision = artwork_content_revision;
   entry.data.config_revision = 1;
   entry.data.publication_revision =
       static_cast<uint32_t>(this->snapshot_count_ + 1);
@@ -124,8 +129,12 @@ bool StaticNowPlayingSource::CopyArtwork(
     return false;
   for (int y = 0; y < 64; ++y) {
     for (int x = 0; x < 64; ++x) {
-      destination[static_cast<size_t>(y) * 64u + x] =
-          ArtworkPixel_(expected_identity, expected_revision, x, y);
+      destination[static_cast<size_t>(y) * 64u + x] = ArtworkPixel_(
+          entry.has_artwork_content_identity ? entry.artwork_content_identity
+                                             : expected_identity,
+          entry.has_artwork_content_identity ? entry.artwork_content_revision
+                                             : expected_revision,
+          x, y);
     }
   }
   return true;

@@ -29,6 +29,8 @@ CONF_DURATION_MS = "duration_ms"
 CONF_POSITION_MS = "position_ms"
 CONF_MEDIA_IDENTITY = "media_identity"
 CONF_ARTWORK_IDENTITY = "artwork_identity"
+CONF_ARTWORK_CONTENT_IDENTITY = "artwork_content_identity"
+CONF_ARTWORK_CONTENT_REVISION = "artwork_content_revision"
 CONF_ARTWORK_AVAILABILITY = "artwork_availability"
 CONF_ARTWORK_REVISION = "artwork_revision"
 CONF_ARTWORK_COPY_READY_AT_MS = "artwork_copy_ready_at_ms"
@@ -150,6 +152,12 @@ SNAPSHOT_SCHEMA = cv.Schema(
         cv.Optional(CONF_ARTWORK_IDENTITY): cv.int_range(
             min=0, max=0xFFFFFFFFFFFFFFFF
         ),
+        cv.Optional(CONF_ARTWORK_CONTENT_IDENTITY): cv.int_range(
+            min=0, max=0xFFFFFFFFFFFFFFFF
+        ),
+        cv.Optional(CONF_ARTWORK_CONTENT_REVISION): cv.int_range(
+            min=0, max=0xFFFFFFFF
+        ),
         cv.Optional(CONF_ARTWORK_AVAILABILITY, default="none"): cv.enum(
             ARTWORK_AVAILABILITY, lower=True
         ),
@@ -183,6 +191,14 @@ def validate_now_playing_snapshots(config):
             )
         if has_artwork and snapshot[CONF_ARTWORK_REVISION] == 0:
             raise cv.Invalid("artwork fixtures require a nonzero artwork_revision")
+        has_content_identity = CONF_ARTWORK_CONTENT_IDENTITY in snapshot
+        has_content_revision = CONF_ARTWORK_CONTENT_REVISION in snapshot
+        if not has_artwork and has_content_identity:
+            raise cv.Invalid("artwork_content_identity requires artwork_identity")
+        if has_content_identity != has_content_revision:
+            raise cv.Invalid(
+                "artwork_content_identity and artwork_content_revision must appear together"
+            )
     return config
 
 
@@ -231,6 +247,9 @@ async def to_code(config):
                     snapshot.get(
                         CONF_ARTWORK_COPY_READY_AT_MS, snapshot[CONF_AT_MS]
                     ),
+                    CONF_ARTWORK_CONTENT_IDENTITY in snapshot,
+                    snapshot.get(CONF_ARTWORK_CONTENT_IDENTITY, 0),
+                    snapshot.get(CONF_ARTWORK_CONTENT_REVISION, 0),
                 )
             )
         return var

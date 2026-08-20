@@ -212,7 +212,11 @@ struct HomeAssistantMediaSource::Impl {
                      "pixoo_art_http"),
         decode_worker(std::move(decode_job), 12288, 0, 1, false,
                       "pixoo_art_dec") {}
-  ~Impl() { this->ReclaimHandoff(); }
+  ~Impl() {
+    this->ReclaimHandoff();
+    if (this->published_encoded != nullptr)
+      heap_caps_free(this->published_encoded);
+  }
 
   void ReclaimHandoff() {
     uint8_t *body = nullptr;
@@ -245,6 +249,11 @@ struct HomeAssistantMediaSource::Impl {
   int8_t writing_slot{-1};
   uint64_t published_identity{0};
   uint64_t writing_identity{0};
+  // This allocation is the exact validated body that produced published_slot.
+  // It is owned by that slot's publication, never copied into another cache.
+  uint8_t *published_encoded{nullptr};
+  size_t published_encoded_size{0};
+  int8_t published_encoded_slot{-1};
   uint32_t published_revision{0};
   uint32_t writing_revision{0};
   uint32_t writing_generation{0};
@@ -726,11 +735,47 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
     return !ArtworkCancelled(&cancellation);
   };
 
+  Impl::Completion completion{};
+  completion.request = request;
+  bool reused = false;
   int8_t target_slot = -1;
   uint16_t *target = nullptr;
+  uint8_t *cached_encoded = nullptr;
+  size_t cached_encoded_size = 0;
+  int8_t cached_slot = -1;
   if (current()) {
     taskENTER_CRITICAL(&this->impl_->artwork_mux);
-    if (current() && this->impl_->writing_slot < 0) {
+    const int8_t published = this->impl_->published_slot;
+    if (published >= 0 &&
+        published < static_cast<int8_t>(artwork::kArtworkSlotCount) &&
+        this->impl_->slots[published] != nullptr &&
+        this->impl_->published_encoded_slot == published) {
+      cached_encoded = this->impl_->published_encoded;
+      cached_encoded_size = this->impl_->published_encoded_size;
+      cached_slot = published;
+    }
+    taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+  }
+  // Only this decode worker replaces published_encoded, and destruction waits
+  // for it to stop. Compare the bounded PSRAM bodies without holding the
+  // cross-core publication lock.
+  const bool body_matches =
+      current() && artwork::EncodedBodiesEqual(
+                       encoded, encoded_size, cached_encoded,
+                       cached_encoded_size);
+  if (current()) {
+    taskENTER_CRITICAL(&this->impl_->artwork_mux);
+    if (body_matches && current() && cached_slot >= 0 &&
+        this->impl_->published_slot == cached_slot &&
+        this->impl_->published_encoded_slot == cached_slot &&
+        this->impl_->published_encoded == cached_encoded &&
+        this->impl_->published_encoded_size == cached_encoded_size) {
+      // Readers may continue using this slot: its pixels do not change.
+      this->impl_->published_identity = request.identity;
+      this->impl_->published_revision = request.revision;
+      completion.succeeded = true;
+      reused = true;
+    } else if (current() && this->impl_->writing_slot < 0) {
       target_slot = artwork::SelectWritableSlot(this->impl_->published_slot,
                                                 this->impl_->reader_pins);
       if (target_slot >= 0 &&
@@ -750,38 +795,50 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
 
   artwork::DecodeStatus decode_status = artwork::DecodeStatus::kDecodeFailed;
   if (target != nullptr && current()) {
+    const uint64_t placeholder_seed =
+        artwork::EncodedBodyPlaceholderSeed(encoded, encoded_size);
     decode_status = artwork::DecodeArtwork(
-        encoded, encoded_size, request.identity, nullptr, target,
+        encoded, encoded_size, placeholder_seed, nullptr, target,
         artwork::kArtworkPixelCount, nullptr, ArtworkCancelled, &cancellation);
   }
-  heap_caps_free(encoded);
 
-  Impl::Completion completion{};
-  completion.request = request;
-  taskENTER_CRITICAL(&this->impl_->artwork_mux);
-  const bool owns_target =
-      target_slot >= 0 &&
-      target_slot < static_cast<int8_t>(artwork::kArtworkSlotCount) &&
-      this->impl_->writing_slot == target_slot &&
-      this->impl_->writing_identity == request.identity &&
-      this->impl_->writing_revision == request.revision &&
-      this->impl_->writing_generation == request.generation &&
-      target == this->impl_->slots[target_slot];
-  if (decode_status == artwork::DecodeStatus::kSuccess && owns_target &&
-      current() && target_slot != this->impl_->published_slot &&
-      this->impl_->reader_pins[target_slot] == 0) {
-    this->impl_->published_slot = target_slot;
-    this->impl_->published_identity = request.identity;
-    this->impl_->published_revision = request.revision;
-    completion.succeeded = true;
+  uint8_t *previous_encoded = nullptr;
+  if (!reused) {
+    taskENTER_CRITICAL(&this->impl_->artwork_mux);
+    const bool owns_target =
+        target_slot >= 0 &&
+        target_slot < static_cast<int8_t>(artwork::kArtworkSlotCount) &&
+        this->impl_->writing_slot == target_slot &&
+        this->impl_->writing_identity == request.identity &&
+        this->impl_->writing_revision == request.revision &&
+        this->impl_->writing_generation == request.generation &&
+        target == this->impl_->slots[target_slot];
+    if (decode_status == artwork::DecodeStatus::kSuccess && owns_target &&
+        current() && target_slot != this->impl_->published_slot &&
+        this->impl_->reader_pins[target_slot] == 0) {
+      previous_encoded = this->impl_->published_encoded;
+      this->impl_->published_slot = target_slot;
+      this->impl_->published_identity = request.identity;
+      this->impl_->published_revision = request.revision;
+      this->impl_->published_encoded = encoded;
+      this->impl_->published_encoded_size = encoded_size;
+      this->impl_->published_encoded_slot = target_slot;
+      encoded = nullptr;
+      completion.succeeded = true;
+    }
+    if (owns_target) {
+      this->impl_->writing_slot = -1;
+      this->impl_->writing_identity = 0;
+      this->impl_->writing_revision = 0;
+      this->impl_->writing_generation = 0;
+    }
+    taskEXIT_CRITICAL(&this->impl_->artwork_mux);
   }
-  if (owns_target) {
-    this->impl_->writing_slot = -1;
-    this->impl_->writing_identity = 0;
-    this->impl_->writing_revision = 0;
-    this->impl_->writing_generation = 0;
-  }
-  taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+
+  if (encoded != nullptr)
+    heap_caps_free(encoded);
+  if (previous_encoded != nullptr)
+    heap_caps_free(previous_encoded);
 
   if (current() && target != nullptr &&
       decode_status != artwork::DecodeStatus::kSuccess &&
@@ -789,7 +846,9 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
     ESP_LOGW(TAG, "artwork decode failed (status %u)",
              static_cast<unsigned>(decode_status));
   }
-  if (completion.succeeded)
+  if (reused)
+    ESP_LOGD(TAG, "artwork reused");
+  else if (completion.succeeded)
     ESP_LOGD(TAG, "artwork updated");
   if (!this->impl_->decode_worker.StopRequested() &&
       !this->impl_->fetch_worker.StopRequested()) {

@@ -21,7 +21,9 @@ class StaticNowPlayingSource final
       uint32_t position_ms, uint64_t media_identity,
       bool has_artwork_identity, uint64_t artwork_identity,
       pixoo::now_playing::ArtworkAvailability artwork_availability,
-      uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms);
+      uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms,
+      bool has_artwork_content_identity, uint64_t artwork_content_identity,
+      uint32_t artwork_content_revision);
 
   static void SetCurrentRenderTime(uint32_t now_ms) {
     current_render_time_ms_ = now_ms;
@@ -43,6 +45,9 @@ class StaticNowPlayingSource final
   struct TimedSnapshot {
     uint32_t at_ms{0};
     uint32_t artwork_copy_ready_at_ms{0};
+    bool has_artwork_content_identity{false};
+    uint64_t artwork_content_identity{0};
+    uint32_t artwork_content_revision{0};
     pixoo::now_playing::NowPlayingData data{};
   };
 

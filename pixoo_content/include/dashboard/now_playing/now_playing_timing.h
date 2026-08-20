@@ -10,6 +10,11 @@ class MarqueeTiming {
   // changes. text_width and viewport_width are pixels.
   int Offset(uint64_t text_identity, int text_width, int viewport_width,
              uint32_t now_ms, uint32_t pause_ms, uint32_t step_ms, int gap_px);
+  uint32_t CompletedCycles(uint64_t text_identity, int text_width,
+                           int viewport_width, uint32_t now_ms,
+                           uint32_t pause_ms, uint32_t step_ms,
+                           int gap_px) const;
+  void Delay(uint32_t duration_ms);
 
  private:
   uint64_t identity_{0};
