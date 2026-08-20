@@ -48,8 +48,6 @@ class NowPlayingDashboard final : public Dashboard {
   static constexpr uint32_t kDimTransitionMs = 400;
   static constexpr uint32_t kMarqueePauseMs = 900;
   static constexpr uint32_t kMarqueeStepMs = 80;
-  static constexpr uint32_t kMetadataRowsMinimumMs = 20000;
-  static constexpr uint32_t kMetadataRowsMinimumCycles = 2;
   static constexpr int kMarqueeGapPx = 12;
   static constexpr int kTextLeft = 2;
   static constexpr int kTextRight = 62;
@@ -107,10 +105,6 @@ class NowPlayingDashboard final : public Dashboard {
   uint8_t artist_mask_[kTextMaskPixels]{};
   uint32_t current_ms_{0};
   uint32_t hidden_started_ms_{0};
-  uint32_t metadata_rows_started_ms_{0};
-  uint64_t metadata_rows_media_identity_{0};
-  uint64_t metadata_rows_title_identity_{0};
-  uint64_t metadata_rows_artist_identity_{0};
   int title_width_{0};
   int artist_width_{0};
   int title_offset_{0};
@@ -127,8 +121,6 @@ class NowPlayingDashboard final : public Dashboard {
   bool dim_transitioning_{false};
   bool text_transitioning_{false};
   bool text_data_switched_{false};
-  bool metadata_rows_initialized_{false};
-  bool metadata_rows_visible_{false};
   bool hidden_{false};
 
   // One configured now-playing renderer owns exactly these two 64x64 RGB565

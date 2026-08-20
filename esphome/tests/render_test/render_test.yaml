@@ -748,7 +748,7 @@ pixoo64_render_test:
       - at_ms: 48000
         source_state: ready
         playback_state: playing
-        title: "This deliberately very long title must finish two complete marquee passes before it disappears"
+        title: "This deliberately very long title remains visible while its marquee keeps looping"
         artist: "Timed Artist"
         duration_ms: 600000
         position_ms: 20000
@@ -759,7 +759,7 @@ pixoo64_render_test:
       - at_ms: 48100
         source_state: ready
         playback_state: playing
-        title: "This deliberately very long title must finish two complete marquee passes before it disappears"
+        title: "This deliberately very long title remains visible while its marquee keeps looping"
         artist: "Timed Artist"
         duration_ms: 600000
         position_ms: 20100
@@ -1463,12 +1463,6 @@ display:
         now_ms: 27300
         snapshot: now_playing_interrupted_ready_complete
       - dashboard: now_playing
-        now_ms: 46999
-        snapshot: now_playing_metadata_before_timeout
-      - dashboard: now_playing
-        now_ms: 47000
-        snapshot: now_playing_metadata_after_timeout
-      - dashboard: now_playing
         now_ms: 48000
         snapshot: now_playing_fallback_change_pending
       - dashboard: now_playing
@@ -1480,12 +1474,6 @@ display:
       - dashboard: now_playing
         now_ms: 48800
         snapshot: now_playing_fallback_change_ready
-      - dashboard: now_playing
-        now_ms: 68800
-        snapshot: now_playing_metadata_long_after_twenty_seconds
-      - dashboard: now_playing
-        now_ms: 300000
-        snapshot: now_playing_metadata_long_after_two_marquees
       - dashboard: game_of_life
         now_ms: 0
         snapshot: game_of_life

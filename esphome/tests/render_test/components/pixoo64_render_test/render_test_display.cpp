@@ -369,14 +369,10 @@ void RenderTestDisplay::setup() {
         "now_playing_interrupted_idle_start",
         "now_playing_interrupted_ready_start",
         "now_playing_interrupted_ready_complete",
-        "now_playing_metadata_before_timeout",
-        "now_playing_metadata_after_timeout",
         "now_playing_fallback_change_pending",
         "now_playing_fallback_change_ready_start",
         "now_playing_fallback_change_midpoint",
         "now_playing_fallback_change_ready",
-        "now_playing_metadata_long_after_twenty_seconds",
-        "now_playing_metadata_long_after_two_marquees",
     };
     bool now_playing_valid = true;
     for (const char *name : now_playing_snapshots) {
@@ -477,9 +473,6 @@ void RenderTestDisplay::setup() {
     now_playing_valid &= !frame_rows_equal(
         "now_playing_stable_id_change_pending",
         "now_playing_stable_id_change_ready", 45, 18);
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_metadata_before_timeout",
-        "now_playing_metadata_after_timeout", 45, 18);
     now_playing_valid &= artwork_pixels_equal(
         "now_playing_fallback_change_pending",
         "now_playing_fallback_change_ready_start");
@@ -508,9 +501,6 @@ void RenderTestDisplay::setup() {
     now_playing_valid &= !artwork_pixels_equal(
         "now_playing_interrupted_ready_start",
         "now_playing_interrupted_ready_complete");
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_metadata_long_after_twenty_seconds",
-        "now_playing_metadata_long_after_two_marquees", 45, 18);
     now_playing_valid &= frames_differ("now_playing_waiting_start",
                                        "now_playing_waiting_animated");
     if (!now_playing_valid) {

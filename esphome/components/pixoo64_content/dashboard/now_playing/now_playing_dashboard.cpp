@@ -104,8 +104,6 @@ uint16_t NowPlayingDashboard::transition_buffers_[2]
 void NowPlayingDashboard::OnShow(uint32_t now_ms) {
   if (this->hidden_) {
     const uint32_t hidden_ms = now_ms - this->hidden_started_ms_;
-    if (this->metadata_rows_initialized_)
-      this->metadata_rows_started_ms_ += hidden_ms;
     this->title_marquee_.Delay(hidden_ms);
     this->artist_marquee_.Delay(hidden_ms);
     this->visual_timeline_.Delay(hidden_ms);
@@ -344,8 +342,6 @@ void NowPlayingDashboard::UpdateTextLayout_(uint32_t now_ms) {
     this->artist_width_ = 0;
     this->title_offset_ = 0;
     this->artist_offset_ = 0;
-    this->metadata_rows_initialized_ = false;
-    this->metadata_rows_visible_ = false;
     return;
   }
   const char *title = this->displayed_.title.size == 0
@@ -366,39 +362,12 @@ void NowPlayingDashboard::UpdateTextLayout_(uint32_t now_ms) {
   const uint64_t artist_identity = pixoo::now_playing::HashNowPlayingBytes(
       artist_text_identity, &this->displayed_.media_identity,
       sizeof(this->displayed_.media_identity));
-  if (!this->metadata_rows_initialized_ ||
-      this->metadata_rows_media_identity_ != this->displayed_.media_identity ||
-      this->metadata_rows_title_identity_ != title_identity ||
-      this->metadata_rows_artist_identity_ != artist_identity) {
-    this->metadata_rows_started_ms_ = now_ms;
-    this->metadata_rows_media_identity_ = this->displayed_.media_identity;
-    this->metadata_rows_title_identity_ = title_identity;
-    this->metadata_rows_artist_identity_ = artist_identity;
-    this->metadata_rows_initialized_ = true;
-    this->metadata_rows_visible_ = true;
-  }
   this->title_offset_ = this->title_marquee_.Offset(
       title_identity, this->title_width_, kTextWidth, now_ms, kMarqueePauseMs,
       kMarqueeStepMs, kMarqueeGapPx);
   this->artist_offset_ = this->artist_marquee_.Offset(
       artist_identity, this->artist_width_, kTextWidth, now_ms, kMarqueePauseMs,
       kMarqueeStepMs, kMarqueeGapPx);
-
-  const bool title_complete =
-      this->title_width_ <= kTextWidth ||
-      this->title_marquee_.CompletedCycles(
-          title_identity, this->title_width_, kTextWidth, now_ms,
-          kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx) >=
-          kMetadataRowsMinimumCycles;
-  const bool artist_complete =
-      this->artist_width_ <= kTextWidth ||
-      this->artist_marquee_.CompletedCycles(
-          artist_identity, this->artist_width_, kTextWidth, now_ms,
-          kMarqueePauseMs, kMarqueeStepMs, kMarqueeGapPx) >=
-          kMetadataRowsMinimumCycles;
-  this->metadata_rows_visible_ =
-      now_ms - this->metadata_rows_started_ms_ < kMetadataRowsMinimumMs ||
-      !title_complete || !artist_complete;
 }
 
 void NowPlayingDashboard::RasterizeText_(uint8_t *mask, const char *text,
@@ -466,7 +435,7 @@ void NowPlayingDashboard::RasterizeRow_(uint8_t *mask, const char *text,
 }
 
 void NowPlayingDashboard::RasterizeRows_() {
-  if (!ShowsMetadata(this->displayed_) || !this->metadata_rows_visible_) {
+  if (!ShowsMetadata(this->displayed_)) {
     std::memset(this->title_mask_, 0, sizeof(this->title_mask_));
     std::memset(this->artist_mask_, 0, sizeof(this->artist_mask_));
     return;
@@ -594,7 +563,7 @@ void NowPlayingDashboard::DrawRow_(display::Display &display, const uint8_t *mas
 }
 
 void NowPlayingDashboard::DrawRows_(display::Display &display) const {
-  if (!ShowsMetadata(this->displayed_) || !this->metadata_rows_visible_)
+  if (!ShowsMetadata(this->displayed_))
     return;
   this->DrawRow_(display, this->title_mask_, 45, Color(255, 255, 255));
   this->DrawRow_(display, this->artist_mask_, 53, Color(188, 210, 222));
