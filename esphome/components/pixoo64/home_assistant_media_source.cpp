@@ -789,6 +789,8 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
     ESP_LOGW(TAG, "artwork decode failed (status %u)",
              static_cast<unsigned>(decode_status));
   }
+  if (completion.succeeded)
+    ESP_LOGD(TAG, "artwork updated");
   if (!this->impl_->decode_worker.StopRequested() &&
       !this->impl_->fetch_worker.StopRequested()) {
     this->impl_->completion.Publish(completion);
@@ -902,6 +904,7 @@ bool HomeAssistantMediaSource::FetchArtwork_(const char *url, size_t url_size,
   }
   *encoded = candidate;
   *encoded_size = received;
+  ESP_LOGD(TAG, "artwork fetched: %zu bytes", received);
   return true;
 }
 
