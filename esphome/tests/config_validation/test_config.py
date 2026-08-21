@@ -254,7 +254,13 @@ class EspHomeConfigTest(unittest.TestCase):
             source,
         )
         self.assertIn("kArtworkReadChunkBytes = 512", source)
-        self.assertIn("std::min(remaining, kArtworkReadChunkBytes)", source)
+        self.assertIn("kArtworkReadChunkBytes,", source)
+        reader = (
+            self.fixture / "esphome/components/pixoo64/http_body_reader.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("std::min(remaining, options.chunk_bytes)", reader)
+        self.assertIn("container->end();\n  lease.Release();", reader)
+        self.assertNotIn("http_read_fully", reader)
         self.assertIn("published_encoded", source)
         self.assertIn("artwork::EncodedBodiesEqual", source)
         self.assertIn('ESP_LOGD(TAG, "artwork reused")', source)

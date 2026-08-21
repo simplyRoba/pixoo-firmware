@@ -18,6 +18,8 @@ extern "C" void tearDown() {}
 #include "now_playing_config.h"
 #include "artwork_decoder.h"
 #include "artwork_fetch_policy.h"
+#include "http_body_policy.h"
+#include "weather_fetch_policy.h"
 
 namespace cfg = esphome::pixoo64::now_playing_config;
 namespace artwork = esphome::pixoo64::artwork;
@@ -353,6 +355,8 @@ static void test_artwork_fetch_policy_and_magic() {
   TEST_ASSERT_EQUAL_INT(static_cast<int>(ImageMagic::kGif), static_cast<int>(artwork::ClassifyMagic(gif, sizeof(gif))));
   TEST_ASSERT_EQUAL_INT(static_cast<int>(ImageMagic::kWebp), static_cast<int>(artwork::ClassifyMagic(webp, sizeof(webp))));
   TEST_ASSERT_EQUAL_INT(static_cast<int>(ImageMagic::kUnknown), static_cast<int>(artwork::ClassifyMagic(nullptr, 0)));
+  namespace body = esphome::pixoo64::http_body;
+  namespace weather = esphome::pixoo64::adapters::weather;
   TEST_ASSERT_TRUE(artwork::AcceptBodySize(artwork::kMaxEncodedBytes, false));
   TEST_ASSERT_FALSE(artwork::AcceptBodySize(artwork::kMaxEncodedBytes + 1, false));
   TEST_ASSERT_TRUE(artwork::AcceptBodySize(artwork::kMaxEncodedBytes + 1, true));
@@ -360,6 +364,16 @@ static void test_artwork_fetch_policy_and_magic() {
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(3, 4, false, true));
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(4, 4, true, false));
   TEST_ASSERT_FALSE(artwork::IsCompleteBody(artwork::kMaxEncodedBytes + 1, 0, true, true));
+  // Fixed-length transfers are exact; chunked/unknown transfers rely on the
+  // transport completion signal while still respecting the caller's cap.
+  TEST_ASSERT_TRUE(body::IsCompleteBody(4, 4, true, 16, true));
+  TEST_ASSERT_FALSE(body::IsCompleteBody(3, 4, true, 16, true));
+  TEST_ASSERT_TRUE(body::IsCompleteBody(4, 0, false, 16, true));
+  TEST_ASSERT_FALSE(body::IsCompleteBody(4, 0, false, 16, false));
+  TEST_ASSERT_TRUE(body::AcceptAdvertisedSize(weather::kMaxResponseBytes, true,
+                                              weather::kMaxResponseBytes));
+  TEST_ASSERT_FALSE(body::AcceptAdvertisedSize(weather::kMaxResponseBytes + 1,
+                                               true, weather::kMaxResponseBytes));
   const uint8_t body_a[] = {0x89, 'P', 'N', 'G'};
   const uint8_t body_b[] = {0x89, 'P', 'N', 'G'};
   const uint8_t body_c[] = {0x89, 'P', 'N', 'X'};

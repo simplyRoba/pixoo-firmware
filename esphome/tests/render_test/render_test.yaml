@@ -52,6 +52,8 @@ esphome:
     - ../../components/pixoo64/artwork_decoder.h
     - ../../components/pixoo64/artwork_decoder.cpp
     - ../../components/pixoo64/artwork_fetch_policy.h
+    - ../../components/pixoo64/http_body_policy.h
+    - ../../components/pixoo64/weather_fetch_policy.h
     - ../../components/pixoo64/now_playing_config.h
     - ../../components/pixoo64/now_playing_config.cpp
     - components/pixoo64_render_test/unity_config.h

@@ -1,21 +1,22 @@
 #include "open_meteo.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cstring>
-#include <vector>
+
+#include "esp_heap_caps.h"
 
 #include "async_worker.h"
-#include "esphome/components/http_request/http_request.h"
 #include "esphome/components/json/json_util.h"
 #include "esphome/components/network/util.h"
 #include "esphome/components/number/number.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "http_body_reader.h"
 #include "http_request_gate.h"
 #include "open_meteo_url.h"
 #include "refresh_policy.h"
 #include "snapshot_buffer.h"
+#include "weather_fetch_policy.h"
 #include "wmo.h"
 
 using esphome::network::is_connected;
@@ -24,10 +25,6 @@ namespace esphome::pixoo64::adapters {
 
 namespace {
 const char *const TAG = "pixoo64.open_meteo";
-
-// Cap on the response body we buffer. Current + a 12-hour hourly series (five
-// fields) + daily fits well under this; the request bounds the series length.
-constexpr size_t kMaxResponse = 16384;
 } // namespace
 
 // Background worker state is kept out of the header so FreeRTOS does not leak
@@ -225,84 +222,21 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
            this->impl_->location_generation.load(std::memory_order_acquire) !=
                generation;
   };
-  auto lease = this->http_gate_->Acquire(cancelled);
-  if (!lease)
-    return false;
-  const std::string url = pixoo::BuildOpenMeteoForecastUrl(latitude, longitude);
-  // The lease remains live through every read and container->end(); the
-  // ESPHome HTTP component is a singleton and is not safe for concurrent use.
-  auto container = this->http_->get(url);
-  if (container == nullptr) {
-    ESP_LOGW(TAG, "fetch failed (status -1)");
-    return false;
-  }
-  const auto end_container = [&container]() { container->end(); };
-  if (cancelled()) {
-    end_container();
-    return false;
-  }
-  if (container->status_code != 200) {
-    ESP_LOGW(TAG, "fetch failed (status %d)", container->status_code);
-    end_container();
+  const http_body::ReadOptions options{weather::kMaxResponseBytes, 512,
+                                       MALLOC_CAP_8BIT};
+  const auto body = http_body::GetBounded(
+      this->http_, this->http_gate_,
+      pixoo::BuildOpenMeteoForecastUrl(latitude, longitude), options,
+      cancelled);
+  if (!body.succeeded()) {
+    if (body.status != http_body::ReadStatus::kCancelled) {
+      ESP_LOGW(TAG, "weather response failed (%s, status %d, %zu bytes)",
+               http_body::ReadStatusName(body.status), body.http_status,
+               body.received_bytes);
+    }
     return false;
   }
 
-  // The API sends a chunked response, so content_length is 0 and cannot size
-  // the read. Each read is subject to the configured HTTP timeout; the loop
-  // also applies an elapsed deadline to the complete response body.
-  std::vector<uint8_t> body;
-  body.reserve(4096);
-  uint8_t chunk[512];
-  const uint32_t response_started = millis();
-  const uint32_t response_timeout = this->http_->get_timeout();
-  uint32_t last_data = response_started;
-  bool complete = false;
-  while (true) {
-    if (cancelled()) {
-      end_container();
-      return false;
-    }
-    if (millis() - response_started >= response_timeout) {
-      ESP_LOGW(TAG, "response body deadline exceeded (%zu bytes)", body.size());
-      break;
-    }
-
-    const size_t remaining = kMaxResponse - body.size();
-    uint8_t overflow_byte;
-    const bool at_limit = remaining == 0;
-    const int n =
-        at_limit ? container->read(&overflow_byte, 1)
-                 : container->read(chunk, std::min(sizeof(chunk), remaining));
-    if (cancelled()) {
-      end_container();
-      return false;
-    }
-    if (millis() - response_started >= response_timeout) {
-      ESP_LOGW(TAG, "response body deadline exceeded (%zu bytes)", body.size());
-      break;
-    }
-    const auto step = http_request::http_read_loop_result(
-        n, last_data, response_timeout, container->is_read_complete());
-    if (step == http_request::HttpReadLoopResult::DATA) {
-      if (at_limit) {
-        ESP_LOGW(TAG, "response exceeds %zu-byte limit", kMaxResponse);
-        break;
-      }
-      body.insert(body.end(), chunk, chunk + n);
-    } else if (step == http_request::HttpReadLoopResult::COMPLETE) {
-      complete = true;
-      break;
-    } else if (step == http_request::HttpReadLoopResult::RETRY) {
-      continue;
-    } else { // ERROR or TIMEOUT
-      break;
-    }
-  }
-  end_container();
-  if (!complete) {
-    ESP_LOGW(TAG, "incomplete response (%zu bytes)", body.size());
-    return false;
-  }
   if (cancelled())
     return false;
 
@@ -311,7 +245,7 @@ bool OpenMeteoSource::fetch_(pixoo::WeatherData *out, float latitude,
   data.latitude = latitude;
   data.longitude = longitude;
   const bool ok = json::parse_json(
-      body.data(), body.size(), [&data](JsonObject root) -> bool {
+      body.body.data(), body.received_bytes, [&data](JsonObject root) -> bool {
         JsonObject cur = root["current"];
         if (cur.isNull())
           return false;

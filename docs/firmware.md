@@ -340,8 +340,11 @@ never waits for network or decoder work. Exact body comparison reuses an existin
 image when only its URL changed. The renderer retains one coherent presentation
 while replacement artwork is pending, then fades to the ready image or fallback.
 
-A shared `HttpRequestGate` serializes Open-Meteo and artwork use of ESPHome's HTTP
-client.
+Open-Meteo and artwork share bounded HTTP retrieval: it rejects oversized
+advertised bodies, reads capped chunks to transfer completion, and ends the
+response before JSON parsing or image validation/decoding. A shared
+`HttpRequestGate` serializes ESPHome's HTTP client only from `get()` through
+`container->end()`; it does not cover parsing or decoding.
 
 The microphone adapter captures I2S samples into retained windows. Completed
 windows pass through the framework-independent spectrum and equalizer processors,

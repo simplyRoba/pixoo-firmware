@@ -18,6 +18,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "http_body_reader.h"
 #include "http_request_gate.h"
 #include "snapshot_buffer.h"
 
@@ -876,94 +877,34 @@ bool HomeAssistantMediaSource::FetchArtwork_(const char *url, size_t url_size,
                generation;
   };
 
-  auto lease = this->http_gate_->Acquire(cancelled);
-  if (!lease || cancelled())
-    return false;
-
-  auto container = this->http_->get(std::string(url, url_size));
-  if (container == nullptr) {
-    ESP_LOGW(TAG, "artwork request failed before response");
-    return false;
-  }
-  const auto end_container = [&container]() { container->end(); };
-  if (cancelled() || container->status_code != 200) {
-    const int status = container->status_code;
-    end_container();
-    ESP_LOGW(TAG, "artwork request failed (status %d)", status);
-    return false;
-  }
-
-  const bool chunked = container->content_length == 0;
-  if (!artwork::AcceptBodySize(container->content_length, chunked)) {
-    end_container();
-    ESP_LOGW(TAG, "artwork body exceeds %zu-byte limit",
-             artwork::kMaxEncodedBytes);
-    return false;
-  }
-  const size_t capacity =
-      chunked ? artwork::kMaxEncodedBytes : container->content_length;
-  if (capacity == 0) {
-    end_container();
-    ESP_LOGW(TAG, "artwork body is empty");
-    return false;
-  }
-  uint8_t *candidate = static_cast<uint8_t *>(
-      heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (candidate == nullptr) {
-    end_container();
-    ESP_LOGW(TAG, "artwork input allocation failed (%zu bytes)", capacity);
-    return false;
-  }
-
-  size_t received = 0;
-  bool complete = false;
-  const uint32_t body_started_ms = millis();
-  const uint32_t timeout_ms = this->http_->get_timeout();
-  uint32_t last_data_ms = body_started_ms;
-  while (!cancelled() && millis() - body_started_ms < timeout_ms) {
-    const size_t remaining = capacity - received;
-    uint8_t overflow_byte{};
-    const bool at_limit = remaining == 0;
-    const size_t read_size = std::min(remaining, kArtworkReadChunkBytes);
-    const int read = at_limit
-                         ? container->read(&overflow_byte, 1)
-                         : container->read(candidate + received, read_size);
-    if (cancelled())
-      break;
-    const auto step = http_request::http_read_loop_result(
-        read, last_data_ms, timeout_ms, container->is_read_complete());
-    if (step == http_request::HttpReadLoopResult::DATA) {
-      if (at_limit)
-        break;
-      received += static_cast<size_t>(read);
-      continue;
+  const http_body::ReadOptions options{artwork::kMaxEncodedBytes,
+                                       kArtworkReadChunkBytes,
+                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT};
+  auto body =
+      http_body::GetBounded(this->http_, this->http_gate_,
+                            std::string(url, url_size), options, cancelled);
+  if (!body.succeeded()) {
+    if (body.status != http_body::ReadStatus::kCancelled) {
+      ESP_LOGW(TAG, "artwork body request failed (%s, status %d, %zu bytes)",
+               http_body::ReadStatusName(body.status), body.http_status,
+               body.received_bytes);
     }
-    if (step == http_request::HttpReadLoopResult::COMPLETE) {
-      complete = true;
-      break;
-    }
-    if (step == http_request::HttpReadLoopResult::RETRY)
-      continue;
-    break;
+    return false;
   }
-  const size_t advertised_size = container->content_length;
-  end_container();
+
+  if (cancelled())
+    return false;
   const artwork::ImageMagic candidate_magic =
-      artwork::ClassifyMagic(candidate, received);
-  const bool was_cancelled = cancelled();
-  const bool ok =
-      !was_cancelled &&
-      artwork::IsCompleteBody(received, advertised_size, chunked, complete) &&
-      (candidate_magic == artwork::ImageMagic::kPng ||
-       candidate_magic == artwork::ImageMagic::kJpeg);
-  if (!ok) {
-    heap_caps_free(candidate);
-    ESP_LOGW(TAG, "artwork body invalid or incomplete (%zu bytes)", received);
+      artwork::ClassifyMagic(body.body.data(), body.received_bytes);
+  if (candidate_magic != artwork::ImageMagic::kPng &&
+      candidate_magic != artwork::ImageMagic::kJpeg) {
+    ESP_LOGW(TAG, "artwork body has unsupported magic (%zu bytes)",
+             body.received_bytes);
     return false;
   }
-  *encoded = candidate;
-  *encoded_size = received;
-  ESP_LOGD(TAG, "artwork fetched: %zu bytes", received);
+  *encoded = body.body.Release();
+  *encoded_size = body.received_bytes;
+  ESP_LOGD(TAG, "artwork fetched: %zu bytes", *encoded_size);
   return true;
 }
 

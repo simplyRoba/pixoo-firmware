@@ -5,18 +5,20 @@
 #include <cstring>
 
 #include "artwork_decoder.h"
+#include "http_body_policy.h"
 #include "now_playing_data.h"
 
 namespace esphome::pixoo64::artwork {
 
 inline bool AcceptBodySize(size_t advertised_size, bool chunked) {
-  return chunked || advertised_size <= kMaxEncodedBytes;
+  return http_body::AcceptAdvertisedSize(advertised_size, !chunked,
+                                         kMaxEncodedBytes);
 }
 
 inline bool IsCompleteBody(size_t received_size, size_t advertised_size,
                            bool chunked, bool transfer_complete) {
-  return received_size <= kMaxEncodedBytes && transfer_complete &&
-         (chunked || received_size == advertised_size);
+  return http_body::IsCompleteBody(received_size, advertised_size, !chunked,
+                                   kMaxEncodedBytes, transfer_complete);
 }
 
 // Content identity is exact: hashes are useful as stable decoder seeds, but
