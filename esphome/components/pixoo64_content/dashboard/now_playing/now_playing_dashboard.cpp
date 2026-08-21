@@ -657,14 +657,14 @@ void NowPlayingDashboard::DrawStatusMessage_(display::Display &display) const {
     case NowPlayingSourceState::kStale:
       break;
   }
-  display.print(33, 27, this->font_, Color(3, 7, 12),
-                display::TextAlign::TOP_CENTER, top);
-  display.print(32, 26, this->font_, top_color, display::TextAlign::TOP_CENTER,
-                top);
-  display.print(33, 36, this->font_, Color(3, 7, 12),
-                display::TextAlign::TOP_CENTER, bottom);
-  display.print(32, 35, this->font_, bottom_color,
-                display::TextAlign::TOP_CENTER, bottom);
+  display.print(kTextLeft + 1, 46, this->font_, Color(3, 7, 12),
+                display::TextAlign::TOP_LEFT, top);
+  display.print(kTextLeft, 45, this->font_, top_color,
+                display::TextAlign::TOP_LEFT, top);
+  display.print(kTextLeft + 1, 54, this->font_, Color(3, 7, 12),
+                display::TextAlign::TOP_LEFT, bottom);
+  display.print(kTextLeft, 53, this->font_, bottom_color,
+                display::TextAlign::TOP_LEFT, bottom);
 }
 
 void NowPlayingDashboard::DrawMarks_(display::Display &display) const {
