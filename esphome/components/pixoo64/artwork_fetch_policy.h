@@ -6,7 +6,6 @@
 
 #include "artwork_decoder.h"
 #include "http_body_policy.h"
-#include "now_playing_data.h"
 
 namespace esphome::pixoo64::artwork {
 
@@ -21,18 +20,11 @@ inline bool IsCompleteBody(size_t received_size, size_t advertised_size,
                                    kMaxEncodedBytes, transfer_complete);
 }
 
-// Content identity is exact: hashes are useful as stable decoder seeds, but
-// never establish artwork-body equality.
+// Content identity is exact; equality is never inferred from a hash.
 inline bool EncodedBodiesEqual(const uint8_t *left, size_t left_size,
                                const uint8_t *right, size_t right_size) {
   return left != nullptr && right != nullptr && left_size == right_size &&
          std::memcmp(left, right, left_size) == 0;
-}
-
-inline uint64_t EncodedBodyPlaceholderSeed(const uint8_t *body,
-                                           size_t body_size) {
-  constexpr uint64_t kDomain = 0x415254424f445931ull;  // ARTBODY1
-  return pixoo::now_playing::HashNowPlayingBytes(kDomain, body, body_size);
 }
 
 constexpr size_t kArtworkSlotCount = 2;

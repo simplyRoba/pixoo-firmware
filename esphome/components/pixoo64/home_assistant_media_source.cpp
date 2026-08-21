@@ -796,11 +796,9 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
 
   artwork::DecodeStatus decode_status = artwork::DecodeStatus::kDecodeFailed;
   if (target != nullptr && current()) {
-    const uint64_t placeholder_seed =
-        artwork::EncodedBodyPlaceholderSeed(encoded, encoded_size);
     decode_status = artwork::DecodeArtwork(
-        encoded, encoded_size, placeholder_seed, nullptr, target,
-        artwork::kArtworkPixelCount, nullptr, ArtworkCancelled, &cancellation);
+        encoded, encoded_size, target, artwork::kArtworkPixelCount, nullptr,
+        ArtworkCancelled, &cancellation);
   }
 
   uint8_t *previous_encoded = nullptr;

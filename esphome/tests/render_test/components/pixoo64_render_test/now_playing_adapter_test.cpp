@@ -119,6 +119,40 @@ std::vector<uint8_t> MakeRgbaPng(uint32_t width, uint32_t height,
   return png;
 }
 
+std::vector<uint8_t> MakeRgbPng(uint32_t width, uint32_t height,
+                                const std::vector<uint8_t> &rgb,
+                                bool transparent = false,
+                                bool interlaced = false,
+                                bool animated = false) {
+  TEST_ASSERT_EQUAL_UINT64(static_cast<uint64_t>(width) * height * 3,
+                           rgb.size());
+  std::vector<uint8_t> png{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+  std::vector<uint8_t> ihdr;
+  AppendBe32(&ihdr, width);
+  AppendBe32(&ihdr, height);
+  ihdr.insert(ihdr.end(), {8, 2, 0, 0,
+                           static_cast<uint8_t>(interlaced ? 1 : 0)});
+  AppendPngChunk(&png, "IHDR", ihdr);
+  if (animated) {
+    std::vector<uint8_t> actl;
+    AppendBe32(&actl, 1);
+    AppendBe32(&actl, 0);
+    AppendPngChunk(&png, "acTL", actl);
+  }
+  if (transparent)
+    AppendPngChunk(&png, "tRNS", {0, 0, 0, 0, 0, 0});
+  std::vector<uint8_t> raw;
+  raw.reserve((static_cast<size_t>(width) * 3 + 1) * height);
+  for (uint32_t y = 0; y < height; ++y) {
+    raw.push_back(0);
+    const size_t begin = static_cast<size_t>(y) * width * 3;
+    raw.insert(raw.end(), rgb.begin() + begin, rgb.begin() + begin + width * 3);
+  }
+  AppendPngChunk(&png, "IDAT", StoredZlib(raw));
+  AppendPngChunk(&png, "IEND", {});
+  return png;
+}
+
 void AppendJpegSegment(std::vector<uint8_t> *jpeg, uint8_t marker,
                        const std::vector<uint8_t> &payload) {
   jpeg->push_back(0xff);
@@ -199,12 +233,13 @@ uint16_t JpegMagnitudeBits(int value, uint8_t category) {
   return static_cast<uint16_t>(value + (1 << category) - 1);
 }
 
-// Original fixture encoder: grayscale baseline JPEG with constant 8x8 MCUs.
-// Edge MCUs are deliberately bright/dark so the decoder test proves the
-// centered 64-pixel crop excludes them without using third-party artwork.
-std::vector<uint8_t> MakeBaselineJpeg() {
-  constexpr uint16_t width = 128;
-  constexpr uint16_t height = 64;
+// Fixture encoder: grayscale baseline JPEG with constant 8x8 MCUs. Edge MCUs
+// are deliberately bright/dark so the decoder test proves centered cropping
+// without using third-party artwork.
+std::vector<uint8_t> MakeBaselineJpeg(uint16_t width = 128,
+                                      uint16_t height = 64,
+                                      bool alternating = false,
+                                      uint8_t solid_sample = 0) {
   const std::array<uint8_t, 16> dc_counts{
       0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0};
   const std::vector<uint8_t> dc_values{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -236,11 +271,14 @@ std::vector<uint8_t> MakeBaselineJpeg() {
 
   EntropyWriter entropy;
   int previous_dc = 0;
-  for (uint16_t block_y = 0; block_y < height / 8; ++block_y) {
+  for (uint16_t block_y = 0; block_y < (height + 7) / 8; ++block_y) {
     (void) block_y;
-    for (uint16_t block_x = 0; block_x < width / 8; ++block_x) {
-      const int sample = block_x < 4 ? 10 : block_x < 8 ? 80
-                                      : block_x < 12 ? 180 : 250;
+    for (uint16_t block_x = 0; block_x < (width + 7) / 8; ++block_x) {
+      const int sample = solid_sample != 0
+                             ? solid_sample
+                             : alternating ? (block_x & 1 ? 250 : 10)
+                                           : block_x < 4 ? 10 : block_x < 8 ? 80
+                                                                           : block_x < 12 ? 180 : 250;
       const int dc = (sample - 128) * 8;
       const int difference = dc - previous_dc;
       previous_dc = dc;
@@ -273,6 +311,35 @@ uint8_t GreenFrom565(uint16_t color) {
 
 uint8_t BlueFrom565(uint16_t color) {
   return static_cast<uint8_t>((color & 0x1f) * 255 / 31);
+}
+
+std::vector<uint8_t> MakeSolidRgb(uint32_t width, uint32_t height,
+                                  uint8_t red, uint8_t green, uint8_t blue) {
+  std::vector<uint8_t> rgb(static_cast<size_t>(width) * height * 3);
+  for (size_t index = 0; index < rgb.size(); index += 3) {
+    rgb[index] = red;
+    rgb[index + 1] = green;
+    rgb[index + 2] = blue;
+  }
+  return rgb;
+}
+
+void AssertArtworkIsColor(
+    const std::array<uint16_t, artwork::kArtworkPixelCount> &output,
+    uint8_t red, uint8_t green, uint8_t blue) {
+  const uint16_t expected = artwork::Rgb888ToRgb565(red, green, blue);
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(expected, pixel);
+}
+
+void AssertArtworkNearGray(
+    const std::array<uint16_t, artwork::kArtworkPixelCount> &output,
+    uint8_t expected) {
+  for (uint16_t pixel : output) {
+    TEST_ASSERT_UINT8_WITHIN(8, expected, RedFrom565(pixel));
+    TEST_ASSERT_UINT8_WITHIN(8, expected, GreenFrom565(pixel));
+    TEST_ASSERT_UINT8_WITHIN(8, expected, BlueFrom565(pixel));
+  }
 }
 
 struct CancellationProbe {
@@ -461,54 +528,41 @@ static void test_artwork_crop_mapping_and_color_math() {
   TEST_ASSERT_EQUAL_UINT32(65, tall.width);
   TEST_ASSERT_EQUAL_UINT32(65, tall.height);
 
-  for (uint32_t extent : {1u, 2u, 63u, 64u, 65u, 96u, 4096u}) {
-    uint32_t previous = 17;
-    for (uint32_t destination = 0; destination < 64; ++destination) {
-      const uint32_t mapped = artwork::MapDestinationCoordinate(
-          destination, 17, extent);
-      TEST_ASSERT_GREATER_OR_EQUAL_UINT32(17, mapped);
-      TEST_ASSERT_LESS_THAN_UINT32(17 + extent, mapped);
-      if (destination != 0)
-        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(previous, mapped);
-      previous = mapped;
-    }
-  }
-  TEST_ASSERT_EQUAL_UINT32(16,
-      artwork::MapDestinationCoordinate(0, 16, 96));
-  TEST_ASSERT_EQUAL_UINT32(111,
-      artwork::MapDestinationCoordinate(63, 16, 96));
-
   TEST_ASSERT_EQUAL_HEX16(0xf800, artwork::Rgb888ToRgb565(255, 0, 0));
   TEST_ASSERT_EQUAL_HEX16(0x07e0, artwork::Rgb888ToRgb565(0, 255, 0));
   TEST_ASSERT_EQUAL_HEX16(0x001f, artwork::Rgb888ToRgb565(0, 0, 255));
-  TEST_ASSERT_EQUAL_HEX16(0x8000,
-      artwork::CompositeRgbaOverRgb565(255, 0, 0, 128, 0x0000));
-  TEST_ASSERT_EQUAL_HEX16(0xffff,
-      artwork::CompositeRgbaOverRgb565(0, 0, 0, 0, 0xffff));
-  TEST_ASSERT_EQUAL_HEX16(artwork::Rgb888ToRgb565(1, 2, 3),
-      artwork::CompositeRgbaOverRgb565(1, 2, 3, 255, 0xffff));
 }
 
 static void test_png_chunk_validation() {
-  std::vector<uint8_t> pixels(2 * 2 * 4, 0xff);
-  const std::vector<uint8_t> png = MakeRgbaPng(2, 2, pixels);
+  std::vector<uint8_t> rgb_pixels(2 * 2 * 3, 0xff);
+  const std::vector<uint8_t> png = MakeRgbPng(2, 2, rgb_pixels);
   artwork::ImageInfo info{};
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
       static_cast<int>(artwork::InspectPng(png.data(), png.size(), &info)));
   TEST_ASSERT_EQUAL_UINT32(2, info.width);
   TEST_ASSERT_EQUAL_UINT32(2, info.height);
-  TEST_ASSERT_TRUE(info.has_alpha);
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kEncodedTooLarge),
       static_cast<int>(artwork::InspectPng(
           png.data(), artwork::kMaxEncodedBytes + 1, &info)));
 
-  const std::vector<uint8_t> animated = MakeRgbaPng(2, 2, pixels, false, true);
+  std::vector<uint8_t> rgba_pixels(2 * 2 * 4, 0xff);
+  const std::vector<uint8_t> alpha_png = MakeRgbaPng(2, 2, rgba_pixels);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kUnsupportedFormat),
+      static_cast<int>(artwork::InspectPng(alpha_png.data(), alpha_png.size(), &info)));
+  const std::vector<uint8_t> trns_png = MakeRgbPng(2, 2, rgb_pixels, true);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kUnsupportedFormat),
+      static_cast<int>(artwork::InspectPng(trns_png.data(), trns_png.size(), &info)));
+  const std::vector<uint8_t> animated_png =
+      MakeRgbPng(2, 2, rgb_pixels, false, false, true);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kAnimatedPng),
-      static_cast<int>(artwork::InspectPng(animated.data(), animated.size(), &info)));
-  const std::vector<uint8_t> interlaced = MakeRgbaPng(2, 2, pixels, true);
+      static_cast<int>(artwork::InspectPng(
+          animated_png.data(), animated_png.size(), &info)));
+  const std::vector<uint8_t> interlaced_png =
+      MakeRgbPng(2, 2, rgb_pixels, false, true);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kInterlacedPng),
-      static_cast<int>(artwork::InspectPng(interlaced.data(), interlaced.size(), &info)));
+      static_cast<int>(artwork::InspectPng(
+          interlaced_png.data(), interlaced_png.size(), &info)));
 
   std::vector<uint8_t> malformed_length = png;
   // IHDR occupies bytes 8..32; make the following IDAT length exceed the body.
@@ -525,9 +579,9 @@ static void test_png_chunk_validation() {
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kIncomplete),
       static_cast<int>(artwork::InspectPng(truncated.data(), truncated.size(), &info)));
 
-  std::vector<uint8_t> oversized_pixels(4097 * 4, 0xff);
+  std::vector<uint8_t> oversized_pixels(4097 * 3, 0xff);
   const std::vector<uint8_t> oversized =
-      MakeRgbaPng(4097, 1, oversized_pixels);
+      MakeRgbPng(4097, 1, oversized_pixels);
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kDimensionsTooLarge),
       static_cast<int>(artwork::InspectPng(oversized.data(), oversized.size(), &info)));
@@ -572,117 +626,109 @@ static void test_jpeg_marker_validation() {
       static_cast<int>(artwork::InspectJpeg(truncated.data(), truncated.size(), &info)));
 }
 
-static void test_actual_png_decode_crop_scale_and_alpha() {
-  std::array<uint16_t, artwork::kArtworkPixelCount> placeholder{};
+static void test_actual_png_decode_area_resampling() {
   std::array<uint16_t, artwork::kArtworkPixelCount> output{};
-  TEST_ASSERT_TRUE(artwork::GenerateArtworkPlaceholder(
-      0x99887766, placeholder.data(), placeholder.size()));
+  output.fill(0x5a5a);
 
-  const std::vector<uint8_t> alpha_pixels{
-      255, 0, 0, 0,       0, 255, 0, 255,
-      0, 0, 255, 128,     255, 255, 255, 255,
-  };
+  std::vector<uint8_t> alpha_pixels(2 * 2 * 4, 0xff);
   const std::vector<uint8_t> alpha_png = MakeRgbaPng(2, 2, alpha_pixels);
-  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kUnsupportedFormat),
       static_cast<int>(artwork::DecodeArtwork(
-          alpha_png.data(), alpha_png.size(), 1, placeholder.data(),
-          output.data(), output.size())));
-  TEST_ASSERT_EQUAL_HEX16(placeholder[0], output[0]);
-  TEST_ASSERT_EQUAL_HEX16(0x07e0, output[63]);
-  TEST_ASSERT_EQUAL_HEX16(
-      artwork::CompositeRgbaOverRgb565(0, 0, 255, 128,
-                                       placeholder[63 * 64]),
-      output[63 * 64]);
-  TEST_ASSERT_EQUAL_HEX16(0xffff, output[63 * 64 + 63]);
+          alpha_png.data(), alpha_png.size(), output.data(), output.size())));
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
 
-  std::array<uint16_t, artwork::kArtworkPixelCount> url_seed_a{};
-  std::array<uint16_t, artwork::kArtworkPixelCount> url_seed_b{};
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kSuccess),
+  std::vector<uint8_t> trns_pixels(2 * 2 * 3, 0xff);
+  const std::vector<uint8_t> trns_png = MakeRgbPng(2, 2, trns_pixels, true);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kUnsupportedFormat),
       static_cast<int>(artwork::DecodeArtwork(
-          alpha_png.data(), alpha_png.size(), 11, nullptr, url_seed_a.data(),
-          url_seed_a.size())));
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kSuccess),
-      static_cast<int>(artwork::DecodeArtwork(
-          alpha_png.data(), alpha_png.size(), 12, nullptr, url_seed_b.data(),
-          url_seed_b.size())));
-  TEST_ASSERT_NOT_EQUAL(
-      0, std::memcmp(url_seed_a.data(), url_seed_b.data(),
-                     artwork::kArtworkRgb565Bytes));
-  const uint64_t body_seed = artwork::EncodedBodyPlaceholderSeed(
-      alpha_png.data(), alpha_png.size());
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kSuccess),
-      static_cast<int>(artwork::DecodeArtwork(
-          alpha_png.data(), alpha_png.size(), body_seed, nullptr,
-          url_seed_a.data(), url_seed_a.size())));
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kSuccess),
-      static_cast<int>(artwork::DecodeArtwork(
-          alpha_png.data(), alpha_png.size(), body_seed, nullptr,
-          url_seed_b.data(), url_seed_b.size())));
-  TEST_ASSERT_EQUAL_MEMORY(url_seed_a.data(), url_seed_b.data(),
-                           artwork::kArtworkRgb565Bytes);
+          trns_png.data(), trns_png.size(), output.data(), output.size())));
+
+  constexpr uint8_t red = 123;
+  constexpr uint8_t green = 45;
+  constexpr uint8_t blue = 200;
+  for (uint32_t extent : {1u, 2u, 63u, 64u, 65u, 96u, 255u}) {
+    const std::vector<uint8_t> png = MakeRgbPng(
+        extent, extent, MakeSolidRgb(extent, extent, red, green, blue));
+    TEST_ASSERT_LESS_THAN_UINT(artwork::kMaxEncodedBytes, png.size());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::DecodeArtwork(
+            png.data(), png.size(), output.data(), output.size())));
+    AssertArtworkIsColor(output, red, green, blue);
+  }
+  for (const std::array<uint32_t, 2> dimensions : {
+           std::array<uint32_t, 2>{97, 63},
+           std::array<uint32_t, 2>{63, 97},
+           std::array<uint32_t, 2>{255, 65},
+       }) {
+    const std::vector<uint8_t> png = MakeRgbPng(
+        dimensions[0], dimensions[1],
+        MakeSolidRgb(dimensions[0], dimensions[1], red, green, blue));
+    TEST_ASSERT_LESS_THAN_UINT(artwork::kMaxEncodedBytes, png.size());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::DecodeArtwork(
+            png.data(), png.size(), output.data(), output.size())));
+    AssertArtworkIsColor(output, red, green, blue);
+  }
 
   constexpr uint32_t width = 128;
   constexpr uint32_t height = 96;
-  std::vector<uint8_t> crop_pixels(width * height * 4);
+  std::vector<uint8_t> crop_pixels(width * height * 3, 0);
   for (uint32_t y = 0; y < height; ++y) {
     for (uint32_t x = 0; x < width; ++x) {
-      const size_t index = (static_cast<size_t>(y) * width + x) * 4;
-      uint8_t red = 255;
-      uint8_t green = 0;
-      uint8_t blue = 0;
-      if (x >= 16 && x <= 111) {
-        red = 0;
-        green = 255;
+      const size_t index = (static_cast<size_t>(y) * width + x) * 3;
+      crop_pixels[index + 1] = 255;
+      if (x == 16) {
+        crop_pixels[index] = 255;
+        crop_pixels[index + 1] = 0;
       }
-      if (x == 111) {
-        green = 0;
-        blue = 255;
-      }
-      crop_pixels[index + 0] = red;
-      crop_pixels[index + 1] = green;
-      crop_pixels[index + 2] = blue;
-      crop_pixels[index + 3] = 255;
     }
   }
   const std::vector<uint8_t> crop_png =
-      MakeRgbaPng(width, height, crop_pixels);
+      MakeRgbPng(width, height, crop_pixels);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
       static_cast<int>(artwork::DecodeArtwork(
-          crop_png.data(), crop_png.size(), 2, nullptr, output.data(),
-          output.size())));
-  TEST_ASSERT_EQUAL_HEX16(0x07e0, output[0]);
-  TEST_ASSERT_EQUAL_HEX16(0x001f, output[63]);
+          crop_png.data(), crop_png.size(), output.data(), output.size())));
+  // The first destination pixel covers source columns 16 and 17 in a 2:1
+  // ratio.
+  TEST_ASSERT_EQUAL_HEX16(artwork::Rgb888ToRgb565(170, 85, 0), output[0]);
+  for (uint32_t x = 1; x < 64; ++x)
+    TEST_ASSERT_EQUAL_HEX16(0x07e0, output[x]);
+
+  const std::vector<uint8_t> small_png = MakeRgbPng(1, 1, {123, 45, 200});
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          small_png.data(), small_png.size(), output.data(), output.size())));
   for (uint16_t pixel : output)
-    TEST_ASSERT_NOT_EQUAL_HEX16(0xf800, pixel);
-  std::array<uint16_t, artwork::kArtworkPixelCount> other_identity{};
+    TEST_ASSERT_EQUAL_HEX16(artwork::Rgb888ToRgb565(123, 45, 200), pixel);
+
+  std::vector<uint8_t> rounding_pixels(96 * 96 * 3, 0);
+  for (uint32_t y = 0; y < 96; ++y)
+    rounding_pixels[(static_cast<size_t>(y) * 96 + 1) * 3] = 23;
+  const std::vector<uint8_t> rounding_png =
+      MakeRgbPng(96, 96, rounding_pixels);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
       static_cast<int>(artwork::DecodeArtwork(
-          crop_png.data(), crop_png.size(), 0xffffffffffffffffull, nullptr,
-          other_identity.data(), other_identity.size())));
-  TEST_ASSERT_EQUAL_MEMORY(output.data(), other_identity.data(),
-                           artwork::kArtworkRgb565Bytes);
+          rounding_png.data(), rounding_png.size(), output.data(), output.size())));
+  TEST_ASSERT_EQUAL_HEX16(artwork::Rgb888ToRgb565(8, 0, 0), output[0]);
 
   std::vector<uint8_t> incomplete = crop_png;
   incomplete.pop_back();
+  output.fill(0x5a5a);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kIncomplete),
       static_cast<int>(artwork::DecodeArtwork(
-          incomplete.data(), incomplete.size(), 2, nullptr, output.data(),
-          output.size())));
+          incomplete.data(), incomplete.size(), output.data(), output.size())));
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
 }
 
 static void test_png_decode_cancellation() {
   constexpr uint32_t width = 64;
   constexpr uint32_t height = 64;
-  std::vector<uint8_t> pixels(width * height * 4, 0);
-  for (size_t i = 0; i < pixels.size(); i += 4) {
+  std::vector<uint8_t> pixels(width * height * 3, 0);
+  for (size_t i = 0; i < pixels.size(); i += 3)
     pixels[i] = 255;
-    pixels[i + 3] = 255;
-  }
-  const std::vector<uint8_t> png = MakeRgbaPng(width, height, pixels);
+  const std::vector<uint8_t> png = MakeRgbPng(width, height, pixels);
   std::array<uint16_t, artwork::kArtworkPixelCount> output{};
   output.fill(0x5a5a);
 
@@ -691,8 +737,8 @@ static void test_png_decode_cancellation() {
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kCancelled),
       static_cast<int>(artwork::DecodeArtwork(
-          png.data(), png.size(), 0, nullptr, output.data(), output.size(),
-          &info, CancelAtCall, &immediate)));
+          png.data(), png.size(), output.data(), output.size(), &info,
+          CancelAtCall, &immediate)));
   TEST_ASSERT_EQUAL_UINT(1, immediate.calls);
   TEST_ASSERT_EQUAL_UINT32(width, info.width);
   TEST_ASSERT_EQUAL_UINT32(height, info.height);
@@ -705,24 +751,20 @@ static void test_png_decode_cancellation() {
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kIncomplete),
       static_cast<int>(artwork::DecodeArtwork(
-          incomplete.data(), incomplete.size(), 0, nullptr, output.data(),
-          output.size(), nullptr, CancelAtCall, &validation_first)));
+          incomplete.data(), incomplete.size(), output.data(), output.size(),
+          nullptr, CancelAtCall, &validation_first)));
   TEST_ASSERT_EQUAL_UINT(0, validation_first.calls);
 
-  std::array<uint16_t, artwork::kArtworkPixelCount> transparent_placeholder{};
   output.fill(0x5a5a);
   CancellationProbe after_draws{0, 75};
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kCancelled),
       static_cast<int>(artwork::DecodeArtwork(
-          png.data(), png.size(), 0, transparent_placeholder.data(),
-          output.data(), output.size(), nullptr, CancelAtCall,
-          &after_draws)));
+          png.data(), png.size(), output.data(), output.size(), nullptr,
+          CancelAtCall, &after_draws)));
   TEST_ASSERT_EQUAL_UINT(75, after_draws.calls);
-  const size_t red_pixels = static_cast<size_t>(std::count(
-      output.begin(), output.end(), artwork::Rgb888ToRgb565(255, 0, 0)));
-  TEST_ASSERT_GREATER_THAN_UINT(0, red_pixels);
-  TEST_ASSERT_LESS_THAN_UINT(artwork::kArtworkPixelCount, red_pixels);
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
 }
 
 static void test_actual_baseline_jpeg_decode_and_rejections() {
@@ -731,7 +773,7 @@ static void test_actual_baseline_jpeg_decode_and_rejections() {
   artwork::ImageInfo info{};
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
       static_cast<int>(artwork::DecodeArtwork(
-          jpeg.data(), jpeg.size(), 0, nullptr, output.data(), output.size(),
+          jpeg.data(), jpeg.size(), output.data(), output.size(),
           &info)));
   TEST_ASSERT_EQUAL_UINT32(128, info.width);
   TEST_ASSERT_EQUAL_UINT32(64, info.height);
@@ -742,20 +784,53 @@ static void test_actual_baseline_jpeg_decode_and_rejections() {
   TEST_ASSERT_UINT8_WITHIN(8, 180, GreenFrom565(output[63]));
   TEST_ASSERT_UINT8_WITHIN(8, 180, BlueFrom565(output[63]));
 
+  const std::vector<uint8_t> area_jpeg = MakeBaselineJpeg(96, 96, true);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(
+          area_jpeg.data(), area_jpeg.size(), output.data(), output.size())));
+  // Destination column 5 spans half of a dark source pixel and one bright
+  // source pixel. Its area average is near 170, not the bright nearest sample.
+  TEST_ASSERT_UINT8_WITHIN(24, 170, RedFrom565(output[5]));
+  TEST_ASSERT_UINT8_WITHIN(24, 170, GreenFrom565(output[5]));
+  TEST_ASSERT_UINT8_WITHIN(24, 170, BlueFrom565(output[5]));
+
   std::vector<uint8_t> progressive = jpeg;
   const size_t sof = FindJpegMarker(progressive, 0xc0);
   progressive[sof + 1] = 0xc2;
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kProgressiveJpeg),
       static_cast<int>(artwork::DecodeArtwork(
-          progressive.data(), progressive.size(), 0, nullptr, output.data(),
-          output.size())));
+          progressive.data(), progressive.size(), output.data(), output.size())));
   std::vector<uint8_t> incomplete = jpeg;
   incomplete.pop_back();
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kIncomplete),
       static_cast<int>(artwork::DecodeArtwork(
-          incomplete.data(), incomplete.size(), 0, nullptr, output.data(),
-          output.size())));
+          incomplete.data(), incomplete.size(), output.data(), output.size())));
+}
+
+static void test_jpeg_reduced_decode_callback_tiling() {
+  struct Fixture {
+    uint16_t width;
+    uint16_t height;
+  };
+  // These dimensions select half, quarter, and eighth reduced IDCT output.
+  // Their non-MCU edges require JPEGDEC to clip callback rectangles while
+  // still tiling ceil(source/divisor) pixels in row-band order.
+  for (const Fixture fixture : {
+           Fixture{129, 130}, Fixture{257, 258}, Fixture{513, 514},
+       }) {
+    const std::vector<uint8_t> jpeg =
+        MakeBaselineJpeg(fixture.width, fixture.height, false, 120);
+    TEST_ASSERT_LESS_THAN_UINT(artwork::kMaxEncodedBytes, jpeg.size());
+    std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+    artwork::ImageInfo info{};
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::DecodeArtwork(
+            jpeg.data(), jpeg.size(), output.data(), output.size(), &info)));
+    TEST_ASSERT_EQUAL_UINT32(fixture.width, info.width);
+    TEST_ASSERT_EQUAL_UINT32(fixture.height, info.height);
+    AssertArtworkNearGray(output, 120);
+  }
 }
 
 static void test_jpeg_decode_cancellation() {
@@ -768,7 +843,7 @@ static void test_jpeg_decode_cancellation() {
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kCancelled),
       static_cast<int>(artwork::DecodeArtwork(
-          jpeg.data(), jpeg.size(), 0, nullptr, output.data(), output.size(),
+          jpeg.data(), jpeg.size(), output.data(), output.size(),
           &info, CancelAtCall, &immediate)));
   TEST_ASSERT_EQUAL_UINT(1, immediate.calls);
   TEST_ASSERT_EQUAL_UINT32(128, info.width);
@@ -781,14 +856,11 @@ static void test_jpeg_decode_cancellation() {
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(artwork::DecodeStatus::kCancelled),
       static_cast<int>(artwork::DecodeArtwork(
-          jpeg.data(), jpeg.size(), 0, nullptr, output.data(), output.size(),
+          jpeg.data(), jpeg.size(), output.data(), output.size(),
           nullptr, CancelAtCall, &after_draws)));
   TEST_ASSERT_EQUAL_UINT(13, after_draws.calls);
-  const size_t nonzero = static_cast<size_t>(
-      std::count_if(output.begin(), output.end(),
-                    [](uint16_t pixel) { return pixel != 0; }));
-  TEST_ASSERT_GREATER_THAN_UINT(0, nonzero);
-  TEST_ASSERT_LESS_THAN_UINT(artwork::kArtworkPixelCount, nonzero);
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
 }
 
 static void test_record_and_redaction() {
@@ -821,9 +893,10 @@ int RunNowPlayingAdapterTests() {
   RUN_TEST(test_artwork_crop_mapping_and_color_math);
   RUN_TEST(test_png_chunk_validation);
   RUN_TEST(test_jpeg_marker_validation);
-  RUN_TEST(test_actual_png_decode_crop_scale_and_alpha);
+  RUN_TEST(test_actual_png_decode_area_resampling);
   RUN_TEST(test_png_decode_cancellation);
   RUN_TEST(test_actual_baseline_jpeg_decode_and_rejections);
+  RUN_TEST(test_jpeg_reduced_decode_callback_tiling);
   RUN_TEST(test_jpeg_decode_cancellation);
   RUN_TEST(test_record_and_redaction);
   return UNITY_END();

@@ -123,8 +123,9 @@ it from the native API connection. A successful configure or clear action safely
 reboots the display. Playback metadata uses the encrypted native API; artwork is
 fetched only while the now-playing dashboard is visible and a reference is
 pending. Supported JPEG and PNG bodies must be no larger than 512 KiB;
-progressive JPEG and animated or interlaced PNG are rejected. Missing,
-unsupported, and failed artwork use a deterministic 64×64 fallback.
+progressive JPEG and animated or interlaced PNG are rejected, as are PNG bodies
+with an alpha channel or `tRNS` transparency. Missing, unsupported, and failed
+artwork use a deterministic 64×64 fallback.
 
 ## Controls and features
 
@@ -216,8 +217,9 @@ not provide serial data.
   artwork references.
 - **Metadata appears without cover artwork:** check the resolved artwork URL from
   the display's network. It must return HTTP 200 without a redirect. The response
-  must be a supported JPEG or PNG body no larger than 512 KiB; progressive JPEG
-  and animated or interlaced PNG are rejected.
+  must be a supported JPEG or PNG body no larger than 512 KiB; progressive JPEG,
+  animated or interlaced PNG, and PNG bodies with an alpha channel or `tRNS`
+  transparency are rejected.
 
 ## Privacy and limitations
 

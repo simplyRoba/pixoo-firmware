@@ -5,13 +5,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
-#include <limits>
 #include <new>
 
 #include <JPEGDEC.h>
 #include <pngle.h>
-
-#include "now_playing_art.h"
 
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
@@ -181,8 +178,6 @@ bool IsSupportedPngDepth(uint8_t color_type, uint8_t depth) {
       return depth == 1 || depth == 2 || depth == 4 || depth == 8 ||
              depth == 16;
     case 2:
-    case 4:
-    case 6:
       return depth == 8 || depth == 16;
     case 3:
       return depth == 1 || depth == 2 || depth == 4 || depth == 8;
@@ -197,21 +192,54 @@ bool IsStartOfFrameMarker(uint8_t marker) {
   return marker != 0xc4 && marker != 0xc8 && marker != 0xcc;
 }
 
+struct PixelAccumulation {
+  uint32_t red{0};
+  uint32_t green{0};
+  uint32_t blue{0};
+  uint32_t coverage{0};
+};
+
+PixelAccumulation *AllocateAccumulation() {
+#ifdef ESP_PLATFORM
+  return static_cast<PixelAccumulation *>(heap_caps_calloc(
+      kArtworkPixelCount, sizeof(PixelAccumulation),
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+  return new (std::nothrow) PixelAccumulation[kArtworkPixelCount]{};
+#endif
+}
+
+void FreeAccumulation(PixelAccumulation *accumulation) {
+#ifdef ESP_PLATFORM
+  heap_caps_free(accumulation);
+#else
+  delete[] accumulation;
+#endif
+}
+
+class ScopedAccumulation {
+ public:
+  ScopedAccumulation() : data_(AllocateAccumulation()) {}
+  ~ScopedAccumulation() { FreeAccumulation(this->data_); }
+  PixelAccumulation *get() const { return this->data_; }
+
+ private:
+  PixelAccumulation *data_{nullptr};
+};
+
 struct SampleContext {
-  uint16_t *destination{nullptr};
+  PixelAccumulation *accumulation{nullptr};
   uint32_t source_width{0};
   uint32_t source_height{0};
   CropRect crop{};
-  uint32_t x_map[kArtworkWidth]{};
-  uint32_t y_map[kArtworkHeight]{};
-  uint8_t written[(kArtworkPixelCount + 7) / 8]{};
-  uint32_t written_count{0};
   uint32_t callback_count{0};
   uint32_t callback_pixels{0};
+  uint32_t expected_callback_x{0};
+  uint32_t expected_callback_y{0};
+  uint32_t callback_band_height{0};
   uint32_t pixels_since_yield{0};
   CancellationCallback cancellation{nullptr};
   void *cancellation_context{nullptr};
-  bool composite_alpha{false};
   bool failed{false};
   bool work_limit_exceeded{false};
   bool cancelled{false};
@@ -237,97 +265,90 @@ bool CancellationRequested(SampleContext *context) {
 }
 
 void InitializeSampleContext(SampleContext *context, uint32_t width,
-                             uint32_t height, uint16_t *destination,
-                             bool composite_alpha) {
-  context->destination = destination;
+                             uint32_t height,
+                             PixelAccumulation *accumulation) {
+  context->accumulation = accumulation;
   context->source_width = width;
   context->source_height = height;
   context->crop = CenterCrop(width, height);
-  context->composite_alpha = composite_alpha;
-  for (uint32_t x = 0; x < kArtworkWidth; ++x)
-    context->x_map[x] = MapDestinationCoordinate(
-        x, context->crop.x, context->crop.width);
-  for (uint32_t y = 0; y < kArtworkHeight; ++y)
-    context->y_map[y] = MapDestinationCoordinate(
-        y, context->crop.y, context->crop.height);
 }
 
-// Finds all destination coordinates selecting one source coordinate. A
-// downscale has zero or one result; an upscale may repeat one source sample.
-// The mapping array is monotonic, so the small fixed search is bounded by 64.
-bool FindDestinationRange(const uint32_t *mapping, uint32_t crop_start,
-                          uint32_t crop_extent, uint32_t source,
-                          uint32_t *first, uint32_t *last) {
-  if (source < crop_start || source >= crop_start + crop_extent)
-    return false;
-
-  if (crop_extent >= kArtworkWidth) {
-    const uint32_t relative = source - crop_start;
-    const uint32_t estimate = static_cast<uint32_t>(
-        (static_cast<uint64_t>(relative) * kArtworkWidth) / crop_extent);
-    const uint32_t begin = estimate > 1 ? estimate - 2 : 0;
-    const uint32_t end = std::min<uint32_t>(kArtworkWidth, estimate + 3);
-    for (uint32_t index = begin; index < end; ++index) {
-      if (mapping[index] == source) {
-        *first = index;
-        *last = index + 1;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  uint32_t begin = 0;
-  while (begin < kArtworkWidth && mapping[begin] < source)
-    ++begin;
-  if (begin == kArtworkWidth || mapping[begin] != source)
-    return false;
-  uint32_t end = begin + 1;
-  while (end < kArtworkWidth && mapping[end] == source)
-    ++end;
-  *first = begin;
-  *last = end;
-  return true;
+uint32_t Overlap(uint64_t first_start, uint64_t first_end,
+                 uint64_t second_start, uint64_t second_end) {
+  const uint64_t start = std::max(first_start, second_start);
+  const uint64_t end = std::min(first_end, second_end);
+  return end > start ? static_cast<uint32_t>(end - start) : 0;
 }
 
-void WriteSourceSample(SampleContext *context, uint32_t source_x,
-                       uint32_t source_y, uint8_t red, uint8_t green,
-                       uint8_t blue, uint8_t alpha) {
-  if (context->failed)
+void AccumulateSourceSample(SampleContext *context, uint32_t source_x,
+                            uint32_t source_y, uint8_t red, uint8_t green,
+                            uint8_t blue) {
+  if (context->failed || source_x < context->crop.x ||
+      source_y < context->crop.y ||
+      source_x >= context->crop.x + context->crop.width ||
+      source_y >= context->crop.y + context->crop.height)
     return;
-  uint32_t first_x = 0;
-  uint32_t last_x = 0;
-  if (!FindDestinationRange(context->x_map, context->crop.x,
-                            context->crop.width, source_x, &first_x,
-                            &last_x))
-    return;
-  uint32_t first_y = 0;
-  uint32_t last_y = 0;
-  if (!FindDestinationRange(context->y_map, context->crop.y,
-                            context->crop.height, source_y, &first_y,
-                            &last_y))
-    return;
+
+  const uint64_t relative_x = source_x - context->crop.x;
+  const uint64_t relative_y = source_y - context->crop.y;
+  const uint64_t source_x_start = relative_x * kArtworkWidth;
+  const uint64_t source_y_start = relative_y * kArtworkHeight;
+  const uint64_t source_x_end = source_x_start + kArtworkWidth;
+  const uint64_t source_y_end = source_y_start + kArtworkHeight;
+  const uint32_t first_x = static_cast<uint32_t>(
+      source_x_start / context->crop.width);
+  const uint32_t first_y = static_cast<uint32_t>(
+      source_y_start / context->crop.height);
+  const uint32_t last_x = std::min<uint32_t>(
+      kArtworkWidth, static_cast<uint32_t>(
+                         (source_x_end + context->crop.width - 1) /
+                         context->crop.width));
+  const uint32_t last_y = std::min<uint32_t>(
+      kArtworkHeight, static_cast<uint32_t>(
+                          (source_y_end + context->crop.height - 1) /
+                          context->crop.height));
 
   for (uint32_t y = first_y; y < last_y; ++y) {
+    const uint32_t y_overlap = Overlap(
+        source_y_start, source_y_end,
+        static_cast<uint64_t>(y) * context->crop.height,
+        static_cast<uint64_t>(y + 1) * context->crop.height);
     for (uint32_t x = first_x; x < last_x; ++x) {
-      const size_t destination_index = y * kArtworkWidth + x;
-      const uint8_t mask = static_cast<uint8_t>(1u << (destination_index & 7u));
-      uint8_t &written_byte = context->written[destination_index >> 3u];
-      if ((written_byte & mask) != 0) {
+      const uint32_t x_overlap = Overlap(
+          source_x_start, source_x_end,
+          static_cast<uint64_t>(x) * context->crop.width,
+          static_cast<uint64_t>(x + 1) * context->crop.width);
+      const uint32_t weight = x_overlap * y_overlap;
+      PixelAccumulation &destination =
+          context->accumulation[y * kArtworkWidth + x];
+      const uint32_t area = context->crop.width * context->crop.height;
+      if (weight == 0 || weight > area ||
+          destination.coverage > area - weight) {
         context->failed = true;
         return;
       }
-      written_byte |= mask;
-      ++context->written_count;
-      if (context->composite_alpha) {
-        context->destination[destination_index] = CompositeRgbaOverRgb565(
-            red, green, blue, alpha, context->destination[destination_index]);
-      } else {
-        context->destination[destination_index] =
-            Rgb888ToRgb565(red, green, blue);
-      }
+      destination.red += static_cast<uint32_t>(red) * weight;
+      destination.green += static_cast<uint32_t>(green) * weight;
+      destination.blue += static_cast<uint32_t>(blue) * weight;
+      destination.coverage += weight;
     }
   }
+}
+
+DecodeStatus FinalizeSamples(const SampleContext &context,
+                             uint16_t *destination) {
+  const uint32_t area = context.crop.width * context.crop.height;
+  for (size_t index = 0; index < kArtworkPixelCount; ++index)
+    if (context.accumulation[index].coverage != area)
+      return DecodeStatus::kIncomplete;
+  for (size_t index = 0; index < kArtworkPixelCount; ++index) {
+    const PixelAccumulation &source = context.accumulation[index];
+    destination[index] = Rgb888ToRgb565(
+        static_cast<uint8_t>((source.red + area / 2) / area),
+        static_cast<uint8_t>((source.green + area / 2) / area),
+        static_cast<uint8_t>((source.blue + area / 2) / area));
+  }
+  return DecodeStatus::kSuccess;
 }
 
 struct PngDecodeContext {
@@ -362,7 +383,8 @@ void PngDrawCallback(pngle_t *png, uint32_t x, uint32_t y, uint32_t width,
   // Interlaced PNG is rejected before pngle runs, so each callback must be one
   // source pixel. Enforcing this keeps callback work tied to source_pixels.
   if (width != 1 || height != 1 || x >= samples.source_width ||
-      y >= samples.source_height || rgba == nullptr) {
+      y >= samples.source_height || x != samples.expected_callback_x ||
+      y != samples.expected_callback_y || rgba == nullptr) {
     samples.failed = true;
     return;
   }
@@ -371,7 +393,13 @@ void PngDrawCallback(pngle_t *png, uint32_t x, uint32_t y, uint32_t width,
     samples.work_limit_exceeded = true;
     return;
   }
-  WriteSourceSample(&samples, x, y, rgba[0], rgba[1], rgba[2], rgba[3]);
+  AccumulateSourceSample(&samples, x, y, rgba[0], rgba[1], rgba[2]);
+  if (samples.failed)
+    return;
+  if (++samples.expected_callback_x == samples.source_width) {
+    samples.expected_callback_x = 0;
+    ++samples.expected_callback_y;
+  }
   YieldDecoderIfDue(&samples, 1);
 }
 
@@ -394,8 +422,17 @@ int JpegDrawCallback(JPEGDRAW *draw) {
   }
   if (draw->x < 0 || draw->y < 0 || draw->iWidth <= 0 ||
       draw->iWidthUsed <= 0 || draw->iWidthUsed > draw->iWidth ||
-      draw->iHeight <= 0 || draw->pPixels == nullptr)
+      draw->iHeight <= 0 || draw->pPixels == nullptr ||
+      static_cast<uint32_t>(draw->x) != samples->expected_callback_x ||
+      static_cast<uint32_t>(draw->y) != samples->expected_callback_y)
     return samples->failed = true, 0;
+
+  if (samples->expected_callback_x == 0) {
+    samples->callback_band_height = static_cast<uint32_t>(draw->iHeight);
+  } else if (static_cast<uint32_t>(draw->iHeight) !=
+             samples->callback_band_height) {
+    return samples->failed = true, 0;
+  }
 
   const uint64_t right = static_cast<uint64_t>(draw->x) + draw->iWidthUsed;
   const uint64_t bottom = static_cast<uint64_t>(draw->y) + draw->iHeight;
@@ -418,9 +455,9 @@ int JpegDrawCallback(JPEGDRAW *draw) {
       const uint8_t red = static_cast<uint8_t>(((pixel >> 11) & 0x1f) * 255 / 31);
       const uint8_t green = static_cast<uint8_t>(((pixel >> 5) & 0x3f) * 255 / 63);
       const uint8_t blue = static_cast<uint8_t>((pixel & 0x1f) * 255 / 31);
-      WriteSourceSample(samples, static_cast<uint32_t>(draw->x + x),
-                        static_cast<uint32_t>(draw->y + y), red, green, blue,
-                        255);
+      AccumulateSourceSample(samples, static_cast<uint32_t>(draw->x + x),
+                             static_cast<uint32_t>(draw->y + y), red, green,
+                             blue);
       if (samples->failed)
         return 0;
       YieldDecoderIfDue(samples, 1);
@@ -431,6 +468,12 @@ int JpegDrawCallback(JPEGDRAW *draw) {
             kJpegCancellationIntervalPixels;
       }
     }
+  }
+  if ((samples->expected_callback_x +=
+       static_cast<uint32_t>(draw->iWidthUsed)) == samples->source_width) {
+    samples->expected_callback_x = 0;
+    samples->expected_callback_y += samples->callback_band_height;
+    samples->callback_band_height = 0;
   }
   return 1;
 }
@@ -450,10 +493,13 @@ DecodeStatus DecodePng(const uint8_t *encoded, size_t encoded_size,
   context.samples.cancellation_context = cancellation_context;
   if (CancellationRequested(&context.samples))
     return DecodeStatus::kCancelled;
+  ScopedAccumulation accumulation;
+  if (accumulation.get() == nullptr)
+    return DecodeStatus::kOutOfMemory;
   context.expected_width = info.width;
   context.expected_height = info.height;
   InitializeSampleContext(&context.samples, info.width, info.height,
-                          destination, true);
+                          accumulation.get());
 
   pngle_t *png = CreatePngDecoder();
   if (png == nullptr)
@@ -497,9 +543,12 @@ DecodeStatus DecodePng(const uint8_t *encoded, size_t encoded_size,
     return DecodeStatus::kDecodeFailed;
   if (context.samples.callback_count !=
           static_cast<uint64_t>(info.width) * info.height ||
-      context.samples.written_count != kArtworkPixelCount)
+      context.samples.callback_pixels !=
+          static_cast<uint64_t>(info.width) * info.height ||
+      context.samples.expected_callback_x != 0 ||
+      context.samples.expected_callback_y != info.height)
     return DecodeStatus::kIncomplete;
-  return DecodeStatus::kSuccess;
+  return FinalizeSamples(context.samples, destination);
 }
 
 DecodeStatus DecodeJpeg(uint8_t *encoded, size_t encoded_size,
@@ -511,6 +560,10 @@ DecodeStatus DecodeJpeg(uint8_t *encoded, size_t encoded_size,
   context.cancellation_context = cancellation_context;
   if (CancellationRequested(&context))
     return DecodeStatus::kCancelled;
+
+  ScopedAccumulation accumulation;
+  if (accumulation.get() == nullptr)
+    return DecodeStatus::kOutOfMemory;
 
   JPEGDEC *jpeg = CreateJpegDecoder();
   if (jpeg == nullptr)
@@ -547,13 +600,12 @@ DecodeStatus DecodeJpeg(uint8_t *encoded, size_t encoded_size,
     scale_option = JPEG_SCALE_HALF;
   }
 
-  // JPEGDEC's reduced IDCT produces ceil(source/divisor) dimensions. The
-  // deterministic nearest-neighbor map center-crops that reduced raster, which
-  // preserves the source aspect ratio while avoiding source-sized storage.
+  // JPEGDEC's reduced IDCT produces ceil(source/divisor) dimensions before
+  // the final centered area resampling stage.
   const uint32_t decoded_width = (info.width + divisor - 1) / divisor;
   const uint32_t decoded_height = (info.height + divisor - 1) / divisor;
-  InitializeSampleContext(&context, decoded_width, decoded_height, destination,
-                          false);
+  InitializeSampleContext(&context, decoded_width, decoded_height,
+                          accumulation.get());
   jpeg->setUserPointer(&context);
   jpeg->setPixelType(RGB565_LITTLE_ENDIAN);
   jpeg->setMaxOutputSize(1);
@@ -568,9 +620,13 @@ DecodeStatus DecodeJpeg(uint8_t *encoded, size_t encoded_size,
     return DecodeStatus::kWorkLimitExceeded;
   if (!decoded || context.failed)
     return DecodeStatus::kDecodeFailed;
-  if (context.written_count != kArtworkPixelCount)
+  if (context.callback_pixels !=
+          static_cast<uint64_t>(decoded_width) * decoded_height ||
+      context.expected_callback_x != 0 ||
+      context.expected_callback_y != decoded_height ||
+      context.callback_band_height != 0)
     return DecodeStatus::kIncomplete;
-  return DecodeStatus::kSuccess;
+  return FinalizeSamples(context, destination);
 }
 
 }  // namespace
@@ -647,12 +703,13 @@ DecodeStatus InspectPng(const uint8_t *encoded, size_t encoded_size,
         return dimensions;
       const uint8_t depth = data[8];
       const uint8_t color_type = data[9];
+      if (color_type == 4 || color_type == 6)
+        return DecodeStatus::kUnsupportedFormat;
       if (!IsSupportedPngDepth(color_type, depth) || data[10] != 0 ||
           data[11] != 0 || data[12] > 1)
         return DecodeStatus::kMalformed;
       if (data[12] != 0)
         return DecodeStatus::kInterlacedPng;
-      info->has_alpha = color_type == 4 || color_type == 6;
     } else if (type == kPngIdat) {
       if (!saw_ihdr || length == 0 || idat_ended)
         return DecodeStatus::kMalformed;
@@ -661,7 +718,7 @@ DecodeStatus InspectPng(const uint8_t *encoded, size_t encoded_size,
       idat_ended = true;
     }
     if (type == kPngTrns)
-      info->has_alpha = true;
+      return DecodeStatus::kUnsupportedFormat;
     if (type == kPngIend) {
       if (length != 0 || !saw_idat)
         return DecodeStatus::kMalformed;
@@ -835,67 +892,17 @@ CropRect CenterCrop(uint32_t source_width, uint32_t source_height) {
           extent, extent};
 }
 
-uint32_t MapDestinationCoordinate(uint32_t destination_coordinate,
-                                  uint32_t crop_start,
-                                  uint32_t crop_extent) {
-  if (crop_extent == 0)
-    return crop_start;
-  if (destination_coordinate >= kArtworkWidth)
-    destination_coordinate = kArtworkWidth - 1;
-  // Pixel centers are mapped with integer arithmetic: destination center
-  // (2*d+1)/128 selects floor(center*crop_extent) in the centered source crop.
-  // This fills all 64x64 outputs for both upscales and downscales without a
-  // source-sized intermediate image.
-  const uint64_t numerator =
-      (2u * static_cast<uint64_t>(destination_coordinate) + 1u) * crop_extent;
-  const uint32_t relative = static_cast<uint32_t>(
-      numerator / (2u * static_cast<uint64_t>(kArtworkWidth)));
-  return crop_start + std::min(relative, crop_extent - 1);
-}
-
 uint16_t Rgb888ToRgb565(uint8_t red, uint8_t green, uint8_t blue) {
   return static_cast<uint16_t>((static_cast<uint16_t>(red >> 3) << 11) |
                                (static_cast<uint16_t>(green >> 2) << 5) |
                                static_cast<uint16_t>(blue >> 3));
 }
 
-uint16_t CompositeRgbaOverRgb565(uint8_t red, uint8_t green, uint8_t blue,
-                                 uint8_t alpha, uint16_t background) {
-  if (alpha == 255)
-    return Rgb888ToRgb565(red, green, blue);
-  if (alpha == 0)
-    return background;
-  const uint8_t background_red = static_cast<uint8_t>(
-      (((background >> 11) & 0x1f) * 255 + 15) / 31);
-  const uint8_t background_green = static_cast<uint8_t>(
-      (((background >> 5) & 0x3f) * 255 + 31) / 63);
-  const uint8_t background_blue = static_cast<uint8_t>(
-      ((background & 0x1f) * 255 + 15) / 31);
-  const uint32_t inverse = 255u - alpha;
-  const uint8_t out_red = static_cast<uint8_t>(
-      (static_cast<uint32_t>(red) * alpha + background_red * inverse + 127) /
-      255);
-  const uint8_t out_green = static_cast<uint8_t>(
-      (static_cast<uint32_t>(green) * alpha +
-       background_green * inverse + 127) /
-      255);
-  const uint8_t out_blue = static_cast<uint8_t>(
-      (static_cast<uint32_t>(blue) * alpha + background_blue * inverse + 127) /
-      255);
-  return Rgb888ToRgb565(out_red, out_green, out_blue);
-}
-
-bool GenerateArtworkPlaceholder(uint64_t identity, uint16_t *destination,
-                                size_t destination_count) {
-  return pixoo::now_playing::GenerateArtworkPlaceholder(
-      identity, destination, destination_count);
-}
-
-DecodeStatus DecodeArtwork(
-    const uint8_t *encoded, size_t encoded_size,
-    uint64_t placeholder_identity, const uint16_t *placeholder,
-    uint16_t *destination, size_t destination_count, ImageInfo *decoded_info,
-    CancellationCallback cancellation, void *cancellation_context) {
+DecodeStatus DecodeArtwork(const uint8_t *encoded, size_t encoded_size,
+                           uint16_t *destination, size_t destination_count,
+                           ImageInfo *decoded_info,
+                           CancellationCallback cancellation,
+                           void *cancellation_context) {
   if (encoded == nullptr || destination == nullptr ||
       destination_count < kArtworkPixelCount || encoded_size == 0)
     return DecodeStatus::kInvalidArgument;
@@ -908,20 +915,12 @@ DecodeStatus DecodeArtwork(
   if (cancellation != nullptr && cancellation(cancellation_context))
     return DecodeStatus::kCancelled;
 
-  if (info.format == ImageMagic::kPng) {
-    if (placeholder != nullptr)
-      std::memmove(destination, placeholder, kArtworkRgb565Bytes);
-    else if (!GenerateArtworkPlaceholder(placeholder_identity, destination,
-                                         destination_count))
-      return DecodeStatus::kInvalidArgument;
+  if (info.format == ImageMagic::kPng)
     return DecodePng(encoded, encoded_size, info, destination, cancellation,
                      cancellation_context);
-  }
-  if (info.format == ImageMagic::kJpeg) {
-    std::memset(destination, 0, kArtworkRgb565Bytes);
+  if (info.format == ImageMagic::kJpeg)
     return DecodeJpeg(const_cast<uint8_t *>(encoded), encoded_size, info,
                       destination, cancellation, cancellation_context);
-  }
   return DecodeStatus::kUnsupportedFormat;
 }
 
