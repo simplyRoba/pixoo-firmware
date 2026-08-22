@@ -18,10 +18,12 @@ CONF_STOPWATCH_RUNNING = "stopwatch_running"
 CONF_TIMER_REMAINING_MS = "timer_remaining_ms"
 CONF_TIMER_RUNNING = "timer_running"
 CONF_NOW_PLAYING_SOURCE = "now_playing_source"
+CONF_WEATHER_SOURCE = "weather_source"
 CONF_ADAPTER_CHECKS = "adapter_checks"
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 NowPlayingSource = pixoo_ns.namespace("now_playing").class_("NowPlayingSource")
+WeatherSource = pixoo_ns.class_("WeatherSource")
 
 pixoo64_ns = cg.esphome_ns.namespace("pixoo64")
 content_ns = pixoo64_ns.namespace("content")
@@ -57,6 +59,7 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
         cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
         cv.Optional(CONF_NOW_PLAYING_SOURCE): cv.use_id(NowPlayingSource),
+        cv.Optional(CONF_WEATHER_SOURCE): cv.use_id(WeatherSource),
         cv.Optional(CONF_ADAPTER_CHECKS, default=False): cv.boolean,
         cv.Optional(CONF_ANIMATION_FRAMES, default=[]): cv.ensure_list(
             ANIMATION_FRAME_SCHEMA
@@ -98,6 +101,12 @@ async def to_code(config):
         cg.add(
             var.set_now_playing_source(
                 await cg.get_variable(config[CONF_NOW_PLAYING_SOURCE])
+            )
+        )
+    if CONF_WEATHER_SOURCE in config:
+        cg.add(
+            var.set_weather_source(
+                await cg.get_variable(config[CONF_WEATHER_SOURCE])
             )
         )
     cg.add(var.set_animation_only(config[CONF_ANIMATION_ONLY]))

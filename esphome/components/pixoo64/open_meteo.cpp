@@ -173,11 +173,8 @@ uint32_t OpenMeteoSource::refresh_interval_ms_() const {
   return (uint32_t)(minutes * 60000.0f);
 }
 
-// Called by the dashboard while weather is shown. Signals the background worker
-// to fetch only when the network is up, no fetch is already running, and the
-// data is stale (older than refresh_interval_, or never fetched); a hidden
-// dashboard never triggers a fetch. Returns immediately — the fetch runs off
-// the render loop.
+// Signals demand to refresh stale data. Network, in-flight, and retry policy
+// gate background work; this call returns without blocking the render loop.
 void OpenMeteoSource::RequestRefresh() {
   if (this->impl_ == nullptr || this->impl_->worker.StopRequested())
     return;

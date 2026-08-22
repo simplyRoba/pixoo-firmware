@@ -279,9 +279,12 @@ the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.
 
 `ContentController` stores non-owning pointers to generated dashboard objects.
-It resolves IDs, calls visibility hooks, advances animation from the application
-tick, and renders into reusable storage. The application does not switch on
-dashboard type.
+It resolves IDs, manages dashboard preparation and visibility, advances
+animation from the application tick, and renders into reusable storage. A
+pending dashboard prepares while the visible dashboard renders. If no dashboard
+is visible, a black loading screen contains an animated cyan-to-violet ring.
+Selection changes and hidden base content cancel pending preparation. The
+controller has no dashboard-type branches, timeout, or failure state.
 
 A dashboard that needs wall-clock time receives an ESPHome real-time clock. Its
 animation still advances from the `now_ms` tick supplied by `FirmwareApp`; this
@@ -329,16 +332,18 @@ overlays managed by a bounded FIFO in `FirmwareApp`.
 ### 5.4 External data and microphone work
 
 `OpenMeteoSource` performs HTTP work outside the rendering path and exposes a
-coherent weather snapshot through `WeatherSource`. Requests are made only while
-the weather dashboard is relevant, Wi-Fi is connected, and cached data needs a
-refresh.
+coherent weather snapshot through `WeatherSource`. Preparation and visibility
+permit refresh requests. `ReadyToShow` and `HasPresentation` require an available
+snapshot.
 
 `HomeAssistantMediaSource` receives media metadata through native-API
-subscriptions and fetches artwork asynchronously only while the dashboard is
-visible. It publishes complete decoded images through fixed slots so rendering
-never waits for network or decoder work. Exact body comparison reuses an existing
-image when only its URL changed. The renderer retains one coherent presentation
-while replacement artwork is pending, then fades to the ready image or fallback.
+subscriptions and fetches artwork asynchronously while preparation or visibility
+makes artwork eligible. It publishes decoded images through fixed slots. Exact
+body comparison reuses an image when only its URL changed. The renderer retains
+one coherent presentation while visible replacement artwork is pending, then
+fades to the ready image or generated fallback. Entry requires completion of
+the initial Home Assistant attribute sweep, no staged metadata publication, a
+ready source snapshot, and ready artwork when an artwork identity exists.
 
 Open-Meteo and artwork share bounded HTTP retrieval: it rejects oversized
 advertised bodies, reads capped chunks to transfer completion, and ends the

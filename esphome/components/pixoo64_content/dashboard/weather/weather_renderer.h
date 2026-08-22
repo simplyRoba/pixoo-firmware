@@ -62,7 +62,4 @@ struct WeatherFonts {
 void RenderWeather(display::Display &display, const WeatherViewModel &view,
                    const WeatherFonts &fonts, const IconAnimation &anim = {});
 
-// Draw a placeholder shown while the source has no data yet.
-void RenderWeatherLoading(display::Display &display, const WeatherFonts &fonts);
-
 }  // namespace esphome::pixoo64::weather

@@ -16,9 +16,9 @@ class StaticNowPlayingSource final
   void add_snapshot(
       uint32_t at_ms, pixoo::now_playing::NowPlayingSourceState source_state,
       pixoo::now_playing::PlaybackState playback_state,
-      const std::string &title, const std::string &artist,
+      bool snapshot_settled, const std::string &title, const std::string &artist,
       bool has_duration, uint32_t duration_ms, bool has_position,
-      uint32_t position_ms, uint64_t media_identity,
+      uint32_t position_ms, uint64_t media_identity, bool artwork_known,
       bool has_artwork_identity, uint64_t artwork_identity,
       pixoo::now_playing::ArtworkAvailability artwork_availability,
       uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms,
@@ -30,6 +30,7 @@ class StaticNowPlayingSource final
   }
 
   pixoo::now_playing::NowPlayingData Data() const override;
+  bool SnapshotSettled() const override;
   void SetArtworkEligible(bool eligible, uint32_t now_ms) override;
   bool CopyArtwork(uint64_t expected_identity, uint32_t expected_revision,
                    uint16_t *destination,
@@ -45,6 +46,7 @@ class StaticNowPlayingSource final
   struct TimedSnapshot {
     uint32_t at_ms{0};
     uint32_t artwork_copy_ready_at_ms{0};
+    bool snapshot_settled{true};
     bool has_artwork_content_identity{false};
     uint64_t artwork_content_identity{0};
     uint32_t artwork_content_revision{0};

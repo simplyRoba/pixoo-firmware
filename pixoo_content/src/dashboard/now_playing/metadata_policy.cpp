@@ -208,6 +208,12 @@ bool NowPlayingMetadataPolicy::Publish_(uint32_t now_ms, NowPlayingData *publish
                               effective_duration_ms, effective_art, effective_art_id);
   const bool new_generation =
       changed_explicit || (!effective_explicit && retained_identity != data_.media_identity);
+  const bool fresh_root = playback_in_burst &&
+                          data_.source_state != NowPlayingSourceState::kReady;
+  if (new_generation || fresh_root)
+    next.artwork_known = artwork_in_burst;
+  else if (artwork_in_burst)
+    next.artwork_known = true;
 
   if (new_generation) {
     ++next.media_generation;

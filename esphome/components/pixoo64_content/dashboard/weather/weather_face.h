@@ -29,9 +29,6 @@ class WeatherFace {
   virtual void Render(display::Display &display,
                       const WeatherViewModel &view,
                       const WeatherFonts &fonts) const = 0;
-  // Draw the placeholder shown while the source has no data yet.
-  virtual void RenderLoading(display::Display &display,
-                             const WeatherFonts &fonts) const = 0;
 };
 
 }  // namespace esphome::pixoo64::dashboard::weather

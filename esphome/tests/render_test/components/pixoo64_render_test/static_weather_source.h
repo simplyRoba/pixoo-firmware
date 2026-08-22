@@ -49,7 +49,8 @@ class StaticWeatherSource : public pixoo::WeatherSource {
   // RenderTestDisplay sets this test-only clock before every render.
   static void SetCurrentRenderTime(uint32_t now_ms);
 
-  void RequestRefresh() override {}
+  void RequestRefresh() override { ++this->request_count_; }
+  uint32_t request_count() const { return this->request_count_; }
   bool HasData() const override {
     return !this->has_available_at_ ||
            deadline_reached_(current_render_time_ms_, this->available_at_ms_);
@@ -82,6 +83,7 @@ class StaticWeatherSource : public pixoo::WeatherSource {
   float latitude_{0.0f};
   float longitude_{0.0f};
   bool has_location_{false};
+  uint32_t request_count_{0};
 };
 
 }  // namespace esphome::pixoo64_render_test

@@ -10,10 +10,10 @@ uint32_t StaticNowPlayingSource::current_render_time_ms_ = 0;
 void StaticNowPlayingSource::add_snapshot(
     uint32_t at_ms,
     pixoo::now_playing::NowPlayingSourceState source_state,
-    pixoo::now_playing::PlaybackState playback_state,
+    pixoo::now_playing::PlaybackState playback_state, bool snapshot_settled,
     const std::string &title, const std::string &artist, bool has_duration,
     uint32_t duration_ms, bool has_position, uint32_t position_ms,
-    uint64_t media_identity, bool has_artwork_identity,
+    uint64_t media_identity, bool artwork_known, bool has_artwork_identity,
     uint64_t artwork_identity,
     pixoo::now_playing::ArtworkAvailability artwork_availability,
     uint32_t artwork_revision, uint32_t artwork_copy_ready_at_ms,
@@ -24,6 +24,7 @@ void StaticNowPlayingSource::add_snapshot(
   TimedSnapshot &entry = this->snapshots_[this->snapshot_count_];
   entry.at_ms = at_ms;
   entry.artwork_copy_ready_at_ms = artwork_copy_ready_at_ms;
+  entry.snapshot_settled = snapshot_settled;
   entry.has_artwork_content_identity = has_artwork_content_identity;
   entry.artwork_content_identity = artwork_content_identity;
   entry.artwork_content_revision = artwork_content_revision;
@@ -44,6 +45,7 @@ void StaticNowPlayingSource::add_snapshot(
   entry.data.has_position = has_position;
   entry.data.position_ms = has_position ? position_ms : 0;
   entry.data.media_identity = media_identity;
+  entry.data.artwork_known = artwork_known;
   entry.data.has_artwork_identity = has_artwork_identity;
   entry.data.artwork_identity = has_artwork_identity ? artwork_identity : 0;
   entry.data.artwork_availability =
@@ -72,6 +74,10 @@ const StaticNowPlayingSource::TimedSnapshot &StaticNowPlayingSource::Current_()
 pixoo::now_playing::NowPlayingData StaticNowPlayingSource::Data() const {
   ++this->data_count_;
   return this->Current_().data;
+}
+
+bool StaticNowPlayingSource::SnapshotSettled() const {
+  return this->Current_().snapshot_settled;
 }
 
 void StaticNowPlayingSource::SetArtworkEligible(bool eligible,

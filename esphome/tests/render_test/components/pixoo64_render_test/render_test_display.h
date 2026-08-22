@@ -25,6 +25,9 @@ class RenderTestDisplay final : public display::Display {
   void set_now_playing_source(StaticNowPlayingSource *source) {
     this->now_playing_source_ = source;
   }
+  void set_weather_source(StaticWeatherSource *source) {
+    this->weather_source_ = source;
+  }
   void set_output_dir(std::string dir);
   void set_animation_only(bool animation_only) {
     this->animation_only_ = animation_only;
@@ -66,6 +69,7 @@ class RenderTestDisplay final : public display::Display {
   pixoo64::dashboard::EqualizerDashboard *equalizer_{nullptr};
   text::Text *text_{nullptr};
   StaticNowPlayingSource *now_playing_source_{nullptr};
+  StaticWeatherSource *weather_source_{nullptr};
   std::string output_dir_;
   std::vector<AnimationFrame> animation_frames_;
   bool animation_only_{false};

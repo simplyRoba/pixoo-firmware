@@ -959,11 +959,226 @@ void RenderTestDisplay::setup() {
             : this->now_playing_source_ != nullptr &&
                   this->now_playing_source_->eligible_true_count() == 1 &&
                   this->now_playing_source_->eligible_false_count() == 1 &&
-                  this->now_playing_source_->data_count() == now_playing_ticks &&
+                  this->now_playing_source_->data_count() == now_playing_ticks + 1 &&
                   this->now_playing_source_->copy_count() == 8;
     if (!now_playing_lifecycle_valid) {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;
+    }
+
+    struct GateDashboard final : pixoo64::dashboard::Dashboard {
+      explicit GateDashboard(Color color) : color(color) {}
+      bool available() const override { return true; }
+      void Prepare(uint32_t) override { ++prepare_count; }
+      void CancelPreparation(uint32_t) override { ++cancel_count; }
+      bool ReadyToShow() const override { return ready; }
+      bool HasPresentation() const override { return has_presentation; }
+      void OnShow(uint32_t) override { ++show_count; }
+      void OnHide(uint32_t) override { ++hide_count; }
+      void Tick(uint32_t) override {
+        ++tick_count;
+        if (invalidate_on_tick)
+          has_presentation = false;
+      }
+      void Render(display::Display &display) const override {
+        display.fill(color);
+      }
+      Color color;
+      bool ready{true};
+      bool has_presentation{true};
+      bool invalidate_on_tick{false};
+      int prepare_count{0};
+      int cancel_count{0};
+      int show_count{0};
+      int hide_count{0};
+      int tick_count{0};
+    } outgoing(Color(18, 42, 96)), waiting(Color(31, 112, 68)),
+        pending_replacement(Color(88, 36, 116)), cold(Color(72, 72, 72));
+    outgoing.set_id("__prepare_outgoing");
+    waiting.set_id("__prepare_waiting");
+    pending_replacement.set_id("__prepare_replacement");
+    cold.set_id("__prepare_cold");
+    waiting.ready = false;
+    pending_replacement.ready = false;
+    cold.ready = false;
+    this->content_controller_->add_dashboard(&outgoing);
+    this->content_controller_->add_dashboard(&waiting);
+    this->content_controller_->add_dashboard(&pending_replacement);
+    this->content_controller_->add_dashboard(&cold);
+    const auto render_preparation = [this](uint32_t now_ms, const char *id) {
+      StaticWeatherSource::SetCurrentRenderTime(now_ms);
+      StaticNowPlayingSource::SetCurrentRenderTime(now_ms);
+      pixoo::FrameView frame;
+      const bool rendered = this->content_controller_->RenderContent(
+          now_ms, id, {}, {}, nullptr, 0, true, false, true, false, &frame);
+      if (!rendered || !frame.valid() || frame.size != this->framebuffer_.size())
+        return false;
+      std::memcpy(this->framebuffer_.data(), frame.data, frame.size);
+      return true;
+    };
+    const auto is_solid = [this](Color color) {
+      for (size_t i = 0; i < this->framebuffer_.size(); i += 3) {
+        if (this->framebuffer_[i] != color.r ||
+            this->framebuffer_[i + 1] != color.g ||
+            this->framebuffer_[i + 2] != color.b)
+          return false;
+      }
+      return true;
+    };
+    const auto is_global_loading = [this]() {
+      size_t lit_pixels = 0;
+      for (size_t i = 0; i < this->framebuffer_.size(); i += 3) {
+        if (this->framebuffer_[i] != 0 || this->framebuffer_[i + 1] != 0 ||
+            this->framebuffer_[i + 2] != 0)
+          ++lit_pixels;
+      }
+      const size_t center = (32 * 64 + 32) * 3;
+      return lit_pixels >= 30 && lit_pixels <= 60 &&
+             this->framebuffer_[center] == 0 &&
+             this->framebuffer_[center + 1] == 0 &&
+             this->framebuffer_[center + 2] == 0;
+    };
+    this->content_controller_->HideBaseContent(2000);
+    bool preparation_valid =
+        render_preparation(2001, "__prepare_outgoing") &&
+        is_solid(outgoing.color) &&
+        render_preparation(2002, "__prepare_waiting") &&
+        is_solid(outgoing.color) && outgoing.hide_count == 0 &&
+        waiting.prepare_count == 1 && waiting.show_count == 0;
+    waiting.ready = true;
+    preparation_valid &= render_preparation(2003, "__prepare_waiting") &&
+                         is_solid(waiting.color) && outgoing.hide_count == 1 &&
+                         waiting.show_count == 1;
+    preparation_valid &= render_preparation(2004, "__prepare_replacement") &&
+                         is_solid(waiting.color) &&
+                         pending_replacement.prepare_count == 1;
+    preparation_valid &= render_preparation(2005, "__prepare_cold") &&
+                         pending_replacement.cancel_count == 1 &&
+                         cold.prepare_count == 1;
+    this->content_controller_->HideBaseContent(2006);
+    preparation_valid &= cold.cancel_count == 1;
+    preparation_valid &= render_preparation(2007, "__prepare_cold") &&
+                         is_global_loading();
+    const std::vector<uint8_t> first_loading_frame = this->framebuffer_;
+    preparation_valid &= render_preparation(2040, "__prepare_cold") &&
+                         is_global_loading() &&
+                         this->framebuffer_ != first_loading_frame;
+
+    this->content_controller_->HideBaseContent(2050);
+    outgoing.has_presentation = true;
+    outgoing.invalidate_on_tick = false;
+    waiting.ready = false;
+    preparation_valid &= render_preparation(2051, "__prepare_outgoing");
+    outgoing.invalidate_on_tick = true;
+    const int waiting_cancel_before_loss = waiting.cancel_count;
+    preparation_valid &=
+        render_preparation(2052, "__prepare_waiting") &&
+        waiting.cancel_count == waiting_cancel_before_loss &&
+        waiting.show_count == 1 && is_global_loading();
+    waiting.ready = true;
+    preparation_valid &= render_preparation(2053, "__prepare_waiting") &&
+                         is_solid(waiting.color) && waiting.show_count == 2;
+
+    this->content_controller_->HideBaseContent(2060);
+    outgoing.has_presentation = true;
+    outgoing.invalidate_on_tick = false;
+    waiting.ready = false;
+    pending_replacement.ready = false;
+    preparation_valid &=
+        render_preparation(2061, "__prepare_outgoing") &&
+        render_preparation(2062, "__prepare_waiting");
+    const int waiting_cancel_before_reaction = waiting.cancel_count;
+    const int replacement_prepare_before_reaction =
+        pending_replacement.prepare_count;
+    const int outgoing_hide_before_reaction = outgoing.hide_count;
+    pixoo::Overlay reaction_overlay{};
+    reaction_overlay.tag = pixoo::OverlayTag::kReaction;
+    pixoo::FrameView reaction_frame;
+    preparation_valid &= this->content_controller_->RenderContent(
+        2063, "__prepare_replacement", {}, {}, &reaction_overlay, 0, true,
+        true, false, false, &reaction_frame);
+    preparation_valid &=
+        waiting.cancel_count == waiting_cancel_before_reaction + 1 &&
+        pending_replacement.prepare_count ==
+            replacement_prepare_before_reaction + 1 &&
+        outgoing.hide_count == outgoing_hide_before_reaction;
+    this->content_controller_->HideBaseContent(2064);
+    if (!preparation_valid) {
+      std::printf("render test: FAILED generic dashboard preparation\n");
+      ++failures;
+    }
+
+    outgoing.ready = true;
+    const uint32_t weather_requests_before =
+        this->weather_source_ != nullptr ? this->weather_source_->request_count()
+                                         : 0;
+    pixoo::FrameView hidden_weather_frame;
+    this->content_controller_->RenderContent(
+        0, "weather_landscape_loading", {}, {}, nullptr, 0, false, false, true,
+        false, &hidden_weather_frame);
+    bool weather_preparation_valid =
+        this->weather_source_ != nullptr &&
+        this->weather_source_->request_count() == weather_requests_before;
+    this->content_controller_->HideBaseContent(2100);
+    weather_preparation_valid &=
+        render_preparation(0, "__prepare_outgoing") &&
+        render_preparation(0, "weather_landscape_loading") &&
+        this->weather_source_->request_count() > weather_requests_before &&
+        is_solid(outgoing.color) &&
+        render_preparation(100, "weather_landscape_loading") &&
+        !is_solid(outgoing.color) &&
+        this->framebuffer_[(31 * 64 + 25) * 3] != 120;
+    if (!weather_preparation_valid) {
+      std::printf("render test: FAILED weather dashboard preparation\n");
+      ++failures;
+    }
+
+    if (this->now_playing_source_ != nullptr) {
+      this->content_controller_->HideBaseContent(2200);
+      bool now_playing_preparation_valid =
+          render_preparation(0, "__prepare_outgoing") &&
+          render_preparation(0, "now_playing");
+      const std::vector<uint8_t> old_now_playing = this->framebuffer_;
+      now_playing_preparation_valid &=
+          render_preparation(1, "__prepare_outgoing") &&
+          render_preparation(6000, "now_playing") && is_solid(outgoing.color) &&
+          render_preparation(6300, "now_playing") &&
+          this->framebuffer_ != old_now_playing && !is_solid(outgoing.color);
+      uint16_t current_artwork[pixoo::now_playing::kArtworkPixelCount];
+      now_playing_preparation_valid &=
+          this->now_playing_source_->CopyArtwork(5002, 1, current_artwork,
+                                                 pixoo::now_playing::kArtworkPixelCount) &&
+          this->framebuffer_[0] ==
+              static_cast<uint8_t>(((current_artwork[0] >> 11) & 0x1f) * 255 / 31) &&
+          this->framebuffer_[1] ==
+              static_cast<uint8_t>(((current_artwork[0] >> 5) & 0x3f) * 255 / 63) &&
+          this->framebuffer_[2] ==
+              static_cast<uint8_t>((current_artwork[0] & 0x1f) * 255 / 31);
+      this->content_controller_->HideBaseContent(13199);
+      now_playing_preparation_valid &=
+          render_preparation(13200, "__prepare_outgoing") &&
+          render_preparation(13200, "now_playing") &&
+          !is_solid(outgoing.color);
+
+      this->content_controller_->HideBaseContent(28999);
+      now_playing_preparation_valid &=
+          render_preparation(29000, "__prepare_outgoing") &&
+          render_preparation(29000, "now_playing") &&
+          is_solid(outgoing.color) &&
+          render_preparation(30000, "now_playing") &&
+          is_solid(outgoing.color) &&
+          render_preparation(30050, "now_playing") &&
+          is_solid(outgoing.color) &&
+          render_preparation(30100, "now_playing") &&
+          is_solid(outgoing.color) &&
+          render_preparation(30200, "now_playing") &&
+          is_solid(outgoing.color) &&
+          render_preparation(30300, "now_playing") &&
+          !is_solid(outgoing.color);
+      if (!now_playing_preparation_valid) {
+        std::printf("render test: FAILED now-playing re-entry preparation\n");
+        ++failures;
+      }
     }
     std::printf(
         "render test: now-playing object=%zu bytes buffers=%zu bytes "

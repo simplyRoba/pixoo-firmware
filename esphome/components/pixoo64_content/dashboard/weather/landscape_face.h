@@ -19,8 +19,6 @@ class LandscapeFace : public WeatherFace {
   void Tick(const WeatherViewModel &view, uint32_t now_ms) override;
   void Render(display::Display &display, const WeatherViewModel &view,
               const WeatherFonts &fonts) const override;
-  void RenderLoading(display::Display &display,
-                     const WeatherFonts &fonts) const override;
 
  private:
   pixoo::WeatherAnimationClock effect_clock_;

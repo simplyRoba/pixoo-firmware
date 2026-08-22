@@ -9,11 +9,8 @@
 
 namespace esphome::pixoo64::dashboard::weather {
 
-// Forecast weather face: the hero temperature with clock, date, stats,
-// condition icon, and the hourly forecast strip. Layout is the pure
-// RenderWeather / RenderWeatherLoading functions; the face adds only the
-// animation timeline the hero icon loops on, so a hidden face resumes its loop
-// where it left off rather than skipping ahead by the hidden wall time.
+// Forecast weather face with clock, date, current conditions, and hourly
+// forecast.
 class ForecastFace : public WeatherFace {
  public:
   void OnShow(uint32_t now_ms) override { this->clock_.Resume(now_ms); }
@@ -28,11 +25,6 @@ class ForecastFace : public WeatherFace {
     ::esphome::pixoo64::weather::RenderWeather(display, view, fonts,
                                                this->Animation_());
   }
-  void RenderLoading(display::Display &display,
-                     const WeatherFonts &fonts) const override {
-    ::esphome::pixoo64::weather::RenderWeatherLoading(display, fonts);
-  }
-
  protected:
   // Lightning follows the same bounded schedule the landscape scene runs on,
   // so a strike is an isolated event rather than a blink.

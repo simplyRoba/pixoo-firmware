@@ -30,37 +30,33 @@ class WeatherDashboard : public Dashboard {
   void set_face(WeatherFace *face) { this->face_ = face; }
 
   bool available() const override {
-    if (this->fonts_.small == nullptr || this->fonts_.big == nullptr)
-      return false;
-    if (this->face_ == nullptr)
-      return false;
-    // The dashboard is available while its source is still loading, so it can
-    // show a loading animation instead of nothing.
-    return this->weather_.loading() || this->weather_.available();
+    return this->fonts_.small != nullptr && this->fonts_.big != nullptr &&
+           this->face_ != nullptr;
   }
+
+  void Prepare(uint32_t now_ms) override {
+    (void) now_ms;
+    this->weather_.RequestRefresh();
+  }
+
+  bool ReadyToShow() const override {
+    return this->available() && this->weather_.available();
+  }
+
+  bool HasPresentation() const override { return this->ReadyToShow(); }
 
   void OnShow(uint32_t now_ms) override {
     if (this->face_ != nullptr)
       this->face_->OnShow(now_ms);
   }
 
-  // Called each render tick while this dashboard is visible; drives the
-  // demand-based fetch so a source only fetches while its weather is shown, and
-  // advances the face's animation.
   void Tick(uint32_t now_ms) override {
     this->weather_.RequestRefresh();
-    // Do not make the loading placeholder an observed condition: the first
-    // source condition must enter the face settled rather than cross-fading
-    // from UNKNOWN.
     if (this->face_ != nullptr && this->weather_.available())
       this->face_->Tick(this->weather_.BuildView(), now_ms);
   }
 
   void Render(display::Display &display) const override {
-    if (this->weather_.loading()) {
-      this->face_->RenderLoading(display, this->fonts_);
-      return;
-    }
     this->face_->Render(display, this->weather_.BuildView(), this->fonts_);
   }
 

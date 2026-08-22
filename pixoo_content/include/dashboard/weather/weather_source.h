@@ -6,10 +6,9 @@ namespace pixoo {
 
 // Abstract weather data source. A consumer (the weather view builder) depends on
 // this interface, never on a concrete fetcher; a producer (e.g. an Open-Meteo
-// fetcher) implements it. RequestRefresh() is a non-blocking demand signal: the
-// consumer calls it while weather is being shown, and the implementation decides
-// when to actually fetch (throttled, and possibly on a background task). The
-// consumer pulls the latest data via HasData()/Data().
+// fetcher) implements it. RequestRefresh() is a non-blocking demand signal used
+// during preparation and visibility; the implementation controls fetch timing.
+// The consumer pulls the latest data via HasData()/Data().
 //
 // Data() returns by value: an implementation may fetch on another thread, so the
 // consumer must receive a coherent snapshot copied under the producer's lock,

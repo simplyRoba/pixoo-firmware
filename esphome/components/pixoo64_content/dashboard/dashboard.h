@@ -27,6 +27,10 @@ class Dashboard {
   // the renderer fan captured levels out to every such dashboard.
   virtual pixoo::EqualizerLevelsSink *levels_sink() { return nullptr; }
   virtual void Render(display::Display &display) const = 0;
+  virtual void Prepare(uint32_t now_ms) { (void) now_ms; }
+  virtual void CancelPreparation(uint32_t now_ms) { (void) now_ms; }
+  virtual bool ReadyToShow() const { return this->available(); }
+  virtual bool HasPresentation() const { return this->available(); }
   // Called on the visible dashboard each render tick, before Render(). Lets a
   // dashboard signal demand for data (e.g. request a weather refresh) and
   // advance animation state to `now_ms`; Render() is const.

@@ -93,6 +93,8 @@ class ContentController : public display::Display,
 
   Dashboard *find_(const std::string &id) const;
   void HideVisible_(uint32_t now_ms);
+  void CancelPending_(uint32_t now_ms);
+  void DrawLoading_(uint32_t now_ms);
   void DrawBootWordmark(uint32_t elapsed_ms);
   static int cos_deg_(int degrees);
   bool CaptureReactionBackground_();
@@ -104,6 +106,7 @@ class ContentController : public display::Display,
 
   std::vector<Dashboard *> dashboards_;
   Dashboard *visible_{nullptr};
+  Dashboard *pending_{nullptr};
   dashboard::TimingDashboard *stopwatch_dashboard_{nullptr};
   dashboard::TimingDashboard *timer_dashboard_{nullptr};
   std::string default_dashboard_id_;

@@ -22,6 +22,9 @@ class NowPlayingDashboard final : public Dashboard {
   bool available() const override {
     return this->source_ != nullptr && this->font_ != nullptr;
   }
+  void Prepare(uint32_t now_ms) override;
+  void CancelPreparation(uint32_t now_ms) override;
+  bool ReadyToShow() const override;
   void OnShow(uint32_t now_ms) override;
   void OnHide(uint32_t now_ms) override;
   void Tick(uint32_t now_ms) override;
@@ -66,6 +69,8 @@ class NowPlayingDashboard final : public Dashboard {
   static uint8_t Green_(uint16_t pixel);
   static uint8_t Blue_(uint16_t pixel);
 
+  void SetArtworkEligible_(bool eligible, uint32_t now_ms);
+  void ResetPresentation_();
   void InitializeVisual_(uint64_t visual_key, uint32_t now_ms);
   void StartIdentityTransition_(
       const pixoo::now_playing::NowPlayingData &data, uint64_t visual_key,
@@ -110,7 +115,6 @@ class NowPlayingDashboard final : public Dashboard {
   uint8_t title_mask_[kTextMaskPixels]{};
   uint8_t artist_mask_[kTextMaskPixels]{};
   uint32_t current_ms_{0};
-  uint32_t hidden_started_ms_{0};
   int title_width_{0};
   int artist_width_{0};
   int title_offset_{0};
@@ -128,6 +132,7 @@ class NowPlayingDashboard final : public Dashboard {
   bool text_transitioning_{false};
   bool text_data_switched_{false};
   bool hidden_{false};
+  bool artwork_eligible_{false};
 
   // One configured now-playing renderer owns exactly these two 64x64 RGB565
   // buffers. Both sides of a crossfade are read on every frame, so production

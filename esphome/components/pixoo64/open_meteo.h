@@ -18,10 +18,9 @@ namespace esphome::pixoo64::adapters {
 class HttpRequestGate;
 
 // Fetches current + hourly + daily weather from the Open-Meteo forecast API and
-// exposes it through the WeatherSource interface. RequestRefresh() is called by
-// the weather dashboard while its weather is being shown; it fetches only when
-// the data is stale (and the network is up), so nothing is fetched while the
-// dashboard is hidden.
+// exposes it through the WeatherSource interface. RequestRefresh() signals
+// preparation or visible demand; refresh policy gates network work by freshness,
+// connectivity, and in-flight state.
 //
 // The fetch (HTTP GET + JSON parse) runs on a background task, so it never
 // blocks the render loop. The worker hands completion to the render task, which

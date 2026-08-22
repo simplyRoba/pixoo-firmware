@@ -371,6 +371,11 @@ void HomeAssistantMediaSource::ClearDesiredArtwork_() {
 }
 
 void HomeAssistantMediaSource::ResetState_(uint32_t now_ms) {
+  this->initial_snapshot_started_ = false;
+  this->initial_snapshot_complete_ = false;
+  this->initial_root_seen_ = false;
+  this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
+  this->initial_fields_seen_ = 0;
   this->ClearDesiredArtwork_();
   this->ClearPositionTracking_();
   this->content_id_observed_ = false;
@@ -392,30 +397,119 @@ void HomeAssistantMediaSource::RegisterSubscriptions_() {
   if (this->subscriptions_registered_ || !this->configured_)
     return;
   const char *entity = this->record_.entity_id;
+  this->api_server_->get_home_assistant_state(
+      entity, "friendly_name",
+      [this](StringRef) { this->BeginInitialSnapshot_(); });
   this->api_server_->subscribe_home_assistant_state(
-      entity, nullptr, [this](StringRef value) { this->OnRoot_(value); });
+      entity, nullptr,
+      [this](StringRef value) { this->OnSubscriptionRoot_(value); });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_content_id",
-      [this](StringRef value) { this->OnContentId_(value); });
+      entity, "media_content_id", [this](StringRef value) {
+        this->MarkInitialField_(kContentId);
+        this->OnContentId_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_title",
-      [this](StringRef value) { this->OnTitle_(value); });
+      entity, "media_title", [this](StringRef value) {
+        this->MarkInitialField_(kTitle);
+        this->OnTitle_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_artist",
-      [this](StringRef value) { this->OnArtist_(value); });
+      entity, "media_artist", [this](StringRef value) {
+        this->MarkInitialField_(kArtist);
+        this->OnArtist_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_duration",
-      [this](StringRef value) { this->OnDuration_(value); });
+      entity, "media_duration", [this](StringRef value) {
+        this->MarkInitialField_(kDuration);
+        this->OnDuration_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_position",
-      [this](StringRef value) { this->OnPosition_(value); });
+      entity, "media_position", [this](StringRef value) {
+        this->MarkInitialField_(kPosition);
+        this->OnPosition_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "media_position_updated_at",
-      [this](StringRef value) { this->OnPositionUpdatedAt_(value); });
+      entity, "media_position_updated_at", [this](StringRef value) {
+        this->MarkInitialField_(kPositionUpdatedAt);
+        this->OnPositionUpdatedAt_(value);
+      });
   this->api_server_->subscribe_home_assistant_state(
-      entity, "entity_picture",
-      [this](StringRef value) { this->OnEntityPicture_(value); });
+      entity, "entity_picture", [this](StringRef value) {
+        this->MarkInitialField_(kEntityPicture);
+        this->OnEntityPicture_(value);
+      });
+  this->api_server_->get_home_assistant_state(
+      entity, "supported_features",
+      [this](StringRef) { this->CompleteInitialSnapshot_(); });
   this->subscriptions_registered_ = true;
+}
+
+void HomeAssistantMediaSource::BeginInitialSnapshot_() {
+  if (!this->configured_)
+    return;
+  const uint32_t now_ms = millis();
+  this->SetTransportConnected_(true, now_ms);
+  this->initial_snapshot_started_ = true;
+  this->initial_snapshot_complete_ = false;
+  this->initial_root_seen_ = false;
+  this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
+  this->initial_fields_seen_ = 0;
+}
+
+void HomeAssistantMediaSource::MarkInitialField_(InitialField field) {
+  if (this->initial_snapshot_started_ && !this->initial_snapshot_complete_)
+    this->initial_fields_seen_ |= static_cast<uint8_t>(field);
+}
+
+void HomeAssistantMediaSource::CompleteInitialSnapshot_() {
+  if (!this->configured_ || !this->initial_snapshot_started_ ||
+      !this->initial_root_seen_)
+    return;
+  this->OnRootState_(this->initial_root_state_, millis());
+  if ((this->initial_fields_seen_ & kContentId) == 0)
+    this->OnContentId_({});
+  if ((this->initial_fields_seen_ & kTitle) == 0)
+    this->OnTitle_({});
+  if ((this->initial_fields_seen_ & kArtist) == 0)
+    this->OnArtist_({});
+  if ((this->initial_fields_seen_ & kDuration) == 0)
+    this->OnDuration_({});
+  if ((this->initial_fields_seen_ & kPosition) == 0)
+    this->OnPosition_({});
+  if ((this->initial_fields_seen_ & kPositionUpdatedAt) == 0)
+    this->OnPositionUpdatedAt_({});
+  if ((this->initial_fields_seen_ & kEntityPicture) == 0)
+    this->OnEntityPicture_({});
+  pixoo::now_playing::NowPlayingData data;
+  if (this->policy_.ForcePublish(millis(), &data))
+    this->Publish_(data);
+  this->initial_fields_seen_ = kAllInitialFields;
+  this->initial_snapshot_complete_ = true;
+  this->initial_snapshot_started_ = false;
+}
+
+void HomeAssistantMediaSource::SetTransportConnected_(bool connected,
+                                                       uint32_t now_ms) {
+  if (connected == this->transport_connected_)
+    return;
+  this->transport_connected_ = connected;
+  pixoo::now_playing::NowPlayingData data;
+  if (this->policy_.SetTransportConnected(connected, now_ms, &data))
+    this->Publish_(data);
+  if (connected) {
+    this->position_context_allowed_ = this->configured_;
+    this->artwork_fetch_policy_.ResetRetry();
+  } else {
+    this->position_context_allowed_ = false;
+    this->ClearPositionTracking_();
+    this->initial_snapshot_started_ = false;
+    this->initial_snapshot_complete_ = false;
+    this->initial_root_seen_ = false;
+    this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
+    this->initial_fields_seen_ = 0;
+  }
+  this->connected_grace_active_ = this->configured_ && connected;
+  this->connected_since_ms_ = now_ms;
 }
 
 void HomeAssistantMediaSource::loop() {
@@ -423,21 +517,7 @@ void HomeAssistantMediaSource::loop() {
   const bool connected =
       this->api_server_ != nullptr &&
       this->api_server_->is_connected_with_state_subscription();
-  if (connected != this->transport_connected_) {
-    this->transport_connected_ = connected;
-    pixoo::now_playing::NowPlayingData data;
-    if (this->policy_.SetTransportConnected(connected, now_ms, &data))
-      this->Publish_(data);
-    if (connected) {
-      this->position_context_allowed_ = this->configured_;
-      this->artwork_fetch_policy_.ResetRetry();
-    } else {
-      this->position_context_allowed_ = false;
-      this->ClearPositionTracking_();
-    }
-    this->connected_grace_active_ = this->configured_ && connected;
-    this->connected_since_ms_ = now_ms;
-  }
+  this->SetTransportConnected_(connected, now_ms);
   if (this->connected_grace_active_ &&
       now_ms - this->connected_since_ms_ >= kInitialConnectedGraceMs) {
     this->connected_grace_active_ = false;
@@ -462,6 +542,13 @@ void HomeAssistantMediaSource::Publish_(
 pixoo::now_playing::NowPlayingData HomeAssistantMediaSource::Data() const {
   return this->snapshot_.has_value() ? this->snapshot_.Get()
                                      : this->policy_.Data();
+}
+
+bool HomeAssistantMediaSource::SnapshotSettled() const {
+  if (!this->configured_)
+    return true;
+  return this->transport_connected_ && this->initial_snapshot_complete_ &&
+         !this->policy_.HasPendingPublication();
 }
 
 void HomeAssistantMediaSource::SetArtworkEligible(bool eligible, uint32_t) {
@@ -906,11 +993,25 @@ bool HomeAssistantMediaSource::FetchArtwork_(const char *url, size_t url_size,
   return true;
 }
 
+void HomeAssistantMediaSource::OnSubscriptionRoot_(StringRef value) {
+  if (this->initial_snapshot_started_) {
+    this->initial_root_state_ =
+        pixoo::now_playing::ParsePlaybackState(value.c_str(), value.size());
+    this->initial_root_seen_ = true;
+    return;
+  }
+  this->OnRoot_(value);
+}
+
 void HomeAssistantMediaSource::OnRoot_(StringRef value) {
-  const uint32_t now_ms = millis();
+  this->OnRootState_(
+      pixoo::now_playing::ParsePlaybackState(value.c_str(), value.size()),
+      millis());
+}
+
+void HomeAssistantMediaSource::OnRootState_(
+    pixoo::now_playing::PlaybackState state, uint32_t now_ms) {
   pixoo::now_playing::NowPlayingData data;
-  const auto state =
-      pixoo::now_playing::ParsePlaybackState(value.c_str(), value.size());
   if (this->policy_.OnPlaybackState(state, now_ms, &data))
     this->Publish_(data);
   if (pixoo::now_playing::IsActivePlaybackState(state)) {

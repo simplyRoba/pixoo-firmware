@@ -359,7 +359,69 @@ void ContentController::HideVisible_(uint32_t now_ms) {
   this->visible_ = nullptr;
 }
 
+void ContentController::CancelPending_(uint32_t now_ms) {
+  if (this->pending_ == nullptr)
+    return;
+  this->pending_->CancelPreparation(now_ms);
+  this->pending_ = nullptr;
+}
+
+void ContentController::DrawLoading_(uint32_t now_ms) {
+  struct Segment {
+    int8_t inner_x;
+    int8_t inner_y;
+    int8_t outer_x;
+    int8_t outer_y;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+  };
+  static constexpr Segment kSegments[] = {
+      {32, 24, 32, 21, 34, 221, 255},
+      {36, 25, 38, 22, 36, 190, 255},
+      {39, 28, 42, 26, 42, 150, 255},
+      {40, 32, 43, 32, 58, 112, 255},
+      {39, 36, 42, 38, 90, 88, 255},
+      {36, 39, 38, 42, 139, 92, 255},
+      {32, 40, 32, 43, 139, 92, 255},
+      {28, 39, 26, 42, 90, 88, 255},
+      {25, 36, 22, 38, 58, 112, 255},
+      {24, 32, 21, 32, 42, 150, 255},
+      {25, 28, 22, 26, 36, 190, 255},
+      {28, 25, 26, 22, 34, 221, 255},
+  };
+  constexpr int kSegmentUnits = 256;
+  constexpr int kRingUnits =
+      static_cast<int>(sizeof(kSegments) / sizeof(kSegments[0])) *
+      kSegmentUnits;
+  constexpr int kGlowRadius = 3 * kSegmentUnits;
+  const int head = static_cast<int>((now_ms % 1200u) * kRingUnits / 1200u);
+  const int breathe_phase =
+      static_cast<int>((now_ms % 1800u) * 360u / 1800u);
+  const int breathe = 224 + (cos_deg_(breathe_phase) + 255) * 31 / 510;
+
+  this->framebuffer_.Clear();
+  for (size_t index = 0; index < sizeof(kSegments) / sizeof(kSegments[0]);
+       ++index) {
+    int distance = std::abs(static_cast<int>(index) * kSegmentUnits - head);
+    distance = std::min(distance, kRingUnits - distance);
+    int level = 38;
+    if (distance < kGlowRadius) {
+      const int reach = kGlowRadius - distance;
+      level += 217 * reach * reach / (kGlowRadius * kGlowRadius);
+    }
+    level = level * breathe / 255;
+    const Segment &segment = kSegments[index];
+    const Color color(static_cast<uint8_t>(segment.red * level / 255),
+                      static_cast<uint8_t>(segment.green * level / 255),
+                      static_cast<uint8_t>(segment.blue * level / 255));
+    this->line(segment.inner_x, segment.inner_y, segment.outer_x,
+               segment.outer_y, color);
+  }
+}
+
 void ContentController::HideBaseContent(uint32_t now_ms) {
+  this->CancelPending_(now_ms);
   this->HideVisible_(now_ms);
   this->ReleaseReactionBackground_();
 }
@@ -519,27 +581,62 @@ bool ContentController::RenderContent(
   if (!reaction && this->reaction_snapshot_active_)
     this->ReleaseReactionBackground_();
 
-  // A base that is not drawn is not visible, so returning to it is an entry.
-  if (!base_visible)
+  Dashboard *requested = nullptr;
+  if (base_visible) {
+    requested = this->find_(dashboard_id);
+    if (requested == nullptr)
+      requested = this->find_(this->default_dashboard_id_);
+    if (this->pending_ != nullptr && this->pending_ != requested)
+      this->CancelPending_(now_ms);
+    if (requested != nullptr && requested != this->visible_ &&
+        this->pending_ == nullptr)
+      this->pending_ = requested;
+    if (this->pending_ != nullptr)
+      this->pending_->Prepare(now_ms);
+  } else {
+    this->CancelPending_(now_ms);
     this->HideVisible_(now_ms);
+  }
+
   if (base_visible && render_base) {
-    this->framebuffer_.Clear();
     if (this->stopwatch_dashboard_ != nullptr)
       this->stopwatch_dashboard_->set_stopwatch(stopwatch);
     if (this->timer_dashboard_ != nullptr)
       this->timer_dashboard_->set_timer(timer);
-    Dashboard *dashboard = this->find_(dashboard_id);
-    if (dashboard != this->visible_) {
+
+    if (this->visible_ != nullptr && !this->visible_->HasPresentation()) {
+      Dashboard *lost = this->visible_;
       this->HideVisible_(now_ms);
-      if (dashboard != nullptr) {
-        this->visible_ = dashboard;
-        dashboard->OnShow(now_ms);
+      if (this->pending_ == nullptr && requested == lost) {
+        this->pending_ = lost;
+        this->pending_->Prepare(now_ms);
       }
     }
-    if (dashboard != nullptr) {
-      dashboard->Tick(now_ms);
-      if (dashboard->available())
-        dashboard->Render(*this);
+
+    if (this->pending_ != nullptr && this->pending_->ReadyToShow()) {
+      Dashboard *ready = this->pending_;
+      this->pending_ = nullptr;
+      this->HideVisible_(now_ms);
+      this->visible_ = ready;
+      this->visible_->OnShow(now_ms);
+    }
+
+    this->framebuffer_.Clear();
+    if (this->visible_ != nullptr) {
+      this->visible_->Tick(now_ms);
+      if (this->visible_->HasPresentation()) {
+        this->visible_->Render(*this);
+      } else {
+        Dashboard *lost = this->visible_;
+        this->HideVisible_(now_ms);
+        if (this->pending_ == nullptr && requested == lost) {
+          this->pending_ = lost;
+          this->pending_->Prepare(now_ms);
+        }
+        this->DrawLoading_(now_ms);
+      }
+    } else if (this->pending_ != nullptr) {
+      this->DrawLoading_(now_ms);
     }
   } else if (!base_visible) {
     this->framebuffer_.Clear();

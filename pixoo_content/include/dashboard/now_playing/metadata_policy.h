@@ -43,6 +43,7 @@ class NowPlayingMetadataPolicy {
                          NowPlayingData *published = nullptr);
   bool CompleteArtwork(uint64_t identity, uint32_t revision, bool succeeded,
                        uint32_t now_ms, NowPlayingData *published = nullptr);
+  bool HasPendingPublication() const { return this->pending_; }
   NowPlayingData Data() const { return data_; }
 
  private:

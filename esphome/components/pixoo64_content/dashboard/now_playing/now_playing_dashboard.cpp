@@ -101,24 +101,75 @@ DRAM_ATTR
 uint16_t NowPlayingDashboard::transition_buffers_[2]
                                                     [pixoo::now_playing::kArtworkPixelCount]{};
 
+void NowPlayingDashboard::SetArtworkEligible_(bool eligible, uint32_t now_ms) {
+  if (this->source_ == nullptr || this->artwork_eligible_ == eligible)
+    return;
+  this->source_->SetArtworkEligible(eligible, now_ms);
+  this->artwork_eligible_ = eligible;
+}
+
+void NowPlayingDashboard::Prepare(uint32_t now_ms) {
+  this->SetArtworkEligible_(true, now_ms);
+}
+
+void NowPlayingDashboard::CancelPreparation(uint32_t now_ms) {
+  this->SetArtworkEligible_(false, now_ms);
+}
+
+bool NowPlayingDashboard::ReadyToShow() const {
+  if (!this->available() || !this->source_->SnapshotSettled())
+    return false;
+  const NowPlayingData data = this->source_->Data();
+  if (data.source_state == NowPlayingSourceState::kUnconfigured)
+    return true;
+  if (data.source_state != NowPlayingSourceState::kReady ||
+      (ShowsMetadata(data) && !data.artwork_known) ||
+      (data.has_artwork_identity &&
+       data.artwork_availability != ArtworkAvailability::kReady))
+    return false;
+  return true;
+}
+
+void NowPlayingDashboard::ResetPresentation_() {
+  this->snapshot_ = {};
+  this->displayed_ = {};
+  this->transition_from_data_ = {};
+  this->transition_data_ = {};
+  this->title_marquee_ = {};
+  this->artist_marquee_ = {};
+  this->visual_timeline_ = {};
+  this->dim_timeline_ = {};
+  this->buffer_info_[0] = {};
+  this->buffer_info_[1] = {};
+  this->current_ms_ = 0;
+  this->title_width_ = 0;
+  this->artist_width_ = 0;
+  this->title_offset_ = 0;
+  this->artist_offset_ = 0;
+  this->front_buffer_ = 0;
+  this->transition_buffer_ = 1;
+  this->transition_kind_ = TransitionKind::kNone;
+  this->crossfade_ = 0;
+  this->text_opacity_ = 255;
+  this->dim_from_ = 255;
+  this->dim_value_ = 255;
+  this->dim_target_ = 255;
+  this->initialized_ = false;
+  this->dim_transitioning_ = false;
+  this->text_transitioning_ = false;
+  this->text_data_switched_ = false;
+}
+
 void NowPlayingDashboard::OnShow(uint32_t now_ms) {
-  if (this->hidden_) {
-    const uint32_t hidden_ms = now_ms - this->hidden_started_ms_;
-    this->title_marquee_.Delay(hidden_ms);
-    this->artist_marquee_.Delay(hidden_ms);
-    this->visual_timeline_.Delay(hidden_ms);
-    this->dim_timeline_.Delay(hidden_ms);
-    this->hidden_ = false;
-  }
-  if (this->source_ != nullptr)
-    this->source_->SetArtworkEligible(true, now_ms);
+  if (this->hidden_)
+    this->ResetPresentation_();
+  this->hidden_ = false;
+  this->SetArtworkEligible_(true, now_ms);
 }
 
 void NowPlayingDashboard::OnHide(uint32_t now_ms) {
-  this->hidden_started_ms_ = now_ms;
   this->hidden_ = true;
-  if (this->source_ != nullptr)
-    this->source_->SetArtworkEligible(false, now_ms);
+  this->SetArtworkEligible_(false, now_ms);
 }
 
 uint64_t NowPlayingDashboard::VisualKey_(const NowPlayingData &data) {

@@ -747,6 +747,74 @@ pixoo64_render_test:
         artwork_availability: ready
         artwork_revision: 1
         artwork_copy_ready_at_ms: 26600
+      - at_ms: 29000
+        source_state: stale
+        playback_state: playing
+        title: "Newest Ready"
+        artist: "Retargeted Presentation"
+        duration_ms: 120000
+        position_ms: 14400
+        media_identity: 8010
+        artwork_identity: 8300
+        artwork_availability: ready
+        artwork_revision: 1
+        artwork_copy_ready_at_ms: 26600
+      - at_ms: 30000
+        source_state: ready
+        playback_state: playing
+        snapshot_settled: false
+        title: "Newest Ready"
+        artist: "Retargeted Presentation"
+        duration_ms: 120000
+        position_ms: 15400
+        media_identity: 8010
+        artwork_identity: 8300
+        artwork_availability: ready
+        artwork_revision: 1
+        artwork_copy_ready_at_ms: 26600
+      - at_ms: 30050
+        source_state: ready
+        playback_state: playing
+        title: "Fresh Active State"
+        artist: "Metadata Coalesced"
+        duration_ms: 120000
+        position_ms: 950
+        media_identity: 9010
+        artwork_known: false
+      - at_ms: 30100
+        source_state: ready
+        playback_state: playing
+        title: "Fresh Active State"
+        artist: "Metadata Coalesced"
+        duration_ms: 120000
+        position_ms: 1000
+        media_identity: 9010
+        artwork_identity: 9300
+        artwork_availability: pending
+        artwork_revision: 1
+      - at_ms: 30200
+        source_state: ready
+        playback_state: playing
+        title: "Fresh Active State"
+        artist: "Metadata Coalesced"
+        duration_ms: 120000
+        position_ms: 1100
+        media_identity: 9010
+        artwork_identity: 9300
+        artwork_availability: failed
+        artwork_revision: 1
+      - at_ms: 30300
+        source_state: ready
+        playback_state: playing
+        title: "Fresh Active State"
+        artist: "Metadata Coalesced"
+        duration_ms: 120000
+        position_ms: 1200
+        media_identity: 9010
+        artwork_identity: 9300
+        artwork_availability: ready
+        artwork_revision: 1
+        artwork_copy_ready_at_ms: 30300
       - at_ms: 48000
         source_state: ready
         playback_state: playing
@@ -1300,6 +1368,7 @@ display:
     equalizer: equalizer_dashboard
     panel_text: render_test_text
     now_playing_source: src_now_playing
+    weather_source: src_weather_loading
     adapter_checks: true
     # Showing the face sends every column to its digit the long way around,
     # staggered 120ms apart. The first flap of a run takes 350ms and later ones
@@ -1644,7 +1713,11 @@ display:
       - dashboard: clock_digital
         now_ms: 405
         snapshot: clock_digital
-      # The first source condition initializes the face after its loading frame.
+      # With no previous dashboard, the controller owns the loading frame until
+      # the first source condition initializes the weather face.
+      - dashboard: weather_landscape_loading
+        now_ms: 0
+        base_visible: false
       - dashboard: weather_landscape_loading
         now_ms: 0
         snapshot: weather_landscape_lifecycle_loading

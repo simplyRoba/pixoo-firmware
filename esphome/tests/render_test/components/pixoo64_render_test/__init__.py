@@ -22,12 +22,14 @@ CONF_CONDITION_AFTER_MS = "condition_after_ms"
 CONF_SNAPSHOTS = "snapshots"
 CONF_AT_MS = "at_ms"
 CONF_SOURCE_STATE = "source_state"
+CONF_SNAPSHOT_SETTLED = "snapshot_settled"
 CONF_PLAYBACK_STATE = "playback_state"
 CONF_TITLE = "title"
 CONF_ARTIST = "artist"
 CONF_DURATION_MS = "duration_ms"
 CONF_POSITION_MS = "position_ms"
 CONF_MEDIA_IDENTITY = "media_identity"
+CONF_ARTWORK_KNOWN = "artwork_known"
 CONF_ARTWORK_IDENTITY = "artwork_identity"
 CONF_ARTWORK_CONTENT_IDENTITY = "artwork_content_identity"
 CONF_ARTWORK_CONTENT_REVISION = "artwork_content_revision"
@@ -142,6 +144,7 @@ SNAPSHOT_SCHEMA = cv.Schema(
         cv.Required(CONF_AT_MS): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Required(CONF_SOURCE_STATE): cv.enum(SOURCE_STATES, lower=True),
         cv.Required(CONF_PLAYBACK_STATE): cv.enum(PLAYBACK_STATES, lower=True),
+        cv.Optional(CONF_SNAPSHOT_SETTLED, default=True): cv.boolean,
         cv.Optional(CONF_TITLE, default=""): cv.string_strict,
         cv.Optional(CONF_ARTIST, default=""): cv.string_strict,
         cv.Optional(CONF_DURATION_MS): cv.int_range(min=0, max=0xFFFFFFFF),
@@ -149,6 +152,7 @@ SNAPSHOT_SCHEMA = cv.Schema(
         cv.Required(CONF_MEDIA_IDENTITY): cv.int_range(
             min=0, max=0xFFFFFFFFFFFFFFFF
         ),
+        cv.Optional(CONF_ARTWORK_KNOWN, default=True): cv.boolean,
         cv.Optional(CONF_ARTWORK_IDENTITY): cv.int_range(
             min=0, max=0xFFFFFFFFFFFFFFFF
         ),
@@ -233,6 +237,7 @@ async def to_code(config):
                     snapshot[CONF_AT_MS],
                     snapshot[CONF_SOURCE_STATE],
                     snapshot[CONF_PLAYBACK_STATE],
+                    snapshot[CONF_SNAPSHOT_SETTLED],
                     snapshot[CONF_TITLE],
                     snapshot[CONF_ARTIST],
                     has_duration,
@@ -240,6 +245,7 @@ async def to_code(config):
                     has_position,
                     snapshot.get(CONF_POSITION_MS, 0),
                     snapshot[CONF_MEDIA_IDENTITY],
+                    snapshot[CONF_ARTWORK_KNOWN],
                     has_artwork,
                     snapshot.get(CONF_ARTWORK_IDENTITY, 0),
                     snapshot[CONF_ARTWORK_AVAILABILITY],

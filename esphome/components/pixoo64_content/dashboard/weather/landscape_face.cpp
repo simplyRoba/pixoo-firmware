@@ -1665,12 +1665,4 @@ void LandscapeFace::Render(display::Display &d, const WeatherViewModel &v,
   DrawTemperature(d, v, fonts);
 }
 
-void LandscapeFace::RenderLoading(display::Display &d,
-                                       const WeatherFonts &fonts) const {
-  d.fill(Color(0, 0, 0));
-  if (fonts.small != nullptr)
-    d.print(32, 30, fonts.small, Color(120, 126, 140),
-            display::TextAlign::CENTER, "...");
-}
-
 }  // namespace esphome::pixoo64::dashboard::weather

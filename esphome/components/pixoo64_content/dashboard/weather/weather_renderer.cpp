@@ -130,10 +130,4 @@ void RenderWeather(display::Display &d, const WeatherViewModel &v,
   DrawForecastStrip(d, v, fonts, 40);
 }
 
-void RenderWeatherLoading(display::Display &d, const WeatherFonts &fonts) {
-  d.fill(kBlack);
-  if (fonts.small != nullptr)
-    d.print(32, 30, fonts.small, kDim, display::TextAlign::CENTER, "...");
-}
-
 }  // namespace esphome::pixoo64::weather

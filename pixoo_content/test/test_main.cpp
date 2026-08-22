@@ -2346,6 +2346,36 @@ static void test_now_playing_policy_generations_and_deadlines() {
   TEST_ASSERT_TRUE(policy.PublishIfDue(2500, &out));
 }
 
+static void test_now_playing_policy_distinguishes_unknown_and_absent_artwork() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  out = publish_track(&policy, "first", "First", 10);
+  TEST_ASSERT_FALSE(out.artwork_known);
+  TEST_ASSERT_FALSE(out.has_artwork_identity);
+
+  policy.OnArtworkIdentity(false, 0, 20);
+  TEST_ASSERT_TRUE(policy.HasPendingPublication());
+  TEST_ASSERT_TRUE(policy.ForcePublish(20, &out));
+  TEST_ASSERT_FALSE(policy.HasPendingPublication());
+  TEST_ASSERT_TRUE(out.artwork_known);
+  TEST_ASSERT_FALSE(out.has_artwork_identity);
+
+  policy.OnContentId("second", 6, 30);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 31);
+  TEST_ASSERT_TRUE(policy.ForcePublish(31, &out));
+  TEST_ASSERT_FALSE(out.artwork_known);
+
+  policy.OnArtworkIdentity(true, 11, 40);
+  TEST_ASSERT_TRUE(policy.HasPendingPublication());
+  TEST_ASSERT_TRUE(policy.ForcePublish(40, &out));
+  TEST_ASSERT_FALSE(policy.HasPendingPublication());
+  TEST_ASSERT_TRUE(out.artwork_known);
+  TEST_ASSERT_TRUE(out.has_artwork_identity);
+  TEST_ASSERT_EQUAL(static_cast<int>(np::ArtworkAvailability::kPending),
+                    static_cast<int>(out.artwork_availability));
+}
+
 static void test_now_playing_policy_retains_unchanged_text_across_tracks() {
   np::NowPlayingMetadataPolicy policy;
   np::NowPlayingData out{};
@@ -2865,6 +2895,7 @@ int main(int, char**) {
   RUN_TEST(test_now_playing_playback_states_and_seconds);
   RUN_TEST(test_now_playing_progress_interpolation_and_wrap);
   RUN_TEST(test_now_playing_policy_generations_and_deadlines);
+  RUN_TEST(test_now_playing_policy_distinguishes_unknown_and_absent_artwork);
   RUN_TEST(test_now_playing_policy_retains_unchanged_text_across_tracks);
   RUN_TEST(test_now_playing_policy_anchors_callbacks_before_publication);
   RUN_TEST(test_now_playing_artwork_publications_preserve_progress);

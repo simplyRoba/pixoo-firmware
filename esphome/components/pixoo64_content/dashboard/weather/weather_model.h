@@ -15,10 +15,8 @@ using pixoo::kForecastHours;
 using pixoo::WeatherSource;
 
 // Gathers weather values from the WeatherSource port plus the clock and
-// produces a WeatherViewModel for the renderer. It signals demand via
-// RequestRefresh() whenever weather is being shown; which provider answers is
-// the adapter's concern. Optional fields carry a presence flag; a missing one
-// is not shown.
+// produces a WeatherViewModel for the renderer. Optional fields carry a
+// presence flag; a missing one is not shown.
 class WeatherModel {
  public:
   void set_source(WeatherSource *source) {
@@ -26,17 +24,11 @@ class WeatherModel {
     this->sky_cache_valid_ = false;
   }
 
-  // Signal demand for fresh data (called while the weather dashboard is shown).
   void RequestRefresh() {
     if (this->source_ != nullptr)
       this->source_->RequestRefresh();
   }
 
-  // True until the source has delivered its first data — the moment to show a
-  // loading animation instead of an empty dashboard.
-  bool loading() const {
-    return this->source_ != nullptr && !this->source_->HasData();
-  }
   void set_time(time::RealTimeClock *t) {
     this->time_ = t;
     this->sky_cache_valid_ = false;

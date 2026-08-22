@@ -55,16 +55,34 @@ public:
   bool Clear();
 
   pixoo::now_playing::NowPlayingData Data() const override;
+  bool SnapshotSettled() const override;
   void SetArtworkEligible(bool eligible, uint32_t now_ms) override;
   bool CopyArtwork(uint64_t expected_identity, uint32_t expected_revision,
                    uint16_t *destination,
                    size_t destination_count) const override;
 
 protected:
+  enum InitialField : uint8_t {
+    kContentId = 1u << 0,
+    kTitle = 1u << 1,
+    kArtist = 1u << 2,
+    kDuration = 1u << 3,
+    kPosition = 1u << 4,
+    kPositionUpdatedAt = 1u << 5,
+    kEntityPicture = 1u << 6,
+  };
+  static constexpr uint8_t kAllInitialFields = (1u << 7) - 1;
+
   void RegisterSubscriptions_();
+  void BeginInitialSnapshot_();
+  void CompleteInitialSnapshot_();
+  void MarkInitialField_(InitialField field);
+  void SetTransportConnected_(bool connected, uint32_t now_ms);
   void ResetState_(uint32_t now_ms);
   void Publish_(const pixoo::now_playing::NowPlayingData &data);
+  void OnSubscriptionRoot_(StringRef value);
   void OnRoot_(StringRef value);
+  void OnRootState_(pixoo::now_playing::PlaybackState state, uint32_t now_ms);
   void OnContentId_(StringRef value);
   void OnTitle_(StringRef value);
   void OnArtist_(StringRef value);
@@ -112,6 +130,12 @@ protected:
   bool subscriptions_registered_{false};
   bool transport_connected_{false};
   bool connected_grace_active_{false};
+  bool initial_snapshot_started_{false};
+  bool initial_snapshot_complete_{false};
+  bool initial_root_seen_{false};
+  uint8_t initial_fields_seen_{0};
+  pixoo::now_playing::PlaybackState initial_root_state_{
+      pixoo::now_playing::PlaybackState::kUnknown};
   uint32_t connected_since_ms_{0};
   uint32_t config_revision_{0};
   uint64_t desired_artwork_identity_{0};

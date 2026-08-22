@@ -39,6 +39,7 @@ struct NowPlayingData {
   uint32_t duration_ms{0};
   uint32_t position_ms{0};
   uint64_t media_identity{0};
+  bool artwork_known{false};
   bool has_artwork_identity{false};
   uint64_t artwork_identity{0};
   ArtworkAvailability artwork_availability{ArtworkAvailability::kNone};
