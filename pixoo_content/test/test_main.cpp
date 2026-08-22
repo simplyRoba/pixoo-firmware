@@ -2335,16 +2335,44 @@ static void test_now_playing_policy_generations_and_deadlines() {
   // Position-only changes retain title/artist and the explicit generation.
   policy.OnPosition(true, 4, 100); TEST_ASSERT_TRUE(policy.PublishIfDue(220, &out));
   TEST_ASSERT_EQUAL_STRING("First", out.title.bytes); TEST_ASSERT_EQUAL_UINT64(first_id, out.media_identity);
-  // A changed ID clears optional values absent from its burst.
   policy.OnContentId("second", 6, 300); policy.OnPlaybackState(np::PlaybackState::kPlaying, 301);
   TEST_ASSERT_TRUE(policy.ForcePublish(301, &out)); TEST_ASSERT_EQUAL_UINT32(2, out.media_generation);
-  TEST_ASSERT_EQUAL_UINT16(0, out.title.size); TEST_ASSERT_FALSE(out.has_duration);
+  TEST_ASSERT_EQUAL_STRING("First", out.title.bytes); TEST_ASSERT_FALSE(out.has_duration);
   // Quiet window and hard burst deadline use unsigned time.
   policy.OnTitle("later", 5, 1000); TEST_ASSERT_FALSE(policy.PublishIfDue(1119, &out));
   TEST_ASSERT_TRUE(policy.PublishIfDue(1120, &out));
   policy.OnPosition(true, 1, 2000); policy.OnPosition(true, 1, 2100); policy.OnPosition(true, 1, 2200);
   policy.OnPosition(true, 1, 2300); policy.OnPosition(true, 1, 2400);
   TEST_ASSERT_TRUE(policy.PublishIfDue(2500, &out));
+}
+
+static void test_now_playing_policy_retains_unchanged_text_across_tracks() {
+  np::NowPlayingMetadataPolicy policy;
+  np::NowPlayingData out{};
+  policy.Reset(true, 1, true, 0, &out);
+  out = publish_track(&policy, "first", "First", 1);
+
+  policy.OnContentId("second", 6, 20);
+  policy.OnTitle("Second", 6, 21);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 22);
+  TEST_ASSERT_TRUE(policy.ForcePublish(22, &out));
+  TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
+  TEST_ASSERT_EQUAL_STRING("Artist", out.artist.bytes);
+
+  policy.OnContentId("third", 5, 30);
+  policy.OnArtist("Different", 9, 31);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 32);
+  TEST_ASSERT_TRUE(policy.ForcePublish(32, &out));
+  TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
+  TEST_ASSERT_EQUAL_STRING("Different", out.artist.bytes);
+
+  policy.OnContentId("fourth", 6, 40);
+  policy.OnTitle("", 0, 41);
+  policy.OnArtist("", 0, 42);
+  policy.OnPlaybackState(np::PlaybackState::kPlaying, 43);
+  TEST_ASSERT_TRUE(policy.ForcePublish(43, &out));
+  TEST_ASSERT_EQUAL_UINT16(0, out.title.size);
+  TEST_ASSERT_EQUAL_UINT16(0, out.artist.size);
 }
 
 static void test_now_playing_policy_anchors_callbacks_before_publication() {
@@ -2568,7 +2596,7 @@ static void test_now_playing_policy_fallback_identity_matches_published_fields()
   TEST_ASSERT_TRUE(policy.ForcePublish(30, &out));
   TEST_ASSERT_EQUAL_UINT32(first_generation + 1, out.media_generation);
   TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
-  TEST_ASSERT_EQUAL_UINT16(0, out.artist.size);
+  TEST_ASSERT_EQUAL_STRING("Artist", out.artist.bytes);
   TEST_ASSERT_FALSE(out.has_duration);
   TEST_ASSERT_FALSE(out.has_artwork_identity);
   TEST_ASSERT_EQUAL_UINT64(
@@ -2584,7 +2612,7 @@ static void test_now_playing_policy_fallback_identity_matches_published_fields()
   TEST_ASSERT_EQUAL_UINT32(second_generation, out.media_generation);
   TEST_ASSERT_EQUAL_UINT64(second_identity, out.media_identity);
   TEST_ASSERT_EQUAL_STRING("Second", out.title.bytes);
-  TEST_ASSERT_EQUAL_UINT16(0, out.artist.size);
+  TEST_ASSERT_EQUAL_STRING("Artist", out.artist.bytes);
   TEST_ASSERT_FALSE(out.has_artwork_identity);
 }
 
@@ -2837,6 +2865,7 @@ int main(int, char**) {
   RUN_TEST(test_now_playing_playback_states_and_seconds);
   RUN_TEST(test_now_playing_progress_interpolation_and_wrap);
   RUN_TEST(test_now_playing_policy_generations_and_deadlines);
+  RUN_TEST(test_now_playing_policy_retains_unchanged_text_across_tracks);
   RUN_TEST(test_now_playing_policy_anchors_callbacks_before_publication);
   RUN_TEST(test_now_playing_artwork_publications_preserve_progress);
   RUN_TEST(test_now_playing_policy_reconnect_requires_fresh_root_state);

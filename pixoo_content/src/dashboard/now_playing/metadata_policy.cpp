@@ -211,8 +211,8 @@ bool NowPlayingMetadataPolicy::Publish_(uint32_t now_ms, NowPlayingData *publish
 
   if (new_generation) {
     ++next.media_generation;
-    next.title = title_in_burst ? title_.value : BoundedText{};
-    next.artist = artist_in_burst ? artist_.value : BoundedText{};
+    next.title = title_in_burst ? title_.value : data_.title;
+    next.artist = artist_in_burst ? artist_.value : data_.artist;
     next.has_duration = duration_in_burst && duration_.present;
     next.duration_ms = next.has_duration ? duration_.value : 0;
     next.has_artwork_identity = artwork_in_burst && artwork_.present;
