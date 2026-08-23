@@ -49,9 +49,11 @@ infer flash commands or offsets from build output alone.
 .venv/bin/python -m unittest discover -s esphome/tests/config_validation
 .venv/bin/python tools/gen-reaction-art.py --check
 .venv/bin/python tools/gen-split-flap-digits.py --check
+.venv/bin/python tools/gen-showcase-cover.py --check
 .venv/bin/esphome compile esphome/pixoo64.yaml
 .venv/bin/esphome compile esphome/tests/render_test/render_test.yaml
 esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-render-test/program
+.venv/bin/python tools/render-readme-showcase.py --check
 ```
 
 The native suites test the framework-independent protocol, application-policy,
@@ -67,6 +69,10 @@ now-playing adapter and image-decoder fixtures.
 inputs and license are under `resources/openmoji-17.0.0/`.
 `tools/gen-split-flap-digits.py` owns
 `esphome/components/pixoo64_content/dashboard/clock/split_flap_digits.h`.
+`tools/gen-showcase-cover.py` owns
+`esphome/tests/render_test/components/pixoo64_render_test/showcase_cover.h`.
+`tools/render-readme-showcase.py` owns `docs/images/readme-showcase.png` from
+its explicit ordered render-snapshot inputs.
 
 Run a generator without `--check` only when intentionally changing its source
 inputs or algorithm. Commit the generator, its public inputs, and generated output
@@ -80,11 +86,15 @@ Generators owning checked-in sources:
   palette-compressed reaction artwork.
 - `tools/gen-split-flap-digits.py` — rasterize the split-flap digit strokes into
   the anti-aliased coverage table.
+- `tools/gen-showcase-cover.py` — render the original high-resolution cover art
+  and downsample it into the RGB565 now-playing fixture.
 
 Render-test review:
 
 - `tools/render-test-view.sh` — rebuild the render-test frames and assemble the
   review composites.
+- `tools/render-readme-showcase.py` — compose the tracked README image from its
+  five explicit 64×64 render snapshots; use `--check` to verify decoded pixels.
 - `tools/render-test-contact-sheet.py` — assemble rendered frames into one sheet.
 - `tools/render-test-icon-gallery.py` — assemble the weather-icon states.
 - `tools/render-weather-gif.py` — animate a weather dashboard state.

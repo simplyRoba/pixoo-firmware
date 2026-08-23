@@ -20,6 +20,9 @@ material.
 - **Adaptation:** `esphome/components/pixoo64_content/reaction/reaction_art.h`
   is adapted material generated from these SVGs by
   `tools/gen-reaction-art.py` as 48×48 anti-aliased, palette-compressed C++ data.
+  `docs/images/readme-showcase.png` incorporates the celebration reaction render
+  derived from that material; it is covered by this attribution and CC BY-SA 4.0,
+  including the ShareAlike requirement.
 
 The reaction-to-source mapping and additional attribution are retained in
 `resources/openmoji-17.0.0/README.md`.

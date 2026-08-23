@@ -10,6 +10,7 @@ on:
       - "pixoo_app/**"
       - "pixoo_content/**"
       - "tools/**"
+      - "docs/images/**"
       - "resources/openmoji-17.0.0/**"
       - "requirements.txt"
       - "ci-requirements.txt"
@@ -21,6 +22,7 @@ on:
       - "pixoo_app/**"
       - "pixoo_content/**"
       - "tools/**"
+      - "docs/images/**"
       - "resources/openmoji-17.0.0/**"
       - "requirements.txt"
       - "ci-requirements.txt"
@@ -74,6 +76,8 @@ jobs:
         run: python tools/gen-reaction-art.py --check
       - name: Verify generated split-flap digits
         run: python tools/gen-split-flap-digits.py --check
+      - name: Verify generated showcase cover
+        run: python tools/gen-showcase-cover.py --check
       - name: Supply non-production ESPHome secrets
         run: cp esphome/secrets.example.yaml esphome/secrets.yaml
       - name: Compile ESPHome Pixoo firmware
@@ -95,3 +99,5 @@ jobs:
         run: esphome compile esphome/tests/render_test/render_test.yaml
       - name: Compare rendered dashboards to references
         run: esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-render-test/program
+      - name: Verify README showcase
+        run: python tools/render-readme-showcase.py --check

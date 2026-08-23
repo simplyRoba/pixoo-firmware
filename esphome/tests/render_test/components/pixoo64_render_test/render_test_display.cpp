@@ -330,6 +330,7 @@ void RenderTestDisplay::setup() {
 
     const char *now_playing_snapshots[] = {
         "now_playing_playing_artwork",
+        "now_playing_showcase",
         "now_playing_paused_midpoint",
         "now_playing_paused",
         "now_playing_buffering",
@@ -406,6 +407,8 @@ void RenderTestDisplay::setup() {
     const auto cover_pixels_equal = [&](const char *left, const char *right) {
       return frame_rows_equal(left, right, 15, 24);
     };
+    now_playing_valid &= frames_differ("now_playing_playing_artwork",
+                                       "now_playing_showcase");
     now_playing_valid &= frames_differ("now_playing_playing_artwork",
                                        "now_playing_paused_midpoint");
     now_playing_valid &= frames_differ("now_playing_paused_midpoint",
@@ -668,6 +671,18 @@ void RenderTestDisplay::setup() {
       }
     }
 
+    // The normal analog face enters through its wind-in before the banner is
+    // captured, rather than being drawn directly in its settled state.
+    const pixoo::Notification analog_warning{"Door open",
+                                              pixoo::Severity::kWarning};
+    if (!this->render_frame_(0, "clock_analog", nullptr, 0, true) ||
+        !this->render_frame_(1760, "clock_analog", &analog_warning, 0, true)) {
+      std::printf("render test: FAILED settled analog warning\n");
+      ++failures;
+    } else {
+      check("notify_warning_analog");
+    }
+
     auto render_reaction = [&](pixoo::Reaction reaction, uint32_t elapsed_ms,
                                bool reset_base) {
       if (reset_base &&
@@ -743,6 +758,56 @@ void RenderTestDisplay::setup() {
       } else {
         check(std::string("reaction_") + pixoo::ReactionName(reaction) +
               "_late");
+      }
+    }
+
+    // A reaction captures this recognizable weather dashboard once, then
+    // renders from its frozen, blurred, darkened background at a nonzero point.
+    bool weather_reaction_valid =
+        this->render_frame_(2048, "weather_landscape_day", nullptr, 0, true);
+    const std::vector<uint8_t> clean_weather = this->framebuffer_;
+    pixoo::Overlay weather_reaction{};
+    weather_reaction.tag = pixoo::OverlayTag::kReaction;
+    weather_reaction.reaction = pixoo::Reaction::kCelebrate;
+    pixoo::FrameView weather_reaction_frame;
+    weather_reaction_valid =
+        weather_reaction_valid && this->content_controller_->RenderContent(
+                                      2048, "weather_landscape_day", {}, {},
+                                      &weather_reaction, 0, true, true, false,
+                                      true, &weather_reaction_frame) &&
+        weather_reaction_frame.valid() &&
+        weather_reaction_frame.size == this->framebuffer_.size();
+    std::vector<uint8_t> dark_weather;
+    if (weather_reaction_valid) {
+      dark_weather.assign(weather_reaction_frame.data,
+                          weather_reaction_frame.data + weather_reaction_frame.size);
+      const uint64_t clean_sum =
+          std::accumulate(clean_weather.begin(), clean_weather.end(), uint64_t{0});
+      const uint64_t dark_sum =
+          std::accumulate(dark_weather.begin(), dark_weather.end(), uint64_t{0});
+      weather_reaction_valid &= dark_weather != clean_weather && dark_sum < clean_sum;
+    }
+    const uint32_t weather_reaction_elapsed =
+        pixoo::ReactionVisibleDurationMs(weather_reaction.reaction) * 7 / 20;
+    weather_reaction_valid =
+        weather_reaction_valid && this->content_controller_->RenderContent(
+                                      2048, "weather_landscape_day", {}, {},
+                                      &weather_reaction,
+                                      weather_reaction_elapsed, true, true,
+                                      false, true, &weather_reaction_frame) &&
+        weather_reaction_frame.valid() &&
+        weather_reaction_frame.size == this->framebuffer_.size();
+    if (!weather_reaction_valid) {
+      std::printf("render test: FAILED celebration weather reaction\n");
+      ++failures;
+    } else {
+      std::memcpy(this->framebuffer_.data(), weather_reaction_frame.data,
+                  weather_reaction_frame.size);
+      if (this->framebuffer_ == dark_weather) {
+        std::printf("render test: FAILED celebration reaction artwork\n");
+        ++failures;
+      } else {
+        check("reaction_celebrate_weather");
       }
     }
 
@@ -961,7 +1026,7 @@ void RenderTestDisplay::setup() {
                   this->now_playing_source_->eligible_true_count() == 1 &&
                   this->now_playing_source_->eligible_false_count() == 1 &&
                   this->now_playing_source_->data_count() == now_playing_ticks + 1 &&
-                  this->now_playing_source_->copy_count() == 8;
+                  this->now_playing_source_->copy_count() == 9;
     if (!now_playing_lifecycle_valid) {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;

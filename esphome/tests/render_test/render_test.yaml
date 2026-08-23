@@ -844,6 +844,18 @@ pixoo64_render_test:
         title: "I Love you"
         artist: "Test"
         media_identity: 7007
+      - at_ms: 60000
+        source_state: ready
+        playback_state: playing
+        title: "Nightfall"
+        artist: "Neon Echo"
+        duration_ms: 248000
+        position_ms: 96000
+        media_identity: 9601
+        artwork_identity: 9601
+        artwork_availability: ready
+        artwork_revision: 1
+        artwork_copy_ready_at_ms: 60000
 
 pixoo64_content:
   id: render_test_content_controller
@@ -1551,6 +1563,13 @@ display:
       - dashboard: now_playing
         now_ms: 48800
         snapshot: now_playing_fallback_change_ready
+      # Short, fictional metadata and original full-bleed artwork make a stable
+      # now-playing render suitable for the project overview.
+      - dashboard: now_playing
+        now_ms: 60000
+      - dashboard: now_playing
+        now_ms: 60700
+        snapshot: now_playing_showcase
       - dashboard: game_of_life
         now_ms: 0
         snapshot: game_of_life

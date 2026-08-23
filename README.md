@@ -1,10 +1,18 @@
 # Pixoo64 replacement firmware
 
-Open replacement firmware for the ESP32 on a Pixoo64 display. It uses ESPHome for
-networking, provisioning, OTA, and the native API while retaining the panel MCU
-that refreshes the LEDs. It does not use the Divoom app or cloud. This independent
-project is not affiliated with or endorsed by Divoom; the Divoom and Pixoo64 names
-identify the supported hardware.
+Open, Home Assistant-connected replacement firmware for the ESP32 in a Pixoo64,
+with animated dashboards, weather, now-playing artwork, notifications, and
+reactions—without the Divoom app or cloud.
+
+It uses ESPHome for networking, provisioning, OTA, and the native API while
+retaining the panel MCU that refreshes the LEDs. This independent project is not
+affiliated with or endorsed by Divoom; the Divoom and Pixoo64 names identify the
+supported hardware.
+
+<p align="center">
+  <img src="docs/images/readme-showcase.png" width="900" alt="Five Pixoo64 firmware displays: daylight weather landscape, Nightfall by Neon Echo now playing, color waveform, analog clock with Door open warning, and celebration reaction over weather.">
+</p>
+<p align="center"><sub>Actual firmware renders with a simulated Pixoo64 LED grid: weather landscape, now playing, color waveform, analog-clock warning notification, and celebration reaction.</sub></p>
 
 ## Compatibility
 

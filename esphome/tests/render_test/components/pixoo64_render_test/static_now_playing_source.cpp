@@ -2,8 +2,15 @@
 
 #include "now_playing_art.h"
 #include "now_playing_text.h"
+#include "showcase_cover.h"
 
 namespace esphome::pixoo64_render_test {
+namespace {
+
+constexpr uint64_t kShowcaseArtworkIdentity = 9601;
+static_assert(showcase_cover::kWidth == 64 && showcase_cover::kHeight == 64);
+
+}  // namespace
 
 uint32_t StaticNowPlayingSource::current_render_time_ms_ = 0;
 
@@ -93,6 +100,11 @@ void StaticNowPlayingSource::SetArtworkEligible(bool eligible,
 uint16_t StaticNowPlayingSource::ArtworkPixel_(uint64_t identity,
                                                uint32_t revision, int x,
                                                int y) {
+  if (identity == kShowcaseArtworkIdentity)
+    return showcase_cover::kPixels[static_cast<size_t>(y) *
+                                       showcase_cover::kWidth +
+                                   x];
+
   const uint8_t phase = static_cast<uint8_t>(identity ^ (identity >> 17) ^
                                              (revision * 29u));
   uint8_t red = static_cast<uint8_t>(35 + ((x * 4 + phase) % 170));
