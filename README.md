@@ -5,9 +5,7 @@ with animated dashboards, weather, now-playing artwork, notifications, and
 reactions—without the Divoom app or cloud.
 
 It uses ESPHome for networking, provisioning, OTA, and the native API while
-retaining the panel MCU that refreshes the LEDs. This independent project is not
-affiliated with or endorsed by Divoom; the Divoom and Pixoo64 names identify the
-supported hardware.
+retaining the panel MCU that refreshes the LEDs.
 
 <p align="center">
   <img src="docs/images/readme-showcase.png" width="900" alt="Five Pixoo64 firmware displays: daylight weather landscape, Nightfall by Neon Echo now playing, color waveform, analog clock with Door open warning, and celebration reaction over weather.">
@@ -50,5 +48,10 @@ GNU Affero General Public License, version 3 or later
 full license text in [LICENSE](LICENSE).
 Checked-in OpenMoji artwork and bundled fonts have their own terms; see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+> [!NOTE]
+> This independent project is not
+affiliated with or endorsed by Divoom; the Divoom and Pixoo64 names identify the
+supported hardware.
 
 **This project is developed with AI assistance, reviewed by a critical human.**
