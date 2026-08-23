@@ -838,6 +838,12 @@ pixoo64_render_test:
         artwork_availability: ready
         artwork_revision: 1
         artwork_copy_ready_at_ms: 48100
+      - at_ms: 50000
+        source_state: ready
+        playback_state: playing
+        title: "I Love you"
+        artist: "Test"
+        media_identity: 7007
 
 pixoo64_content:
   id: render_test_content_controller

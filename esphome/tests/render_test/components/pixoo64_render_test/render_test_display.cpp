@@ -412,19 +412,20 @@ void RenderTestDisplay::setup() {
                                        "now_playing_paused");
     now_playing_valid &= frames_differ("now_playing_paused",
                                        "now_playing_buffering");
-    // Pending media keeps the old pixels and rows. A ready replacement begins
-    // at that same image, crosses through a distinct blend, then reaches the
-    // replacement image rather than cutting to it.
+    // Pending media keeps the old cover and title. The retained artist may keep
+    // scrolling. A ready replacement begins at that same image, crosses through
+    // a distinct blend, then reaches the replacement image rather than cutting
+    // to it.
     now_playing_valid &= cover_pixels_equal(
         "now_playing_track_change_old", "now_playing_track_change_pending");
     now_playing_valid &= frame_rows_equal(
-        "now_playing_track_change_old", "now_playing_track_change_pending", 45, 18);
+        "now_playing_track_change_old", "now_playing_track_change_pending", 45, 8);
     now_playing_valid &= cover_pixels_equal(
         "now_playing_track_change_pending",
         "now_playing_track_change_ready_start");
     now_playing_valid &= frame_rows_equal(
         "now_playing_track_change_pending",
-        "now_playing_track_change_ready_start", 45, 18);
+        "now_playing_track_change_ready_start", 45, 8);
     now_playing_valid &= !cover_pixels_equal(
         "now_playing_track_change_pending", "now_playing_track_change_midpoint");
     now_playing_valid &= !cover_pixels_equal(
@@ -965,6 +966,31 @@ void RenderTestDisplay::setup() {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;
     }
+
+    // "I Love you" occupies exactly the reported 60px width only when the
+    // first glyph's separate 2px x offset is omitted. Its full advance is 62px,
+    // so it must move to expose the clipped final column.
+    bool marquee_boundary_valid =
+        this->render_frame_(50000, "now_playing", nullptr, 0, true);
+    std::vector<uint8_t> marquee_boundary_start;
+    if (marquee_boundary_valid)
+      marquee_boundary_start = this->framebuffer_;
+    marquee_boundary_valid =
+        marquee_boundary_valid &&
+        this->render_frame_(50980, "now_playing", nullptr, 0, true);
+    if (marquee_boundary_valid) {
+      constexpr size_t kTitleStart = 45u * 64u * 3u;
+      constexpr size_t kTitleEnd = 53u * 64u * 3u;
+      marquee_boundary_valid =
+          !std::equal(marquee_boundary_start.begin() + kTitleStart,
+                      marquee_boundary_start.begin() + kTitleEnd,
+                      this->framebuffer_.begin() + kTitleStart);
+    }
+    if (!marquee_boundary_valid) {
+      std::printf("render test: FAILED now-playing marquee width boundary\n");
+      ++failures;
+    }
+    this->content_controller_->HideBaseContent(50981);
 
     struct GateDashboard final : pixoo64::dashboard::Dashboard {
       explicit GateDashboard(Color color) : color(color) {}

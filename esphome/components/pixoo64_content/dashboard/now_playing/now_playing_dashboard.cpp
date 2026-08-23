@@ -435,7 +435,9 @@ int NowPlayingDashboard::Measure_(const char *text) const {
   int baseline = 0;
   int height = 0;
   this->font_->measure(text, &width, &x_offset, &baseline, &height);
-  return width;
+  // RasterizeText_ advances its pen from the supplied origin. ESPHome reports
+  // the first glyph's x offset separately, so both values form that span.
+  return width + x_offset;
 }
 
 void NowPlayingDashboard::UpdateTextLayout_(uint32_t now_ms) {
