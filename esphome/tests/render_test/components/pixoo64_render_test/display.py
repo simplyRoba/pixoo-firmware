@@ -1,3 +1,5 @@
+import sys
+
 import esphome.codegen as cg
 from esphome.components import display, text
 import esphome.config_validation as cv
@@ -74,6 +76,9 @@ async def to_code(config):
     if config[CONF_ADAPTER_CHECKS]:
         cg.add_build_flag("-DUSE_PIXOO64_NOW_PLAYING")
         cg.add_build_flag("-DPNGLE_NO_GAMMA_CORRECTION")
+        # JPEGDEC 1.8.4 uses this nonstandard host macro to avoid Arduino.h.
+        if sys.platform.startswith("linux"):
+            cg.add_build_flag("-D__LINUX__")
         cg.add_build_flag("-Isrc")
         cg.add_library(
             "JPEGDEC",
