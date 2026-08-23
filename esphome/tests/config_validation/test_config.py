@@ -333,8 +333,44 @@ class EspHomeConfigTest(unittest.TestCase):
             self.assertEqual(text.count(f"      dashboard_id: clock_{face}\n"), 1)
             self.assertEqual(text.count(f"      face: {face}\n"), 1)
 
+    def test_production_solar_brightness_uses_runtime_location_and_clock(self):
+        production = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
+        params = (self.fixture / "esphome/config-params.yaml").read_text(encoding="utf-8")
+        self.assertEqual(production.count("\nsun:\n"), 1)
+        self.assertIn("  id: panel_sun\n", production)
+        self.assertIn("  latitude: 0\n", production)
+        self.assertIn("  longitude: 0\n", production)
+        self.assertIn("  solar_brightness:\n", production)
+        for value in (
+            "enable_switch: solar_brightness",
+            "day_brightness: solar_day_brightness",
+            "night_brightness: solar_night_brightness",
+            "latitude: location_latitude",
+            "longitude: location_longitude",
+            "sun: panel_sun",
+        ):
+            self.assertIn(value, production)
+        self.assertEqual(params.count("name: Day Brightness"), 1)
+        self.assertEqual(params.count("name: Night Brightness"), 1)
+        self.assertEqual(production.count("name: Solar Brightness"), 1)
+        self.assertIn("restore_mode: RESTORE_DEFAULT_OFF", production)
+        component = (self.fixture / "esphome/components/pixoo64/firmware_app_component.cpp").read_text(encoding="utf-8")
+        self.assertIn("solar_sun_->set_latitude(latitude)", component)
+        self.assertIn("solar_sun_->set_longitude(longitude)", component)
+        self.assertIn("add_remote_values_listener(this)", component)
+        self.assertIn("light_publication_guard_.Expect(state)", component)
+        self.assertNotIn("SyncLightFromEntity();\n", production)
+        self.assertNotIn('#include "esphome/components/sun/sun.cpp"', component)
+
     def test_final_validators_reject_invalid_board_wiring(self):
         cases = (
+            (
+                "solar brightness missing sun calculator",
+                "esphome/pixoo64.yaml",
+                "    sun: panel_sun\n\n# Dashboard rendering and content sources.",
+                "\n# Dashboard rendering and content sources.",
+                "'sun' is a required option",
+            ),
             (
                 "shared panel transport redirect policy",
                 "esphome/pixoo64.yaml",

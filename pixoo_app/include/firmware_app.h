@@ -102,7 +102,21 @@ class FrameMetricsPort {
 class LightStateSink {
  public:
   virtual ~LightStateSink() = default;
-  virtual void Publish(LightState state) = 0;
+  // Persistent publications represent user intent. Transient publications
+  // expose an automatic effective level without replacing that intent.
+  virtual void Publish(LightState state, bool persistent) = 0;
+};
+
+class SolarBrightnessStateSink {
+ public:
+  virtual ~SolarBrightnessStateSink() = default;
+  virtual void PublishSolarBrightnessEnabled(bool enabled) = 0;
+};
+
+struct SolarBrightnessConfig {
+  bool enabled{false};
+  float day_brightness{1.0f};
+  float night_brightness{0.2f};
 };
 
 class SystemPort {
@@ -187,11 +201,22 @@ class FirmwareApp {
               FirmwareAppConfig config = FirmwareAppConfig{},
               SystemPort *system = nullptr,
               FrameMetricsPort *frame_metrics = nullptr,
-              OverlayQueueStorage *overlay_queue_storage = nullptr);
+              OverlayQueueStorage *overlay_queue_storage = nullptr,
+              SolarBrightnessStateSink *solar_brightness_sink = nullptr);
 
   bool Start(uint32_t now_ms, LightState initial_light,
-             const std::string &initial_dashboard_id);
+             const std::string &initial_dashboard_id,
+             SolarBrightnessConfig solar_brightness = SolarBrightnessConfig{});
   void Tick(uint32_t now_ms);
+
+  // The adapter owns wall-clock and coordinate validation and supplies the
+  // resulting elevation. The core owns the brightness policy and cadence.
+  bool SolarElevationDue(uint32_t now_ms) const;
+  void SetSolarElevation(float elevation_degrees, uint32_t now_ms);
+  void SetSolarBrightnessEnabled(bool enabled, uint32_t now_ms);
+  void SetSolarBrightnessLevels(float day_brightness, float night_brightness,
+                                uint32_t now_ms);
+  bool solar_brightness_enabled() const { return solar_brightness_.enabled; }
 
   // External entity state is inbound user intent. It is never echoed back to
   // the sink, which prevents a publish/callback feedback loop.
@@ -244,6 +269,10 @@ class FirmwareApp {
 
  private:
   static float ClampBrightness_(float brightness);
+  static float ClampSolarBrightness_(float brightness);
+  static float SolarBrightnessForElevation_(float elevation_degrees,
+                                            float day_brightness,
+                                            float night_brightness);
   void SyncBrightnessBounce_(float brightness);
   static bool ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                               uint32_t duration_ms);
@@ -256,6 +285,13 @@ class FirmwareApp {
   void StopTimerAlarm_();
 
   void ApplyUserLight_(LightState light, uint32_t now_ms, bool publish);
+  void ApplyEffectiveBrightness_(float brightness, uint32_t now_ms,
+                                 bool persistent, bool update_off_overlay_wake);
+  void ApplySolarBrightness_(uint32_t now_ms);
+  void SetSolarBrightnessEnabled_(bool enabled, uint32_t now_ms,
+                                  bool publish_mode,
+                                  bool persist_effective_brightness);
+  void PublishSolarBrightnessEnabled_();
   bool EnqueueOverlay_(OverlayRequest request, uint32_t now_ms);
   void PromoteOverlay_();
   bool CancelOverlayQueueWithoutRestore_();
@@ -283,12 +319,20 @@ class FirmwareApp {
   SoundPlayer *sound_player_;
   MicrophonePort *microphone_;
   LightStateSink *light_sink_;
+  SolarBrightnessStateSink *solar_brightness_sink_;
   FirmwareAppConfig config_;
   SystemPort *system_;
   FrameMetricsPort *frame_metrics_;
 
   Phase phase_{Phase::kOff};
+  // configured_light_ is persisted manual intent; logical_light_ is the
+  // effective state currently applied to the panel and exposed by the light.
+  LightState configured_light_{};
   LightState logical_light_{};
+  SolarBrightnessConfig solar_brightness_{};
+  float solar_elevation_degrees_{std::numeric_limits<float>::quiet_NaN()};
+  bool solar_elevation_received_{false};
+  uint32_t next_solar_evaluation_ms_{0};
   DashboardSelection selected_dashboard_{};
   uint32_t phase_started_ms_{0};
   uint32_t phase_delay_ms_{0};

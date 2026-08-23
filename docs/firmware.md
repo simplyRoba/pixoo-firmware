@@ -33,8 +33,9 @@ state remain with their respective components. `FirmwareApp` decides:
 - whether the display is off, waiting for panel initialization, showing the boot
   presentation, or running;
 - when the selected dashboard and any overlay must render;
-- how power, brightness, buttons, dashboard selection, notifications, reactions,
-  sounds, reboot, and factory reset interact;
+- how power, manual and effective brightness, solar scheduling, buttons,
+  dashboard selection, notifications, reactions, sounds, reboot, and factory
+  reset interact;
 - when microphone capture is required; and
 - when a rendered frame is presented to the panel.
 
@@ -58,6 +59,7 @@ FirmwareApp
         ├── SoundPlayer ─────► RTTTL adapter
         ├── MicrophonePort ──► I2S microphone adapter and equalizer DSP
         ├── LightStateSink ──► ESPHome light entity
+        ├── SolarBrightnessStateSink ─► ESPHome switch entity
         ├── SystemPort ──────► safe reboot and preference reset
         └── FrameMetricsPort ► ESPHome diagnostic sensors
 ```
@@ -85,7 +87,8 @@ test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` and
 | `RenderPort` | `FirmwareApp` | `ContentController` | Dashboard lookup, boot/update frames, dashboard rendering, notification composition, and reaction composition. |
 | `SoundPlayer` | `FirmwareApp` | `RtttlSoundPlayer` | Play or stop a sound from the closed `pixoo::Sound` vocabulary. |
 | `MicrophonePort` | `FirmwareApp` | `MicrophoneAdapter` | Enable capture, process microphone samples, and publish normalized equalizer levels. |
-| `LightStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect application-owned light state in the ESPHome light entity. |
+| `LightStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect persistent manual state or transient effective automatic brightness in the ESPHome light entity. |
+| `SolarBrightnessStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect application-owned mode changes in the persisted ESPHome switch. |
 | `SystemPort` | `FirmwareApp` | `FirmwareAppComponent` | Request a safe reboot, optionally after clearing persisted preferences. |
 | `FrameMetricsPort` | `FirmwareApp` | `FirmwareAppComponent` | Measure complete regular-frame work without putting a platform clock in the application core. |
 | `WeatherSource` | weather rendering layer | `OpenMeteoSource` | Non-blocking weather refresh and coherent weather snapshots. |
@@ -96,9 +99,9 @@ test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` and
 which forwards them to every configured equalizer dashboard. The microphone is
 therefore bound to the renderer catalog rather than to one selected face.
 
-`FirmwareAppComponent` deliberately receives ESPHome light and select entities as
-concrete inbound dependencies. Toward the application core it implements only the
-small output ports shown above.
+`FirmwareAppComponent` receives the concrete ESPHome entities and implements the
+small output ports above. It supplies `FirmwareApp` with solar elevation from an
+ESPHome `sun::Sun` calculator updated from runtime location and SNTP time.
 
 ### 2.3 Ownership and lifetime
 
@@ -263,6 +266,11 @@ current tick and advances the deadline; it does not render a burst of missed
 frames. This keeps work bounded when networking or another ESPHome component
 delays the main loop.
 
+`FirmwareApp` owns Solar Brightness policy; the adapter supplies elevation once
+per minute, retrying unavailable data each second. Automatic light publications
+are transient, keep manual brightness separate, and change neither panel power
+nor an off-panel overlay's full-brightness wake.
+
 A dashboard selection resolves through `RenderPort`'s trusted catalog. The result
 contains its canonical ID, frame interval, and microphone requirement. The
 application enables capture only while the selected base dashboard requires it.
@@ -384,8 +392,8 @@ profile; cold-start and repower settle delays are `FirmwareAppConfig` policy.
 | Build composition | Board/framework, fonts, adapters, dashboard catalog, frame intervals | `esphome/pixoo64.yaml` | Yes |
 | Deployment secrets | API encryption key, OTA password, fallback-AP password | local `esphome/secrets.yaml` | Yes |
 | Provisioned state | Wi-Fi credentials | ESPHome/NVS | No |
-| Runtime settings | Light state, dashboard, text, timezone, weather location and refresh interval, now-playing entity and Home Assistant base URL, sound enable | persisted entities and adapter preferences | No |
-| Product policy | Lifecycle delays, button behavior, overlay queue and restore rules | `pixoo_app` | Yes |
+| Runtime settings | Light state, solar enable and levels, dashboard, text, timezone, weather location and refresh interval, now-playing entity and Home Assistant base URL, sound enable | persisted entities and adapter preferences | No |
+| Product policy | Lifecycle delays, brightness and solar scheduling, button behavior, overlay queue and restore rules | `pixoo_app` | Yes |
 | Runtime state | Current phase, deadlines, framebuffers, weather cache, DSP windows | application and adapter memory | No |
 
 The board profile is the production source of pins, button polarity, transport

@@ -10,6 +10,7 @@
 #include "firmware_app.h"
 #include "app_state.h"
 #include "frame_metrics.h"
+#include "light_state_publication_guard.h"
 #include "timezone_catalog.h"
 #include "pixoo_output.h"
 
@@ -228,8 +229,19 @@ struct RecordingSound final : SoundPlayer {
 };
 
 struct RecordingLightSink final : LightStateSink {
-  void Publish(LightState state) override { published.push_back(state); }
+  void Publish(LightState state, bool persistent) override {
+    published.push_back(state);
+    persistent_publications.push_back(persistent);
+  }
   std::vector<LightState> published;
+  std::vector<bool> persistent_publications;
+};
+
+struct RecordingSolarBrightnessSink final : SolarBrightnessStateSink {
+  void PublishSolarBrightnessEnabled(bool enabled) override {
+    published.push_back(enabled);
+  }
+  std::vector<bool> published;
 };
 
 struct RecordingSystem final : SystemPort {
@@ -1046,13 +1058,13 @@ static void test_button_edges_apply_native_gesture_policy() {
   AssertLight(sink.published.back(), true, 1.0f);
 
   app.BrightnessButtonPressed(100);
-  app.BrightnessButtonReleased(2100);  // Inclusive 2 second boundary.
-  TEST_ASSERT_EQUAL(3, sink.published.size());
-  AssertLight(sink.published.back(), true, 0.75f);
+  app.BrightnessButtonReleased(2100);  // No solar wiring: hold remains inert.
+  TEST_ASSERT_EQUAL(2, sink.published.size());
+  TEST_ASSERT_FALSE(app.solar_brightness_enabled());
 
   app.BrightnessButtonPressed(3000);
   app.BrightnessButtonReleased(3049);
-  TEST_ASSERT_EQUAL(3, sink.published.size());
+  TEST_ASSERT_EQUAL(2, sink.published.size());
 }
 
 static void test_dashboard_frame_cadence_gates_render_attempts() {
@@ -2437,6 +2449,242 @@ static void test_explicit_off_and_factory_reset_stop_timer_alarm() {
   TEST_ASSERT_EQUAL(stops_before_reset + 1, sound.stop_calls);
 }
 
+static void test_light_publication_guard_consumes_only_the_expected_echo() {
+  LightStatePublicationGuard guard;
+  TEST_ASSERT_FALSE(guard.ConsumeIfExpected(LightState{true, 0.4f}));
+
+  guard.Expect(LightState{false, 0.2f});
+  TEST_ASSERT_TRUE(guard.pending());
+  TEST_ASSERT_TRUE(guard.ConsumeIfExpected(LightState{false, 0.2f}));
+  TEST_ASSERT_FALSE(guard.pending());
+  TEST_ASSERT_FALSE(guard.ConsumeIfExpected(LightState{false, 0.2f}));
+
+  guard.Expect(LightState{true, 0.6f});
+  TEST_ASSERT_FALSE(guard.ConsumeIfExpected(LightState{true, 0.7f}));
+  TEST_ASSERT_FALSE(guard.pending());
+
+  guard.Expect(LightState{true, 0.3f});
+  guard.Expect(LightState{true, 0.8f});
+  TEST_ASSERT_TRUE(guard.ConsumeIfExpected(LightState{true, 0.8f}));
+}
+
+static void test_solar_brightness_interpolates_clamps_levels_and_invalid_input() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingLightSink light_sink;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, &light_sink,
+                  FirmwareAppConfig{0, 0, 0});
+  TEST_ASSERT_TRUE(app.Start(0, LightState{true, 0.4f}, "text",
+                             SolarBrightnessConfig{true, 2.0f, 0.01f}));
+  TEST_ASSERT_TRUE(app.SolarElevationDue(0));
+
+  app.SetSolarElevation(std::numeric_limits<float>::quiet_NaN(), 0);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.4f, app.logical_light().brightness);
+  TEST_ASSERT_TRUE(light_sink.published.empty());
+  TEST_ASSERT_FALSE(app.SolarElevationDue(999));
+  TEST_ASSERT_TRUE(app.SolarElevationDue(1000));
+
+  app.SetSolarElevation(-7.0f, 1000);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.05f,
+                           app.logical_light().brightness);
+  app.SetSolarElevation(0.0f, 1001);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.525f,
+                           app.logical_light().brightness);
+  app.SetSolarBrightnessLevels(0.8f, 0.4f, 1002);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.6f,
+                           app.logical_light().brightness);
+  const size_t publications_after_levels = light_sink.published.size();
+  app.SetSolarBrightnessLevels(0.8f, 0.4f, 1003);
+  TEST_ASSERT_EQUAL(publications_after_levels, light_sink.published.size());
+  app.SetSolarElevation(7.0f, 1004);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.8f,
+                           app.logical_light().brightness);
+  TEST_ASSERT_EQUAL(4, light_sink.published.size());
+  for (bool persistent : light_sink.persistent_publications)
+    TEST_ASSERT_FALSE(persistent);
+}
+
+static void test_solar_elevation_cadence_is_wrap_safe() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  const uint32_t valid_at = std::numeric_limits<uint32_t>::max() - 500;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0});
+  TEST_ASSERT_TRUE(app.Start(valid_at, LightState{true, 0.4f}, "text",
+                             SolarBrightnessConfig{true, 1.0f, 0.2f}));
+  app.SetSolarElevation(0.0f, valid_at);
+  TEST_ASSERT_FALSE(app.SolarElevationDue(valid_at + 59999u));
+  TEST_ASSERT_TRUE(app.SolarElevationDue(valid_at + 60000u));
+
+  const uint32_t invalid_at = std::numeric_limits<uint32_t>::max() - 100;
+  app.SetSolarElevation(std::numeric_limits<float>::quiet_NaN(), invalid_at);
+  TEST_ASSERT_FALSE(app.SolarElevationDue(invalid_at + 999u));
+  TEST_ASSERT_TRUE(app.SolarElevationDue(invalid_at + 1000u));
+}
+
+static void test_solar_mode_manual_power_and_overlay_policy() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingLightSink light_sink;
+  RecordingSolarBrightnessSink solar_sink;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, &light_sink,
+                  FirmwareAppConfig{0, 0, 0}, nullptr, nullptr, nullptr,
+                  &solar_sink);
+  TEST_ASSERT_TRUE(app.Start(0, LightState{true, 0.4f}, "text",
+                             SolarBrightnessConfig{true, 0.8f, 0.2f}));
+  app.SetSolarElevation(6.0f, 1);
+  events.clear();
+  const int power_calls = panel.power_calls;
+  app.SetSolarElevation(-6.0f, 2);
+  TEST_ASSERT_EQUAL(power_calls, panel.power_calls);
+  TEST_ASSERT_FALSE(light_sink.persistent_publications.back());
+
+  // A power-only HA update preserves the mode and automatic level.
+  const size_t publications_before_user_input = light_sink.published.size();
+  app.SetUserLight(LightState{false, 0.2f}, 3);
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  TEST_ASSERT_FALSE(app.logical_light().on);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.2f,
+                           app.logical_light().brightness);
+  TEST_ASSERT_EQUAL(publications_before_user_input, light_sink.published.size());
+
+  // The active HA light call owns its requested value; the core only mirrors
+  // the switch change and must not publish a stale automatic light state.
+  app.SetUserLight(LightState{false, 0.6f}, 4);
+  TEST_ASSERT_FALSE(app.solar_brightness_enabled());
+  TEST_ASSERT_EQUAL(1, solar_sink.published.size());
+  TEST_ASSERT_FALSE(solar_sink.published.back());
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.6f,
+                           app.logical_light().brightness);
+  TEST_ASSERT_EQUAL(publications_before_user_input, light_sink.published.size());
+
+  // Disabling from the Solar switch freezes and persists the effective level.
+  app.SetSolarBrightnessEnabled(true, 5);
+  app.SetSolarElevation(6.0f, 5);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.8f,
+                           app.logical_light().brightness);
+  app.SetSolarBrightnessEnabled(false, 6);
+  TEST_ASSERT_FALSE(app.solar_brightness_enabled());
+  TEST_ASSERT_TRUE(light_sink.persistent_publications.back());
+  AssertLight(light_sink.published.back(), false, 0.8f);
+  TEST_ASSERT_EQUAL(1, solar_sink.published.size());
+
+  // An automatic update behind an off-panel overlay retains the existing
+  // temporary full-brightness wake, then restores the latest solar level.
+  app.SetSolarBrightnessEnabled(true, 7);
+  app.SetSolarElevation(6.0f, 7);
+  app.React(Reaction::kApprove, 8);
+  const size_t wake_events = events.size();
+  app.SetSolarElevation(-6.0f, 9);
+  TEST_ASSERT_EQUAL(wake_events, events.size());
+  app.ClearOverlayQueue(10);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.2f,
+                           app.logical_light().brightness);
+  TEST_ASSERT_FALSE(panel.power_on);
+}
+
+static void test_solar_brightness_button_gestures_and_off_state() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingLightSink light_sink;
+  RecordingSolarBrightnessSink solar_sink;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, &light_sink,
+                  FirmwareAppConfig{0, 0, 0}, nullptr, nullptr, nullptr,
+                  &solar_sink);
+  TEST_ASSERT_TRUE(app.Start(0, LightState{false, 0.4f}, "text",
+                             SolarBrightnessConfig{true, 1.0f, 0.2f}));
+  app.SetSolarElevation(6.0f, 1);
+  const int power_calls_while_off = panel.power_calls;
+
+  app.BrightnessButtonPressed(10);
+  app.BrightnessButtonReleased(59);  // Below short-press boundary.
+  app.BrightnessButtonPressed(100);
+  app.BrightnessButtonReleased(150);  // Short presses remain inert while off.
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  TEST_ASSERT_TRUE(solar_sink.published.empty());
+
+  app.BrightnessButtonPressed(200);
+  app.BrightnessButtonReleased(2200);  // Exactly two seconds toggles off.
+  TEST_ASSERT_FALSE(app.solar_brightness_enabled());
+  TEST_ASSERT_TRUE(light_sink.persistent_publications.back());
+  app.BrightnessButtonPressed(3000);
+  app.BrightnessButtonReleased(13000);  // Inclusive ten seconds toggles on.
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  app.BrightnessButtonPressed(14000);
+  app.BrightnessButtonReleased(24001);  // Longer holds do nothing.
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  TEST_ASSERT_EQUAL(2, solar_sink.published.size());
+  TEST_ASSERT_EQUAL(power_calls_while_off, panel.power_calls);
+
+  // Once on, a short press takes over from the effective solar level and
+  // persists the stepped manual brightness.
+  app.SetUserLight(LightState{true, app.logical_light().brightness}, 25000);
+  app.SetSolarElevation(-6.0f, 25001);
+  app.BrightnessButtonPressed(26000);
+  app.BrightnessButtonReleased(26050);
+  TEST_ASSERT_FALSE(app.solar_brightness_enabled());
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.5f,
+                           app.logical_light().brightness);
+  TEST_ASSERT_TRUE(light_sink.persistent_publications.back());
+  TEST_ASSERT_EQUAL(3, solar_sink.published.size());
+
+  app.BrightnessButtonPressed(27000);
+  app.BrightnessButtonReleased(28999);  // 1,999 ms remains a short press.
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.75f,
+                           app.logical_light().brightness);
+}
+
+static void test_light_publication_echo_does_not_cancel_an_off_overlay() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingLightSink light_sink;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, &light_sink,
+                  FirmwareAppConfig{0, 0, 0});
+  TEST_ASSERT_TRUE(app.Start(0, LightState{false, 0.4f}, "text",
+                             SolarBrightnessConfig{true, 0.8f, 0.2f}));
+  app.SetSolarElevation(6.0f, 1);
+  TEST_ASSERT_EQUAL(1, light_sink.published.size());
+
+  LightStatePublicationGuard guard;
+  guard.Expect(light_sink.published.back());
+  TEST_ASSERT_TRUE(app.React(Reaction::kApprove, 2));
+  TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
+  TEST_ASSERT_TRUE(panel.power_on);
+
+  const LightState publication_echo = light_sink.published.back();
+  if (!guard.ConsumeIfExpected(publication_echo))
+    app.SetUserLight(publication_echo, 3);
+  TEST_ASSERT_EQUAL(1u, app.overlay_queue_size());
+  TEST_ASSERT_TRUE(panel.power_on);
+
+  // The same state received again is an explicit external off command and
+  // retains the existing overlay-cancellation behavior.
+  if (!guard.ConsumeIfExpected(publication_echo))
+    app.SetUserLight(publication_echo, 4);
+  TEST_ASSERT_EQUAL(0u, app.overlay_queue_size());
+  TEST_ASSERT_FALSE(panel.power_on);
+}
+
+static void test_power_button_keeps_its_two_second_short_boundary() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingLightSink light_sink;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, &light_sink,
+                  FirmwareAppConfig{0, 0, 0});
+  TEST_ASSERT_TRUE(app.Start(0, LightState{true, 1.0f}, "text"));
+
+  app.PowerButtonPressed(100);
+  app.PowerButtonReleased(2100);
+  TEST_ASSERT_FALSE(app.logical_light().on);
+  TEST_ASSERT_EQUAL(1, light_sink.published.size());
+}
+
 // ---- in/ (spectrum) tests ----
 
 
@@ -2484,6 +2732,13 @@ int main(int, char **) {
   RUN_TEST(test_start_off_uses_repower_delay_before_first_init);
   RUN_TEST(test_buttons_publish_toggle_and_full_brightness_bounce);
   RUN_TEST(test_button_edges_apply_native_gesture_policy);
+  RUN_TEST(test_light_publication_guard_consumes_only_the_expected_echo);
+  RUN_TEST(test_solar_brightness_interpolates_clamps_levels_and_invalid_input);
+  RUN_TEST(test_solar_elevation_cadence_is_wrap_safe);
+  RUN_TEST(test_solar_mode_manual_power_and_overlay_policy);
+  RUN_TEST(test_solar_brightness_button_gestures_and_off_state);
+  RUN_TEST(test_light_publication_echo_does_not_cancel_an_off_overlay);
+  RUN_TEST(test_power_button_keeps_its_two_second_short_boundary);
   RUN_TEST(test_dashboard_frame_cadence_gates_render_attempts);
   RUN_TEST(test_scheduler_preserves_cadence_across_service_tick_quantization);
   RUN_TEST(test_dashboard_cadence_crosses_uint32_wrap);

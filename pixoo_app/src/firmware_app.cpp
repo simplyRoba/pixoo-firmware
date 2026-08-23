@@ -8,7 +8,14 @@ namespace pixoo {
 namespace {
 
 constexpr uint32_t kShortPressMinimumMs = 50;
-constexpr uint32_t kShortPressMaximumMs = 2000;
+constexpr uint32_t kPowerShortPressMaximumMs = 2000;
+constexpr uint32_t kBrightnessShortPressMaximumMs = 1999;
+constexpr uint32_t kSolarBrightnessHoldMinimumMs = 2000;
+constexpr uint32_t kSolarBrightnessHoldMaximumMs = 10000;
+constexpr uint32_t kSolarBrightnessEvaluationMs = 60000;
+constexpr uint32_t kSolarBrightnessRetryMs = 1000;
+constexpr float kSolarNightElevationDegrees = -6.0f;
+constexpr float kSolarDayElevationDegrees = 6.0f;
 constexpr uint32_t kFactoryResetMinimumMs = 10000;
 constexpr uint32_t kFactoryResetMaximumMs = 60000;
 
@@ -24,12 +31,14 @@ FirmwareApp::FirmwareApp(PanelPort &panel, RenderPort &renderer,
                          MicrophonePort *microphone,
                          LightStateSink *light_sink, FirmwareAppConfig config,
                          SystemPort *system, FrameMetricsPort *frame_metrics,
-                         OverlayQueueStorage *overlay_queue_storage)
+                         OverlayQueueStorage *overlay_queue_storage,
+                         SolarBrightnessStateSink *solar_brightness_sink)
     : panel_(panel),
       renderer_(renderer),
       sound_player_(sound_player),
       microphone_(microphone),
       light_sink_(light_sink),
+      solar_brightness_sink_(solar_brightness_sink),
       config_(config),
       system_(system),
       frame_metrics_(frame_metrics),
@@ -96,6 +105,26 @@ float FirmwareApp::ClampBrightness_(float brightness) {
   return brightness;
 }
 
+float FirmwareApp::ClampSolarBrightness_(float brightness) {
+  return std::clamp(ClampBrightness_(brightness), 0.05f, 1.0f);
+}
+
+float FirmwareApp::SolarBrightnessForElevation_(float elevation_degrees,
+                                                 float day_brightness,
+                                                 float night_brightness) {
+  if (!std::isfinite(elevation_degrees))
+    return std::numeric_limits<float>::quiet_NaN();
+  day_brightness = ClampSolarBrightness_(day_brightness);
+  night_brightness = ClampSolarBrightness_(night_brightness);
+  if (elevation_degrees <= kSolarNightElevationDegrees)
+    return night_brightness;
+  if (elevation_degrees >= kSolarDayElevationDegrees)
+    return day_brightness;
+  const float fraction = (elevation_degrees - kSolarNightElevationDegrees) /
+                         (kSolarDayElevationDegrees - kSolarNightElevationDegrees);
+  return night_brightness + (day_brightness - night_brightness) * fraction;
+}
+
 void FirmwareApp::SyncBrightnessBounce_(float brightness) {
   brightness_step_ = std::clamp(
       static_cast<int>(std::lround(ClampBrightness_(brightness) * 4.0f)) - 1,
@@ -104,7 +133,8 @@ void FirmwareApp::SyncBrightnessBounce_(float brightness) {
 }
 
 bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
-                        const std::string &initial_dashboard_id) {
+                        const std::string &initial_dashboard_id,
+                        SolarBrightnessConfig solar_brightness) {
   // A restarted application must not leave an earlier dashboard, boot, or
   // overlay presentation running into its new lifecycle.
   this->renderer_.HideBaseContent(now_ms);
@@ -127,9 +157,19 @@ bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
   this->ResetOverlayState_();
   this->ReconcileMicrophone_();
 
-  this->logical_light_ = initial_light;
-  this->logical_light_.brightness =
-      ClampBrightness_(this->logical_light_.brightness);
+  this->configured_light_ = initial_light;
+  this->configured_light_.brightness =
+      ClampBrightness_(this->configured_light_.brightness);
+  this->logical_light_ = this->configured_light_;
+  this->solar_brightness_ = solar_brightness;
+  this->solar_brightness_.day_brightness =
+      ClampSolarBrightness_(this->solar_brightness_.day_brightness);
+  this->solar_brightness_.night_brightness =
+      ClampSolarBrightness_(this->solar_brightness_.night_brightness);
+  this->solar_elevation_degrees_ =
+      std::numeric_limits<float>::quiet_NaN();
+  this->solar_elevation_received_ = false;
+  this->next_solar_evaluation_ms_ = now_ms;
   this->SyncBrightnessBounce_(this->logical_light_.brightness);
 
   DashboardSelection initial_selection;
@@ -157,6 +197,83 @@ bool FirmwareApp::Start(uint32_t now_ms, LightState initial_light,
   this->BeginWaitingInit_(now_ms, this->config_.cold_init_delay_ms +
                                      this->panel_.LastPowerOnDelayMs());
   return true;
+}
+
+bool FirmwareApp::SolarElevationDue(uint32_t now_ms) const {
+  return this->solar_brightness_.enabled &&
+         (!this->solar_elevation_received_ ||
+          DeadlineReached_(now_ms, this->next_solar_evaluation_ms_));
+}
+
+void FirmwareApp::SetSolarElevation(float elevation_degrees, uint32_t now_ms) {
+  this->solar_elevation_received_ = true;
+  this->solar_elevation_degrees_ = elevation_degrees;
+  if (!this->solar_brightness_.enabled)
+    return;
+  if (!std::isfinite(elevation_degrees)) {
+    this->next_solar_evaluation_ms_ = now_ms + kSolarBrightnessRetryMs;
+    return;
+  }
+  this->ApplySolarBrightness_(now_ms);
+  this->next_solar_evaluation_ms_ = now_ms + kSolarBrightnessEvaluationMs;
+}
+
+void FirmwareApp::SetSolarBrightnessEnabled(bool enabled, uint32_t now_ms) {
+  this->SetSolarBrightnessEnabled_(enabled, now_ms, false, true);
+}
+
+void FirmwareApp::SetSolarBrightnessEnabled_(
+    bool enabled, uint32_t now_ms, bool publish_mode,
+    bool persist_effective_brightness) {
+  if (enabled == this->solar_brightness_.enabled)
+    return;
+
+  this->solar_brightness_.enabled = enabled;
+  if (!enabled) {
+    this->configured_light_.brightness = this->logical_light_.brightness;
+    this->SyncBrightnessBounce_(this->configured_light_.brightness);
+    if (persist_effective_brightness && this->light_sink_ != nullptr)
+      this->light_sink_->Publish(this->logical_light_, true);
+  } else {
+    // A new sample is required after every disabled interval; a retained solar
+    // elevation may be arbitrarily old.
+    this->solar_elevation_degrees_ =
+        std::numeric_limits<float>::quiet_NaN();
+    this->solar_elevation_received_ = false;
+    this->next_solar_evaluation_ms_ = now_ms;
+  }
+
+  if (publish_mode)
+    this->PublishSolarBrightnessEnabled_();
+}
+
+void FirmwareApp::SetSolarBrightnessLevels(float day_brightness,
+                                           float night_brightness,
+                                           uint32_t now_ms) {
+  const float day = ClampSolarBrightness_(day_brightness);
+  const float night = ClampSolarBrightness_(night_brightness);
+  if (day == this->solar_brightness_.day_brightness &&
+      night == this->solar_brightness_.night_brightness)
+    return;
+  this->solar_brightness_.day_brightness = day;
+  this->solar_brightness_.night_brightness = night;
+  if (this->solar_brightness_.enabled && this->solar_elevation_received_ &&
+      std::isfinite(this->solar_elevation_degrees_))
+    this->ApplySolarBrightness_(now_ms);
+}
+
+void FirmwareApp::ApplySolarBrightness_(uint32_t now_ms) {
+  this->ApplyEffectiveBrightness_(
+      SolarBrightnessForElevation_(this->solar_elevation_degrees_,
+                                   this->solar_brightness_.day_brightness,
+                                   this->solar_brightness_.night_brightness),
+      now_ms, false, false);
+}
+
+void FirmwareApp::PublishSolarBrightnessEnabled_() {
+  if (this->solar_brightness_sink_ != nullptr)
+    this->solar_brightness_sink_->PublishSolarBrightnessEnabled(
+        this->solar_brightness_.enabled);
 }
 
 void FirmwareApp::BeginWaitingInit_(uint32_t now_ms, uint32_t delay_ms) {
@@ -410,9 +527,44 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
 
 void FirmwareApp::SetUserLight(LightState light, uint32_t now_ms) {
   light.brightness = ClampBrightness_(light.brightness);
-  if (light.brightness != this->logical_light_.brightness)
+  const bool brightness_changed =
+      light.brightness != this->logical_light_.brightness;
+  if (this->solar_brightness_.enabled && brightness_changed) {
+    // The inbound ESPHome light call already owns publication and persistence
+    // of the requested level. Only mirror the resulting manual-mode change.
+    this->SetSolarBrightnessEnabled_(false, now_ms, true, false);
+  }
+
+  if (this->solar_brightness_.enabled) {
+    // A power-only entity operation echoes the displayed automatic brightness.
+    // Preserve the separately persisted manual level in that case.
+    light.brightness = this->logical_light_.brightness;
+    this->configured_light_.on = light.on;
+  } else {
+    this->configured_light_ = light;
+  }
+  if (brightness_changed)
     this->SyncBrightnessBounce_(light.brightness);
   this->ApplyUserLight_(light, now_ms, false);
+}
+
+void FirmwareApp::ApplyEffectiveBrightness_(float brightness, uint32_t /*now_ms*/,
+                                            bool persistent,
+                                            bool update_off_overlay_wake) {
+  brightness = ClampBrightness_(brightness);
+  if (brightness == this->logical_light_.brightness)
+    return;
+  this->logical_light_.brightness = brightness;
+  if (this->overlay_queue_size_ != 0)
+    this->overlay_saved_light_.brightness = brightness;
+  const bool temporary_off_wake = this->overlay_queue_size_ != 0 &&
+                                  !this->overlay_saved_light_.on;
+  if (!temporary_off_wake || update_off_overlay_wake)
+    this->panel_.SetBrightness(brightness);
+  if (this->light_sink_ != nullptr)
+    this->light_sink_->Publish(this->logical_light_, persistent);
+  if (this->logical_light_.on && this->phase_ == Phase::kRunning)
+    this->base_render_requested_ = true;
 }
 
 void FirmwareApp::ApplyUserLight_(LightState light, uint32_t now_ms,
@@ -462,7 +614,7 @@ void FirmwareApp::ApplyUserLight_(LightState light, uint32_t now_ms,
     this->base_render_requested_ = true;
   this->ReconcileMicrophone_();
   if (publish && this->light_sink_ != nullptr)
-    this->light_sink_->Publish(this->logical_light_);
+    this->light_sink_->Publish(this->logical_light_, true);
 }
 
 void FirmwareApp::PowerButtonPressed(uint32_t now_ms) {
@@ -478,7 +630,7 @@ void FirmwareApp::PowerButtonReleased(uint32_t now_ms) {
   this->power_button_pressed_ = false;
   const uint32_t duration_ms = now_ms - this->power_button_pressed_at_ms_;
   if (IsDurationInRange(duration_ms, kShortPressMinimumMs,
-                        kShortPressMaximumMs)) {
+                        kPowerShortPressMaximumMs)) {
     this->TogglePower(now_ms);
   } else if (IsDurationInRange(duration_ms, kFactoryResetMinimumMs,
                                kFactoryResetMaximumMs)) {
@@ -499,8 +651,14 @@ void FirmwareApp::BrightnessButtonReleased(uint32_t now_ms) {
   this->brightness_button_pressed_ = false;
   const uint32_t duration_ms = now_ms - this->brightness_button_pressed_at_ms_;
   if (IsDurationInRange(duration_ms, kShortPressMinimumMs,
-                        kShortPressMaximumMs))
+                        kBrightnessShortPressMaximumMs)) {
     this->StepBrightness(now_ms);
+  } else if (this->solar_brightness_sink_ != nullptr &&
+             IsDurationInRange(duration_ms, kSolarBrightnessHoldMinimumMs,
+                               kSolarBrightnessHoldMaximumMs)) {
+    this->SetSolarBrightnessEnabled_(
+        !this->solar_brightness_.enabled, now_ms, true, true);
+  }
 }
 
 void FirmwareApp::TogglePower(uint32_t now_ms) {
@@ -509,12 +667,16 @@ void FirmwareApp::TogglePower(uint32_t now_ms) {
   // is off. The power button must turn that presentation off, not convert the
   // temporary wake into a permanent on state.
   next.on = this->overlay_queue_size_ != 0 ? false : !next.on;
+  this->configured_light_.on = next.on;
   this->ApplyUserLight_(next, now_ms, true);
 }
 
 void FirmwareApp::StepBrightness(uint32_t now_ms) {
   if (!this->logical_light_.on && this->overlay_queue_size_ == 0)
     return;
+
+  if (this->solar_brightness_.enabled)
+    this->SetSolarBrightnessEnabled_(false, now_ms, true, false);
 
   int next = this->brightness_step_ + this->brightness_direction_;
   if (next >= 3) {
@@ -528,6 +690,7 @@ void FirmwareApp::StepBrightness(uint32_t now_ms) {
 
   LightState light = this->logical_light_;
   light.brightness = static_cast<float>(next + 1) * 0.25f;
+  this->configured_light_.brightness = light.brightness;
   this->ApplyUserLight_(light, now_ms, true);
 }
 

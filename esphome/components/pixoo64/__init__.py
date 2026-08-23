@@ -9,6 +9,7 @@ from esphome.components import (
     rtttl,
     select,
     sensor,
+    sun,
     switch,
     time,
 )
@@ -65,6 +66,11 @@ CONF_MICROPHONE_ID = "microphone_id"
 CONF_MICROPHONE_ENABLE_SWITCH = "enable_switch"
 CONF_LIGHT = "light"
 CONF_DASHBOARD_SELECT = "dashboard_select"
+CONF_SOLAR_BRIGHTNESS = "solar_brightness"
+CONF_SOLAR_BRIGHTNESS_SWITCH = "enable_switch"
+CONF_SOLAR_SUN = "sun"
+CONF_SOLAR_DAY_BRIGHTNESS = "day_brightness"
+CONF_SOLAR_NIGHT_BRIGHTNESS = "night_brightness"
 CONF_TEXT = "text"
 CONF_TITLE = "title"
 CONF_REACTION = "reaction"
@@ -123,7 +129,9 @@ RenderPort = pixoo_ns.class_("RenderPort")
 SoundPlayer = pixoo_ns.class_("SoundPlayer")
 MicrophonePort = pixoo_ns.class_("MicrophonePort")
 I2SAudioMicrophone = i2s_audio_microphone.I2SAudioMicrophone
+LightRemoteValuesListener = light.light_ns.class_("LightRemoteValuesListener")
 LightStateSink = pixoo_ns.class_("LightStateSink")
+SolarBrightnessStateSink = pixoo_ns.class_("SolarBrightnessStateSink")
 SystemPort = pixoo_ns.class_("SystemPort")
 FrameMetricsPort = pixoo_ns.class_("FrameMetricsPort")
 WeatherSource = pixoo_ns.class_("WeatherSource")
@@ -144,7 +152,9 @@ Pixoo64Panel = pixoo64_ns.class_("Pixoo64Panel", cg.Component, PanelPort)
 FirmwareAppComponent = pixoo64_ns.class_(
     "FirmwareAppComponent",
     cg.PollingComponent,
+    LightRemoteValuesListener,
     LightStateSink,
+    SolarBrightnessStateSink,
     SystemPort,
     FrameMetricsPort,
 )
@@ -293,6 +303,17 @@ NOW_PLAYING_SCHEMA = cv.Schema(
 
 HTTP_GATE_SCHEMA = cv.Schema({cv.GenerateID(): cv.declare_id(HttpRequestGate)})
 
+SOLAR_BRIGHTNESS_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_SOLAR_BRIGHTNESS_SWITCH): cv.use_id(switch.Switch),
+        cv.Required(CONF_SOLAR_DAY_BRIGHTNESS): cv.use_id(number.Number),
+        cv.Required(CONF_SOLAR_NIGHT_BRIGHTNESS): cv.use_id(number.Number),
+        cv.Required(CONF_LATITUDE): cv.use_id(number.Number),
+        cv.Required(CONF_LONGITUDE): cv.use_id(number.Number),
+        cv.Required(CONF_SOLAR_SUN): cv.use_id(sun.Sun),
+    }
+)
+
 WEATHER_SCHEMA = cv.Schema(
     {
         cv.Required(CONF_PLATFORM): cv.one_of("open_meteo", lower=True),
@@ -319,6 +340,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MICROPHONE): MICROPHONE_SCHEMA,
         cv.Required(CONF_LIGHT): cv.use_id(light.LightState),
         cv.Required(CONF_DASHBOARD_SELECT): cv.use_id(select.Select),
+        cv.Optional(CONF_SOLAR_BRIGHTNESS): SOLAR_BRIGHTNESS_SCHEMA,
         cv.Optional(CONF_FRAME_METRICS): FRAME_METRICS_SCHEMA,
     }
 ).extend(cv.polling_component_schema("33ms"))
@@ -965,6 +987,20 @@ async def to_code(config):
             await cg.get_variable(config[CONF_DASHBOARD_SELECT])
         )
     )
+    if CONF_SOLAR_BRIGHTNESS in config:
+        solar_config = config[CONF_SOLAR_BRIGHTNESS]
+        cg.add(app.set_solar_brightness_switch(
+            await cg.get_variable(solar_config[CONF_SOLAR_BRIGHTNESS_SWITCH])))
+        cg.add(app.set_solar_day_brightness(
+            await cg.get_variable(solar_config[CONF_SOLAR_DAY_BRIGHTNESS])))
+        cg.add(app.set_solar_night_brightness(
+            await cg.get_variable(solar_config[CONF_SOLAR_NIGHT_BRIGHTNESS])))
+        cg.add(app.set_solar_latitude(
+            await cg.get_variable(solar_config[CONF_LATITUDE])))
+        cg.add(app.set_solar_longitude(
+            await cg.get_variable(solar_config[CONF_LONGITUDE])))
+        cg.add(app.set_solar_sun(
+            await cg.get_variable(solar_config[CONF_SOLAR_SUN])))
     if CONF_SOUND in config:
         cg.add(app.set_sound_player(sound_player))
     if microphone_adapter is not None:

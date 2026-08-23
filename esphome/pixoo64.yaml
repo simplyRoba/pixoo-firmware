@@ -27,6 +27,7 @@ esphome:
     # pixoo_app
     - ../pixoo_app/include/app_state.h
     - ../pixoo_app/src/app_state.cpp
+    - ../pixoo_app/include/light_state_publication_guard.h
     - ../pixoo_app/include/frame_metrics.h
     - ../pixoo_app/include/firmware_app.h
     - ../pixoo_app/src/firmware_app.cpp
@@ -231,6 +232,15 @@ time:
   - platform: sntp
     id: panel_time
 
+# Internal solar-position calculator. ESPHome requires compile-time coordinates;
+# the adapter replaces these placeholders with the persisted runtime location
+# immediately before every calculation.
+sun:
+  id: panel_sun
+  time_id: panel_time
+  latitude: 0
+  longitude: 0
+
 # Dashboard source entities
 font:
   - file: fonts/TomThumb.bdf
@@ -290,6 +300,13 @@ pixoo64:
     enable_switch: mic_enable
   light: panel_light
   dashboard_select: panel_dashboard
+  solar_brightness:
+    enable_switch: solar_brightness
+    day_brightness: solar_day_brightness
+    night_brightness: solar_night_brightness
+    latitude: location_latitude
+    longitude: location_longitude
+    sun: panel_sun
 
 # Dashboard rendering and content sources.
 pixoo64_content:
@@ -391,6 +408,14 @@ pixoo64_content:
       face: timer
 
 # Home Assistant controls
+switch:
+  - platform: template
+    id: solar_brightness
+    name: Solar Brightness
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+
 select:
   # Timezone select backed by the C++ pixoo::TimezoneCatalog. It owns the option
   # labels, their POSIX mapping, and the default; the platform applies the
@@ -424,11 +449,13 @@ select:
       - lambda: id(pixoo_firmware).SelectDashboard(x);
 
 output:
+  # The light entity requires an output; FirmwareAppComponent receives user
+  # state through its synchronous light-state listener instead.
   - platform: template
     id: panel_brightness_output
     type: float
     write_action:
-      lambda: id(pixoo_firmware).SyncLightFromEntity();
+      lambda: return;
 
 light:
   - platform: monochromatic

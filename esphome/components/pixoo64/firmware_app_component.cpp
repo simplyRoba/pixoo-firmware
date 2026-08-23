@@ -1,5 +1,7 @@
 #include "firmware_app_component.h"
 
+#include <cmath>
+#include <limits>
 #include <new>
 
 #include "esp_heap_caps.h"
@@ -28,6 +30,22 @@ void FirmwareAppComponent::setup() {
     this->mark_failed();
     return;
   }
+  const bool has_solar = this->solar_brightness_switch_ != nullptr ||
+                         this->solar_day_brightness_ != nullptr ||
+                         this->solar_night_brightness_ != nullptr ||
+                         this->solar_latitude_ != nullptr ||
+                         this->solar_longitude_ != nullptr ||
+                         this->solar_sun_ != nullptr;
+  if (has_solar && (this->solar_brightness_switch_ == nullptr ||
+                    this->solar_day_brightness_ == nullptr ||
+                    this->solar_night_brightness_ == nullptr ||
+                    this->solar_latitude_ == nullptr ||
+                    this->solar_longitude_ == nullptr ||
+                    this->solar_sun_ == nullptr)) {
+    ESP_LOGE(TAG, "solar brightness wiring is incomplete");
+    this->mark_failed();
+    return;
+  }
   if (this->panel_component_->is_failed()) {
     ESP_LOGE(TAG, "panel adapter setup failed");
     this->mark_failed();
@@ -51,20 +69,42 @@ void FirmwareAppComponent::setup() {
   this->overlay_queue_storage_ =
       new (queue_memory) pixoo::OverlayQueueStorage{};
 
-  this->app_.emplace(*this->panel_, *this->renderer_, this->sound_player_,
-                     this->microphone_, this, pixoo::FirmwareAppConfig{}, this,
-                     this, this->overlay_queue_storage_);
+  this->app_.emplace(
+      *this->panel_, *this->renderer_, this->sound_player_, this->microphone_,
+      this, pixoo::FirmwareAppConfig{}, this, this,
+      this->overlay_queue_storage_, has_solar ? this : nullptr);
   if (this->frame_metrics_window_ms_ != 0)
     this->frame_metrics_window_.Reset(millis());
-  this->started_ = this->app_->Start(millis(), this->ReadLight_(), dashboard_id);
-  if (!this->started_)
+  this->started_ = this->app_->Start(millis(), this->ReadLight_(), dashboard_id,
+                                     this->ReadSolarBrightness_());
+  if (!this->started_) {
     ESP_LOGE(TAG, "application could not resolve a dashboard");
+    return;
+  }
+
+  this->light_->add_remote_values_listener(this);
+  if (has_solar) {
+    this->solar_brightness_switch_->add_on_state_callback(
+        [this](bool enabled) { this->SetSolarBrightnessEnabled(enabled); });
+    this->solar_day_brightness_->add_on_state_callback(
+        [this](float) { this->SolarBrightnessLevelsChanged(); });
+    this->solar_night_brightness_->add_on_state_callback(
+        [this](float) { this->SolarBrightnessLevelsChanged(); });
+    this->solar_latitude_->add_on_state_callback(
+        [this](float) { this->SolarLocationChanged(); });
+    this->solar_longitude_->add_on_state_callback(
+        [this](float) { this->SolarLocationChanged(); });
+    this->solar_refresh_requested_ = this->app_->solar_brightness_enabled();
+    this->RefreshSolarElevation_(millis(), true);
+  }
 }
 
 void FirmwareAppComponent::update() {
   const uint32_t now_ms = millis();
-  if (this->started_)
+  if (this->started_) {
+    this->RefreshSolarElevation_(now_ms, false);
     this->app_->Tick(now_ms);
+  }
   this->PublishFrameMetrics_(millis());
 }
 
@@ -81,9 +121,37 @@ void FirmwareAppComponent::SelectDashboard(const std::string &dashboard_id) {
     this->app_->SelectDashboard(dashboard_id);
 }
 
+void FirmwareAppComponent::on_light_remote_values_update() {
+  this->SyncLightFromEntity();
+}
+
 void FirmwareAppComponent::SyncLightFromEntity() {
+  if (!this->started_)
+    return;
+  const pixoo::LightState state = this->ReadLight_();
+  if (this->light_publication_guard_.ConsumeIfExpected(state))
+    return;
+  this->app_->SetUserLight(state, millis());
+}
+
+void FirmwareAppComponent::SetSolarBrightnessEnabled(bool enabled) {
+  if (!this->started_)
+    return;
+  this->app_->SetSolarBrightnessEnabled(enabled, millis());
+  this->solar_refresh_requested_ = enabled;
+}
+
+void FirmwareAppComponent::SolarBrightnessLevelsChanged() {
+  if (!this->started_)
+    return;
+  const float day = this->solar_day_brightness_->state / 100.0f;
+  const float night = this->solar_night_brightness_->state / 100.0f;
+  this->app_->SetSolarBrightnessLevels(day, night, millis());
+}
+
+void FirmwareAppComponent::SolarLocationChanged() {
   if (this->started_)
-    this->app_->SetUserLight(this->ReadLight_(), millis());
+    this->solar_refresh_requested_ = true;
 }
 
 void FirmwareAppComponent::PowerButtonPressed() {
@@ -193,14 +261,25 @@ void FirmwareAppComponent::RequestReboot() {
     this->Reboot();
 }
 
-void FirmwareAppComponent::Publish(pixoo::LightState state) {
+void FirmwareAppComponent::Publish(pixoo::LightState state, bool persistent) {
   if (this->light_ == nullptr)
     return;
+  this->light_publication_guard_.Expect(state);
   this->light_->make_call()
       .set_state(state.on)
       .set_brightness(state.brightness)
       .set_transition_length(0)
+      .set_save(persistent)
       .perform();
+}
+
+void FirmwareAppComponent::PublishSolarBrightnessEnabled(bool enabled) {
+  if (this->solar_brightness_switch_ == nullptr ||
+      this->solar_brightness_switch_->state == enabled)
+    return;
+  // publish_state() persists through the switch's configured restore mode and
+  // invokes the same post-publication callback as a Home Assistant change.
+  this->solar_brightness_switch_->publish_state(enabled);
 }
 
 void FirmwareAppComponent::Reboot() { App.safe_reboot(); }
@@ -275,6 +354,44 @@ pixoo::LightState FirmwareAppComponent::ReadLight_() const {
     return {};
   return pixoo::LightState{this->light_->remote_values.is_on(),
                            this->light_->remote_values.get_brightness()};
+}
+
+pixoo::SolarBrightnessConfig FirmwareAppComponent::ReadSolarBrightness_() const {
+  if (this->solar_brightness_switch_ == nullptr)
+    return {};
+  return pixoo::SolarBrightnessConfig{
+      this->solar_brightness_switch_->state,
+      this->solar_day_brightness_->state / 100.0f,
+      this->solar_night_brightness_->state / 100.0f};
+}
+
+void FirmwareAppComponent::RefreshSolarElevation_(uint32_t now_ms, bool force) {
+  if (!this->started_ || this->solar_brightness_switch_ == nullptr)
+    return;
+  if (!this->app_->solar_brightness_enabled()) {
+    this->solar_refresh_requested_ = false;
+    return;
+  }
+  if (!force && !this->solar_refresh_requested_ &&
+      !this->app_->SolarElevationDue(now_ms))
+    return;
+  this->solar_refresh_requested_ = false;
+
+  const float latitude = this->solar_latitude_->state;
+  const float longitude = this->solar_longitude_->state;
+  if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+      latitude < -90.0f || latitude > 90.0f || longitude < -180.0f ||
+      longitude > 180.0f) {
+    this->app_->SetSolarElevation(
+        std::numeric_limits<float>::quiet_NaN(), now_ms);
+    return;
+  }
+  // ESPHome's schema requires initial coordinates for its internal calculator;
+  // the persisted runtime location replaces both before every use.
+  this->solar_sun_->set_latitude(latitude);
+  this->solar_sun_->set_longitude(longitude);
+  this->app_->SetSolarElevation(
+      static_cast<float>(this->solar_sun_->elevation()), now_ms);
 }
 
 }  // namespace esphome::pixoo64

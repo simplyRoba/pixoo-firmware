@@ -99,9 +99,9 @@ client needs the matching key. OTA authentication uses the separate
 
 The configured Home Assistant/native-API surface includes:
 
-- `Pixoo64 Panel` power and brightness; `Pixoo64 Text`; dashboard and timezone
-  selects; location and weather-refresh settings; a sound switch; and diagnostic
-  sensors.
+- `Pixoo64 Panel` power and brightness; `Solar Brightness`; `Day Brightness`;
+  `Night Brightness`; `Pixoo64 Text`; dashboard and timezone selects; location
+  and weather-refresh settings; a sound switch; and diagnostic sensors.
 - `notify` (message, optional title, severity, duration, optional sound),
   `reaction`, `clear_overlay_queue`, `now_playing_configure` (`entity_id`,
   `home_assistant_url`), `now_playing_clear`, `stopwatch_start`,
@@ -129,10 +129,15 @@ artwork use a deterministic 64×64 fallback.
 
 ## Controls and features
 
-The power and brightness buttons act on release after a 50–2,000 ms press:
+`Solar Brightness` is an opt-in schedule, not a lux sensor. Using SNTP and the
+saved location, it blends from Night Brightness (20% by default) at -6° to Day
+Brightness (100% by default) at +6° solar elevation. Both accept 5–100%.
+Missing time or location keeps the current brightness; it never changes power.
 
-- Power toggles the panel.
-- Brightness moves through 25%, 50%, 75%, and 100%, reversing at each end.
+The power button toggles the panel when released after 50–2,000 ms. The
+brightness button cycles 25%, 50%, 75%, and 100% after 50–1,999 ms; manual
+adjustment disables Solar Brightness. Releasing it after **2–10 seconds** toggles
+Solar Brightness without changing power. Other hold lengths do nothing.
 
 A power-button hold released after **10–60 seconds**, inclusive, resets ESPHome
 preferences and safely reboots. Holds shorter than 50 ms, from 2,001–9,999 ms, or
@@ -212,6 +217,9 @@ not provide serial data.
 - **Weather is unavailable:** check location, Wi-Fi, and the external weather
   service; the weather dashboard fetches only when it is visible and its data is
   stale.
+- **Solar Brightness does not change:** verify SNTP time has synchronized and
+  Latitude and Longitude are valid. This is a solar schedule, not a response to
+  room lighting.
 - **Now-playing shows unconfigured:** invoke `now_playing_configure` with a valid
   `media_player.*` entity and the Home Assistant HTTP base URL to use for relative
   artwork references.
@@ -227,6 +235,9 @@ The configuration contains no Divoom cloud client, MQTT client, web server, or
 raw-frame API. Weather requests go to `https://api.open-meteo.com/v1/forecast`
 and include latitude and longitude rounded to four decimal places plus weather
 query fields. The request sends no credentials.
+
+Solar Brightness uses local SNTP time and the persisted location only; it sends
+no solar, ambient-light, or Home Assistant `sun` requests.
 
 Now-playing metadata uses the encrypted native API. The configured entity ID and
 Home Assistant base URL persist in device preferences. Artwork requests use the

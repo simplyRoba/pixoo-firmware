@@ -16,8 +16,9 @@ LEDBoard` REV1.0 (`20210525`). Other board revisions and variants are unknown.
 
 - Wi-Fi captive-portal provisioning, ESPHome native API encryption, and
   password-protected OTA updates
-- Home Assistant controls for panel power/brightness, text, timezone, weather
-  location and refresh interval, dashboard selection, and sounds
+- Home Assistant controls for panel power/brightness, solar brightness scheduling,
+  text, timezone, weather location and refresh interval, dashboard selection, and
+  sounds
 - Home Assistant `media_player.*` now-playing dashboard with cover artwork and
   playback progress
 - Text, weather, microphone equalizer, Game of Life, clock, stopwatch, and timer
