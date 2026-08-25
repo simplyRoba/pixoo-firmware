@@ -1,5 +1,12 @@
 # Pixoo64 replacement firmware
 
+<p align="center">
+  <img src="https://img.shields.io/github/license/simplyRoba/pixoo-firmware?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Fblob%2Fmain%2FLICENSE" alt="GitHub License" />
+  <img src="https://img.shields.io/github/actions/workflow/status/simplyRoba/pixoo-firmware/firmware-ci.yml?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Factions%2Fworkflows%2Ffirmware-ci.yml%3Fquery%3Dbranch%253Amain" alt="GitHub Workflow Status" />
+  <a href="https://github.com/simplyRoba/pixoo-firmware/issues"><img src="https://img.shields.io/github/issues/simplyRoba/pixoo-firmware?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Fissues" alt="GitHub issues" /></a>
+  <img src="https://img.shields.io/github/stars/simplyRoba/pixoo-firmware" alt="GitHub Repo stars" />
+</p>
+
 Open, Home Assistant-connected replacement firmware for the ESP32 in a Pixoo64,
 with animated dashboards, weather, now-playing artwork, notifications, and
 reactions—without the Divoom app or cloud.
