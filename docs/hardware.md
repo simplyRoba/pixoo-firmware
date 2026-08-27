@@ -33,10 +33,7 @@ The panel MCU owns the continuous LED matrix refresh.
 
 ### 2.1 ESP32-WROVER-IE module
 
-- Espressif `ESP32-WROVER-IE` module, external antenna (u.FL coax lead). The
-  antenna is mounted on the case, not the board: it disconnects when the enclosure
-  is opened. With the board out of the case, reconnect the antenna (or a spare) or
-  Wi-Fi signal is very weak.
+- Espressif `ESP32-WROVER-IE` module, external antenna (u.FL coax lead).
 - Silicon: `ESP32-D0WD-V3`, chip revision 3, classic dual-core ESP32 (not
   S2/S3/C3), classic ESP32 ROM v1 (`ets Jul 29 2019`). No native USB peripheral.
 - External PSRAM: 8MB (8192 KB) quad SPI RAM. The classic ESP32 maps at most 4MB
