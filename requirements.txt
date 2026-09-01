@@ -1,5 +1,5 @@
 pyserial==3.5
-aioesphomeapi==45.7.0
+aioesphomeapi==46.2.1
 esptool==5.3.1
 platformio==6.1.19
 esphome==2026.7.3
