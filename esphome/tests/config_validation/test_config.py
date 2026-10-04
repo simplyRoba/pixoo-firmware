@@ -334,7 +334,7 @@ class EspHomeConfigTest(unittest.TestCase):
         self.assertIn("  timeout: 5s\n", text)
         self.assertIn("  follow_redirects: false\n", text)
         self.assertIn("  verify_ssl: false\n", text)
-        self.assertIn("    http_request.idf: NONE\n", text)
+        self.assertIn("    http_request: NONE\n", text)
 
     def test_production_config_has_both_timing_faces(self):
         text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")

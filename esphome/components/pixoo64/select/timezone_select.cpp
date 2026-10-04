@@ -12,6 +12,11 @@ void TimezoneSelect::setup() {
   // The catalog owns the option labels; publish them to the entity's traits at
   // startup rather than duplicating them in YAML.
   const size_t count = pixoo::TimezoneCount();
+  if (this->rtc_ == nullptr || this->timezones_ == nullptr || this->timezone_count_ != count) {
+    ESP_LOGE(TAG, "Invalid timezone catalog binding");
+    this->mark_failed();
+    return;
+  }
   FixedVector<const char *> options;
   options.init(count);
   for (size_t i = 0; i < count; i++) {
@@ -32,6 +37,9 @@ void TimezoneSelect::setup() {
 }
 
 void TimezoneSelect::control(size_t index) {
+  if (this->is_failed() || index >= this->timezone_count_ || index >= pixoo::TimezoneCount()) {
+    return;
+  }
   this->apply_index_(index);
   this->publish_state(index);
   if (this->restore_value_) {
@@ -40,12 +48,9 @@ void TimezoneSelect::control(size_t index) {
 }
 
 void TimezoneSelect::apply_index_(size_t index) {
-  const char *posix = pixoo::TimezonePosix(index);
-  if (posix == nullptr) {
-    return;
-  }
-  if (this->rtc_ != nullptr) {
-    this->rtc_->set_timezone(posix);
+  if (this->rtc_ != nullptr && this->timezones_ != nullptr && index < this->timezone_count_ &&
+      index < pixoo::TimezoneCount()) {
+    time::set_global_tz(this->timezones_[index]);
   }
 }
 

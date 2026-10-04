@@ -119,7 +119,7 @@ logger:
     # Upstream http_request logs complete non-2xx URLs. Artwork proxy queries
     # are signed credentials, so transport diagnostics stay disabled; the
     # adapter emits query-free status and byte-count failures instead.
-    http_request.idf: NONE
+    http_request: NONE
 
 wifi:
   power_save_mode: none

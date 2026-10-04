@@ -19,10 +19,12 @@ python3 -m venv .venv
 cp esphome/secrets.example.yaml esphome/secrets.yaml
 ```
 
-`requirements.txt` pins the project's direct Python tools; their transitive
-packages and host libraries are resolved for the current platform. CI uses the
-smaller `ci-requirements.txt` subset needed by automated checks. Recreate `.venv`
-after moving or renaming the checkout because its scripts contain absolute paths.
+`requirements.txt` pins the project's direct Python tools. CI tests both that
+full environment and the smaller `ci-requirements.txt` subset. Keep shared pins
+consistent between the files and with ESPHome's exact dependency constraints.
+Other transitive packages and host libraries are resolved for the current
+platform. Recreate `.venv` after moving or renaming the checkout because its
+scripts contain absolute paths.
 
 `esphome/secrets.yaml` is local and ignored by Git. Replace every example value
 before using a build on hardware. Tests may use the committed example values.

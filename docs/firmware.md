@@ -203,7 +203,13 @@ presentation behavior, not requirements of the wire format. The production panel
 adapter owns the concrete maximum resend interval.
 
 The application layer also owns the tested timezone catalog, sound vocabulary,
-and frame-metrics aggregation.
+and frame-metrics aggregation. `pixoo_app/src/timezone_catalog.inc` is the
+canonical X-macro source for all 44 timezone entries and the default. Both the
+C++ catalog and Python code generation consume it. Code generation strictly
+validates the source and uses `parse_posix_tz` to emit a flash-resident const
+`ParsedTimezone` array. The timezone adapter applies an entry with
+`set_global_tz`; catalog order is persisted as select indexes, and the default
+is New York.
 
 ### 3.3 `pixoo_content`
 

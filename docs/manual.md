@@ -93,8 +93,9 @@ credentials. ESPHome stores the station credentials in device preferences and ca
 reopen the fallback portal when it cannot use the saved network.
 
 The native API uses `api_encryption_key`; Home Assistant or another native-API
-client needs the matching key. OTA authentication uses the separate
-`ota_password`. Keep both values private. The sample values in
+client needs the matching key. The same key authenticates encrypted OTA;
+`ota_password` authenticates legacy plaintext OTA. See [OTA update](#ota-update)
+for upgrade behavior. Keep both values private. The sample values in
 `secrets.example.yaml` are committed examples and must be replaced.
 
 The configured Home Assistant/native-API surface includes:
@@ -173,8 +174,19 @@ device log with:
 .venv/bin/esphome run esphome/pixoo64.yaml --device pixoo64.local
 ```
 
-The command uses the `ota_password` from local secrets. If mDNS does not resolve
-`pixoo64.local`, replace it with the device's IPv4 address. Confirm that the
+With ESPHome 2026.9.1, the configured native-API key automatically offers OTA
+encryption once that firmware is running. The CLI prefers encryption using
+`api_encryption_key` when the target supports it. The YAML retains
+`password: !secret ota_password`, so legacy password-authenticated plaintext
+uploads remain accepted; encryption is not required. An upgrade from ESPHome
+2026.7 firmware needs the existing `ota_password` for the first upload, which
+is plaintext. Keep the existing key and password unchanged for that upload.
+Encrypted OTA behavior has not been verified on this hardware. See the
+[ESPHome OTA reference](https://esphome.io/components/ota/esphome/#encryption)
+for protocol details.
+
+If mDNS does not resolve `pixoo64.local`, replace it with the device's IPv4
+address. Confirm that the
 upload reaches 100%, the device reboots, and logs reconnect before treating the
 update as complete. The display renders a firmware-update message when the OTA
 writer starts. Do not interrupt power during the upload.
@@ -250,7 +262,9 @@ no solar, ambient-light, or Home Assistant `sun` requests.
 Now-playing metadata uses the encrypted native API. The configured entity ID and
 Home Assistant base URL persist in device preferences. Artwork requests use the
 relative or absolute URL supplied by Home Assistant; signed query values are not
-written to logs. The shared HTTP client follows no redirects, and TLS certificate
+written to logs. The `http_request` logger tag is disabled because upstream
+transport errors can log complete URLs; adapter diagnostics omit queries.
+The shared HTTP client follows no redirects, and TLS certificate
 verification is disabled for weather and artwork. SNTP is enabled; its server is
 not specified here.
 
