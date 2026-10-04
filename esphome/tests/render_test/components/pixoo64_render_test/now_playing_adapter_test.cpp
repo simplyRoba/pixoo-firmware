@@ -1149,23 +1149,14 @@ static void test_progressive_final_image_formats_scaling_and_detail() {
         TEST_ASSERT_TRUE(std::abs(contrast) > 80);
       }
       std::array<uint16_t, artwork::kArtworkPixelCount> output{};
-      artwork::DecodeStatistics diagnostics{};
       TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
           static_cast<int>(artwork::DecodeArtwork(
-              jpeg.data(), jpeg.size(), output.data(), output.size(), &info,
-              nullptr, nullptr, &diagnostics)));
-      TEST_ASSERT_EQUAL_UINT(scans.size(), diagnostics.scans);
-      TEST_ASSERT_GREATER_THAN_UINT(0, diagnostics.peak_memory);
-      TEST_ASSERT_TRUE(diagnostics.peak_memory <= PIXOO_JPEG_MEMORY_LIMIT);
+              jpeg.data(), jpeg.size(), output.data(), output.size(), &info)));
       const auto expected = ReferenceArtwork(reference, ref_width, ref_height);
       TEST_ASSERT_EQUAL_HEX16_ARRAY(expected.data(), output.data(), output.size());
       TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
           static_cast<int>(artwork::DecodeArtwork(
-              baseline.data(), baseline.size(), output.data(), output.size(),
-              nullptr, nullptr, nullptr, &diagnostics)));
-      TEST_ASSERT_EQUAL_UINT(0, diagnostics.scans);
-      TEST_ASSERT_EQUAL_UINT(0, diagnostics.peak_memory);
-      TEST_ASSERT_EQUAL_UINT64(0, diagnostics.elapsed_ms);
+              baseline.data(), baseline.size(), output.data(), output.size())));
     }
   }
   // Portrait and sub-pixel upscaling use the same centered crop integration.

@@ -34,7 +34,6 @@ typedef struct {
 typedef struct {
   size_t peak_memory;
   size_t live_memory;
-  uint64_t elapsed_ms;
   unsigned scans;
   uint32_t width;
   uint32_t height;

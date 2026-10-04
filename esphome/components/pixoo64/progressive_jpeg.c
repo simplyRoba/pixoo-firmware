@@ -298,7 +298,6 @@ pixoo_jpeg_status pixoo_decode_progressive_jpeg(
   while (state->allocations)
     jpeg_free_small((j_common_ptr)&state->jpeg, state->allocations + 1, 0);
   state->statistics.live_memory = 0;
-  state->statistics.elapsed_ms = monotonic_ms() - state->started_ms;
   if (statistics) *statistics = state->statistics;
   external_free(state);
   return result;
