@@ -125,7 +125,8 @@ bool NowPlayingDashboard::ReadyToShow() const {
   if (data.source_state != NowPlayingSourceState::kReady ||
       (ShowsMetadata(data) && !data.artwork_known) ||
       (data.has_artwork_identity &&
-       data.artwork_availability != ArtworkAvailability::kReady))
+       data.artwork_availability != ArtworkAvailability::kReady &&
+       data.artwork_availability != ArtworkAvailability::kFailed))
     return false;
   return true;
 }

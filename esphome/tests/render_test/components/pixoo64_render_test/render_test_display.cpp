@@ -1251,6 +1251,24 @@ void RenderTestDisplay::setup() {
           render_preparation(13200, "now_playing") &&
           !is_solid(outgoing.color);
 
+      this->content_controller_->HideBaseContent(25399);
+      const uint32_t copies_before_failed_entry =
+          this->now_playing_source_->copy_count();
+      const int hides_before_failed_entry = outgoing.hide_count;
+      now_playing_preparation_valid &=
+          render_preparation(25400, "__prepare_outgoing") &&
+          render_preparation(25400, "now_playing") &&
+          is_solid(outgoing.color) &&
+          outgoing.hide_count == hides_before_failed_entry &&
+          render_preparation(25600, "now_playing") &&
+          !is_solid(outgoing.color) && !is_global_loading() &&
+          outgoing.hide_count == hides_before_failed_entry + 1 &&
+          this->now_playing_source_->copy_count() == copies_before_failed_entry;
+      const std::vector<uint8_t> failed_entry_fallback = this->framebuffer_;
+      now_playing_preparation_valid &=
+          render_preparation(25601, "now_playing") &&
+          this->framebuffer_ == failed_entry_fallback;
+
       this->content_controller_->HideBaseContent(28999);
       now_playing_preparation_valid &=
           render_preparation(29000, "__prepare_outgoing") &&
@@ -1263,7 +1281,7 @@ void RenderTestDisplay::setup() {
           render_preparation(30100, "now_playing") &&
           is_solid(outgoing.color) &&
           render_preparation(30200, "now_playing") &&
-          is_solid(outgoing.color) &&
+          !is_solid(outgoing.color) && !is_global_loading() &&
           render_preparation(30300, "now_playing") &&
           !is_solid(outgoing.color);
       if (!now_playing_preparation_valid) {
