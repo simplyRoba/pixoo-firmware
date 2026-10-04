@@ -1,8 +1,36 @@
 # Third-party license notices
 
-This notice covers third-party artwork and fonts checked into this repository.
-Their terms are separate from the AGPL-3.0-or-later license for original project
-material.
+This notice covers third-party artwork and fonts checked into this repository
+and libjpeg-turbo linked into firmware and host render binaries. Their terms are
+separate from the AGPL-3.0-or-later license for original project material.
+
+## libjpeg-turbo 3.2.0
+
+This software is based in part on the work of the Independent JPEG Group.
+
+- **Material:** the libjpeg API library used for progressive artwork decoding,
+  statically linked into the firmware and host render target. The TurboJPEG API
+  and upstream command-line programs are not used.
+- **Source:** upstream [libjpeg-turbo 3.2.0](https://github.com/libjpeg-turbo/libjpeg-turbo/tree/3.2.0),
+  obtained on target through the pinned managed `espressif/libjpeg-turbo`
+  component `==3.2.0~1` and on host from the checksummed upstream release archive.
+- **License:** the IJG License applies to the libjpeg API library. Upstream's
+  `LICENSE.md` also contains the Modified (3-clause) BSD License for the build/test
+  system, TurboJPEG API, and associated programs, and describes component-license
+  boundaries.
+- **Retained notices:** complete, unaltered upstream
+  [`LICENSE.md`](resources/libjpeg-turbo-3.2.0/LICENSE.md) and
+  [`README.ijg`](resources/libjpeg-turbo-3.2.0/README.ijg), copied from the pinned
+  managed component's `libjpeg-turbo/` source directory and identical to those in
+  the host 3.2.0 archive. The latter includes the IJG copyright, warranty,
+  liability, and distribution terms. Include this attribution with binary
+  distributions and preserve applicable upstream notices with source
+  distributions.
+- **Integration:** project code supplies the memory backend in place of
+  upstream `jmemnobs`; it does not modify the upstream libjpeg source files.
+  Downloaded source and build outputs remain in generated `.esphome` trees.
+  `resources/libjpeg-turbo-3.2.0/` contains only redistributable upstream notices,
+  not library source, private images, or device captures.
 
 ## OpenMoji 17.0.0 color artwork
 
@@ -52,4 +80,4 @@ The reaction-to-source mapping and additional attribution are retained in
   `d2c8c15de5ca83fcaef7cadc06d8db578c082507fa3da8a8f698d026fdda2b14`.
 
 Dependencies installed from `requirements.txt` are distributed separately and
-are not enumerated by this checked-in-asset notice.
+are not enumerated by this notice.

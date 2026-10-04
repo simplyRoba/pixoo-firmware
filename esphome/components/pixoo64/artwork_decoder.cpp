@@ -9,8 +9,10 @@
 
 #include <JPEGDEC.h>
 #include <pngle.h>
+#include "progressive_jpeg.h"
 
 #ifdef ESP_PLATFORM
+#include "esphome/core/log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -551,6 +553,77 @@ DecodeStatus DecodePng(const uint8_t *encoded, size_t encoded_size,
   return FinalizeSamples(context.samples, destination);
 }
 
+int ProgressiveCancellation(void *opaque) {
+  return CancellationRequested(static_cast<SampleContext *>(opaque));
+}
+
+void ProgressiveYield(void *) { YieldDecoderWorker(); }
+
+int ProgressiveRow(void *opaque, uint32_t width, uint32_t height,
+                   uint32_t y, const uint8_t *rgb) {
+  auto *samples = static_cast<SampleContext *>(opaque);
+  if (y == 0)
+    InitializeSampleContext(samples, width, height, samples->accumulation);
+  if (width != samples->source_width || height != samples->source_height ||
+      y != samples->expected_callback_y || y >= height)
+    return samples->failed = true, 0;
+  for (uint32_t x = 0; x < width; ++x) {
+    if (x % kJpegCancellationIntervalPixels == 0 && CancellationRequested(samples))
+      return 0;
+    AccumulateSourceSample(samples, x, y, rgb[x * 3], rgb[x * 3 + 1],
+                           rgb[x * 3 + 2]);
+    if (samples->failed) return 0;
+  }
+  ++samples->expected_callback_y;
+  return 1;
+}
+
+DecodeStatus DecodeProgressiveJpeg(const uint8_t *encoded, size_t encoded_size,
+                                   const ImageInfo &info, uint16_t *destination,
+                                   CancellationCallback cancellation,
+                                   void *cancellation_context) {
+  ScopedAccumulation accumulation;
+  if (!accumulation.get()) return DecodeStatus::kOutOfMemory;
+  SampleContext samples{};
+  samples.accumulation = accumulation.get();
+  samples.cancellation = cancellation;
+  samples.cancellation_context = cancellation_context;
+  pixoo_jpeg_options options{};
+  // Account for the caller's accumulation storage within the decode budget.
+  options.memory_limit = PIXOO_JPEG_MEMORY_LIMIT -
+                         kArtworkPixelCount * sizeof(PixelAccumulation);
+  options.cancel = ProgressiveCancellation;
+  options.yield = ProgressiveYield;
+  options.row = ProgressiveRow;
+  options.context = &samples;
+  pixoo_jpeg_statistics statistics{};
+  const auto status = pixoo_decode_progressive_jpeg(
+      encoded, encoded_size, info.width, info.height, &options, &statistics);
+#ifdef ESP_PLATFORM
+  ESP_LOGD("pixoo64.artwork",
+           "progressive JPEG %ux%u: %u scans, %u bytes peak, %llu ms, status %u",
+           static_cast<unsigned>(info.width), static_cast<unsigned>(info.height),
+           statistics.scans,
+           static_cast<unsigned>(statistics.peak_memory +
+                                 kArtworkPixelCount * sizeof(PixelAccumulation)),
+           static_cast<unsigned long long>(statistics.elapsed_ms),
+           static_cast<unsigned>(status));
+#endif
+  if (samples.cancelled || status == PIXOO_JPEG_CANCELLED)
+    return DecodeStatus::kCancelled;
+  switch (status) {
+    case PIXOO_JPEG_MEMORY: return DecodeStatus::kOutOfMemory;
+    case PIXOO_JPEG_WORK_LIMIT: return DecodeStatus::kWorkLimitExceeded;
+    case PIXOO_JPEG_MALFORMED: return DecodeStatus::kMalformed;
+    case PIXOO_JPEG_SUCCESS: break;
+    default: return DecodeStatus::kDecodeFailed;
+  }
+  if (CancellationRequested(&samples)) return DecodeStatus::kCancelled;
+  if (samples.failed || samples.expected_callback_y != samples.source_height)
+    return DecodeStatus::kIncomplete;
+  return FinalizeSamples(samples, destination);
+}
+
 DecodeStatus DecodeJpeg(uint8_t *encoded, size_t encoded_size,
                         const ImageInfo &info, uint16_t *destination,
                         CancellationCallback cancellation,
@@ -747,6 +820,9 @@ DecodeStatus InspectJpeg(const uint8_t *encoded, size_t encoded_size,
   bool saw_frame = false;
   uint8_t component_ids[3]{};
   uint8_t frame_components = 0;
+  uint32_t scan_count = 0;
+  int8_t approximation[3][64];
+  std::memset(approximation, -1, sizeof(approximation));
   while (offset < encoded_size) {
     if (++marker_count > kMaxJpegMarkers)
       return DecodeStatus::kWorkLimitExceeded;
@@ -760,8 +836,15 @@ DecodeStatus InspectJpeg(const uint8_t *encoded, size_t encoded_size,
     if (marker == 0x00 || marker == 0xd8 ||
         (marker >= 0xd0 && marker <= 0xd7))
       return DecodeStatus::kMalformed;
-    if (marker == 0xd9)
-      return DecodeStatus::kIncomplete;
+    if (marker == 0xd9) {
+      if (!saw_frame || scan_count == 0)
+        return DecodeStatus::kIncomplete;
+      if (info->jpeg_mode == JpegMode::kProgressive)
+        for (uint8_t i = 0; i < frame_components; ++i)
+          if (approximation[i][0] < 0) return DecodeStatus::kMalformed;
+      return offset == encoded_size ? DecodeStatus::kSuccess
+                                    : DecodeStatus::kMalformed;
+    }
     if (marker == 0x01)
       continue;
     if (encoded_size - offset < 2)
@@ -773,9 +856,7 @@ DecodeStatus InspectJpeg(const uint8_t *encoded, size_t encoded_size,
     const size_t payload_size = segment_length - 2;
 
     if (IsStartOfFrameMarker(marker)) {
-      if (marker == 0xc2)
-        return DecodeStatus::kProgressiveJpeg;
-      if (marker != 0xc0)
+      if (marker != 0xc0 && marker != 0xc2)
         return DecodeStatus::kUnsupportedFormat;
       if (saw_frame || payload_size < 6)
         return DecodeStatus::kMalformed;
@@ -804,37 +885,72 @@ DecodeStatus InspectJpeg(const uint8_t *encoded, size_t encoded_size,
         component_ids[i] = component[0];
         mcu_blocks += horizontal * vertical;
       }
-      if (mcu_blocks > 6)
+      if (mcu_blocks > (marker == 0xc2 ? 10u : 6u))
         return DecodeStatus::kUnsupportedFormat;
+      info->jpeg_mode = marker == 0xc2 ? JpegMode::kProgressive : JpegMode::kBaseline;
       saw_frame = true;
     }
+    if (marker == 0xcc || marker == 0xdc)
+      return DecodeStatus::kUnsupportedFormat;
 
     offset += segment_length;
     if (marker != 0xda)
       continue;
     if (!saw_frame || payload_size < 4)
       return DecodeStatus::kMalformed;
+    if (++scan_count > kMaxJpegScans)
+      return DecodeStatus::kWorkLimitExceeded;
+    const bool progressive = info->jpeg_mode == JpegMode::kProgressive;
     const uint8_t scan_components = segment[0];
-    if (scan_components != frame_components ||
+    if (scan_components == 0 || scan_components > frame_components ||
         segment_length != static_cast<uint16_t>(6 + 2 * scan_components))
+      return DecodeStatus::kMalformed;
+    if (!progressive && (scan_components != frame_components || scan_count != 1))
       return DecodeStatus::kUnsupportedFormat;
+    uint8_t scan_indices[3]{};
     for (uint8_t i = 0; i < scan_components; ++i) {
       const uint8_t id = segment[1 + 2 * i];
       const uint8_t tables = segment[2 + 2 * i];
       bool matched = false;
-      for (uint8_t frame = 0; frame < frame_components; ++frame)
-        matched = matched || component_ids[frame] == id;
+      for (uint8_t frame = 0; frame < frame_components; ++frame) {
+        if (component_ids[frame] == id) {
+          matched = true;
+          scan_indices[i] = frame;
+        }
+      }
+      for (uint8_t prior = 0; prior < i; ++prior)
+        if (scan_indices[prior] == scan_indices[i] && matched)
+          return DecodeStatus::kMalformed;
       if (!matched || (tables >> 4) > 3 || (tables & 0x0f) > 3)
         return DecodeStatus::kMalformed;
     }
     const size_t spectral = 1 + 2 * scan_components;
-    if (segment[spectral] != 0 || segment[spectral + 1] != 63 ||
-        segment[spectral + 2] != 0)
-      return DecodeStatus::kUnsupportedFormat;
+    const uint8_t first = segment[spectral];
+    const uint8_t last = segment[spectral + 1];
+    const uint8_t high = segment[spectral + 2] >> 4;
+    const uint8_t low = segment[spectral + 2] & 15;
+    if (!progressive) {
+      if (first != 0 || last != 63 || high != 0 || low != 0)
+        return DecodeStatus::kUnsupportedFormat;
+    } else {
+      if (first > last || last > 63 || (first == 0 && last != 0) ||
+          (first != 0 && scan_components != 1) || high > 13 || low > 13 ||
+          (high != 0 && high != low + 1))
+        return DecodeStatus::kMalformed;
+      for (uint8_t i = 0; i < scan_components; ++i) {
+        const uint8_t index = scan_indices[i];
+        if (first != 0 && approximation[index][0] < 0)
+          return DecodeStatus::kMalformed;
+        for (uint8_t coefficient = first; coefficient <= last; ++coefficient) {
+          const int8_t previous = approximation[index][coefficient];
+          if ((high == 0 && previous != -1) || (high != 0 && previous != high))
+            return DecodeStatus::kMalformed;
+          approximation[index][coefficient] = low;
+        }
+      }
+    }
 
-    // Only one complete baseline scan is accepted. Entropy bytes are bounded by
-    // the encoded cap; byte stuffing and restart markers are validated until an
-    // EOI marker that must terminate the body exactly.
+    // Entropy bytes and marker work are bounded by the encoded cap.
     while (offset < encoded_size) {
       if (encoded[offset] != 0xff) {
         ++offset;
@@ -847,21 +963,22 @@ DecodeStatus InspectJpeg(const uint8_t *encoded, size_t encoded_size,
         return DecodeStatus::kIncomplete;
       const uint8_t entropy_marker = encoded[marker_offset];
       if (entropy_marker == 0x00) {
+        if (marker_offset != offset + 1) return DecodeStatus::kMalformed;
         offset = marker_offset + 1;
         continue;
       }
-      if (++marker_count > kMaxJpegMarkers)
-        return DecodeStatus::kWorkLimitExceeded;
       if (entropy_marker >= 0xd0 && entropy_marker <= 0xd7) {
+        if (++marker_count > kMaxJpegMarkers)
+          return DecodeStatus::kWorkLimitExceeded;
         offset = marker_offset + 1;
         continue;
       }
-      if (entropy_marker == 0xd9)
-        return marker_offset + 1 == encoded_size ? DecodeStatus::kSuccess
-                                                  : DecodeStatus::kMalformed;
-      return DecodeStatus::kUnsupportedFormat;
+      if (!progressive && entropy_marker != 0xd9)
+        return DecodeStatus::kUnsupportedFormat;
+      // Leave the marker prefix for the outer container parser.
+      break;
     }
-    return DecodeStatus::kIncomplete;
+    if (offset == encoded_size) return DecodeStatus::kIncomplete;
   }
   return DecodeStatus::kIncomplete;
 }
@@ -918,6 +1035,9 @@ DecodeStatus DecodeArtwork(const uint8_t *encoded, size_t encoded_size,
   if (info.format == ImageMagic::kPng)
     return DecodePng(encoded, encoded_size, info, destination, cancellation,
                      cancellation_context);
+  if (info.format == ImageMagic::kJpeg && info.jpeg_mode == JpegMode::kProgressive)
+    return DecodeProgressiveJpeg(encoded, encoded_size, info, destination,
+                                 cancellation, cancellation_context);
   if (info.format == ImageMagic::kJpeg)
     return DecodeJpeg(const_cast<uint8_t *>(encoded), encoded_size, info,
                       destination, cancellation, cancellation_context);

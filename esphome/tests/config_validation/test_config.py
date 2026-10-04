@@ -69,6 +69,23 @@ class EspHomeConfigTest(unittest.TestCase):
         result = self.run_config(self.fixture)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_now_playing_codegen_pins_libjpeg_and_disables_allocator_wrappers(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        build = self.fixture / "esphome/.esphome/build/pixoo64"
+        manifest = yaml.safe_load((build / "src/idf_component.yml").read_text())
+        self.assertEqual(
+            manifest["dependencies"]["espressif/libjpeg-turbo"]["version"],
+            "==3.2.0~1",
+        )
+        self.assertIn(
+            "CONFIG_LIBJPEG_TURBO_ALLOC_PREFER_SPIRAM=n",
+            (build / "sdkconfig.pixoo64.esphomeinternal").read_text(),
+        )
+
     def test_pixel_operator_glyph_inventory_matches_fonts_and_sanitizer(self):
         inventory_path = self.fixture / "esphome/fonts/pixel_operator_glyphs.yaml"
         inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))

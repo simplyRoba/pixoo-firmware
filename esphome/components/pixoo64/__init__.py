@@ -2,6 +2,7 @@ import esphome.codegen as cg
 from esphome import automation, pins
 from esphome.components import (
     api,
+    esp32,
     http_request,
     light,
     number,
@@ -871,6 +872,9 @@ async def to_code(config):
             "1.8.4",
             "https://github.com/bitbank2/JPEGDEC#1.8.4",
         )
+        esp32.add_idf_component(name="espressif/libjpeg-turbo", ref="==3.2.0~1")
+        # progressive_jpeg.c owns the complete libjpeg memory backend.
+        esp32.add_idf_sdkconfig_option("CONFIG_LIBJPEG_TURBO_ALLOC_PREFER_SPIRAM", False)
         cg.add_library("pngle", "1.1.0")
         cg.add_build_flag("-DPNGLE_NO_GAMMA_CORRECTION")
         # pngle has no allocator hook. artwork_decoder scopes this linker wrap

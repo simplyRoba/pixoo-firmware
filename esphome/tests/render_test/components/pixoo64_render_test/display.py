@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import esphome.codegen as cg
 from esphome.components import display, text
@@ -85,6 +86,10 @@ async def to_code(config):
             "1.8.4",
             "https://github.com/bitbank2/JPEGDEC#1.8.4",
         )
+        # PlatformIO runs this before compiling any application sources, so
+        # generated JPEG8 headers and the static archive exist on the first build.
+        helper = Path(__file__).resolve().parents[5] / "tools/build-libjpeg-host.py"
+        cg.add_platformio_option("extra_scripts", [f"pre:{helper}"])
         cg.add_library("pngle", "1.1.0")
         cg.add_library("Unity", "2.6.1")
 

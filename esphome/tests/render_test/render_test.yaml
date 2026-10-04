@@ -51,6 +51,8 @@ esphome:
     - ../../../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
     - ../../components/pixoo64/artwork_decoder.h
     - ../../components/pixoo64/artwork_decoder.cpp
+    - ../../components/pixoo64/progressive_jpeg.h
+    - ../../components/pixoo64/progressive_jpeg.c
     - ../../components/pixoo64/artwork_fetch_policy.h
     - ../../components/pixoo64/http_body_policy.h
     - ../../components/pixoo64/weather_fetch_policy.h

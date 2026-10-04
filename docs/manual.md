@@ -122,10 +122,18 @@ credentials; include any reverse-proxy path prefix. The firmware does not derive
 it from the native API connection. A successful configure or clear action safely
 reboots the display. Playback metadata uses the encrypted native API; artwork is
 fetched only while the now-playing dashboard is visible and a reference is
-pending. Supported JPEG and PNG bodies must be no larger than 512 KiB;
-progressive JPEG and animated or interlaced PNG are rejected, as are PNG bodies
-with an alpha channel or `tRNS` transparency. Missing, unsupported, and failed
-artwork use a deterministic 64×64 fallback.
+pending. Supported JPEG and PNG bodies must be no larger than 512 KiB, with
+source dimensions no greater than 4096 pixels per axis. Baseline and progressive
+JPEG support 8-bit Huffman-coded grayscale, RGB, and YCbCr images with one or
+three components and ordinary sampling; arithmetic-coded, lossless, and 12-bit
+JPEG are unsupported. Progressive JPEG consumes all scans before producing the
+final image, with limits of 64 scans, 3.25 MiB of decode memory, and a 10-second
+cooperatively checked decode deadline. Its full-resolution intermediate buffers
+can exceed the memory budget well below the dimension limit, even for a small
+encoded body. These limits do not guarantee on-device decode latency. Animated
+or interlaced PNG and PNG bodies with an alpha channel or `tRNS` transparency
+are rejected. Missing, unsupported, and failed artwork use a deterministic
+64×64 fallback, including when entering the dashboard.
 
 ## Controls and features
 
@@ -225,9 +233,9 @@ not provide serial data.
   artwork references.
 - **Metadata appears without cover artwork:** check the resolved artwork URL from
   the display's network. It must return HTTP 200 without a redirect. The response
-  must be a supported JPEG or PNG body no larger than 512 KiB; progressive JPEG,
-  animated or interlaced PNG, and PNG bodies with an alpha channel or `tRNS`
-  transparency are rejected.
+  must satisfy the [artwork format and resource limits](#wi-fi-home-assistant-and-api-credentials).
+  Progressive JPEG can fail the decode-memory or work limits even when its
+  encoded body is small; re-encode or resize the image if necessary.
 
 ## Privacy and limitations
 

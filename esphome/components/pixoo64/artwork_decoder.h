@@ -17,6 +17,7 @@ constexpr uint32_t kMaxDecodeCallbacks = kMaxSourcePixels;
 constexpr uint32_t kMaxDecodeCallbackPixels = kMaxSourcePixels;
 constexpr uint32_t kMaxPngChunks = 4096;
 constexpr uint32_t kMaxJpegMarkers = 4096;
+constexpr uint32_t kMaxJpegScans = 64;
 
 static_assert(kMaxSourceWidth * uint64_t{kMaxSourceHeight} ==
                   kMaxSourcePixels,
@@ -51,10 +52,13 @@ enum class DecodeStatus : uint8_t {
 
 using CancellationCallback = bool (*)(void *context);
 
+enum class JpegMode : uint8_t { kUnknown, kBaseline, kProgressive };
+
 struct ImageInfo {
   ImageMagic format{ImageMagic::kUnknown};
   uint32_t width{0};
   uint32_t height{0};
+  JpegMode jpeg_mode{JpegMode::kUnknown};
 };
 
 struct CropRect {

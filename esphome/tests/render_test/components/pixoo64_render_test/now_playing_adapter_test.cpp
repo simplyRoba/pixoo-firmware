@@ -6,6 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
+#include <chrono>
+#include <thread>
+
+#include <jpeglib.h>
+#include "progressive_jpeg.h"
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -353,6 +360,231 @@ bool CancelAtCall(void *opaque) {
   return probe->calls >= probe->cancel_at;
 }
 
+// All JPEG inputs are original patterns encoded at runtime, not device captures.
+enum class JpegFixtureFormat { kGray, k420, k422, k444, kRgb, kCmyk };
+
+std::vector<uint8_t> MakeLibraryJpeg(uint32_t width, uint32_t height,
+                                    JpegFixtureFormat format, bool progressive = true,
+                                    unsigned restart_interval = 0,
+                                    void *client_data = nullptr) {
+  const unsigned channels = format == JpegFixtureFormat::kGray ? 1 :
+                            format == JpegFixtureFormat::kCmyk ? 4 : 3;
+  unsigned divisor = 1;
+  while (divisor < 8 && std::min(width, height) >= 128 * divisor)
+    divisor *= 2;
+  std::vector<uint8_t> pixels(size_t{width} * height * channels);
+  for (uint32_t y = 0; y < height; ++y) {
+    for (uint32_t x = 0; x < width; ++x) {
+      // Within-block contrast survives every tested reduced IDCT size.
+      const uint8_t detail = ((x / divisor + y / divisor) % 4 < 2) ? 35 : 220;
+      const size_t p = (size_t{y} * width + x) * channels;
+      pixels[p] = detail;
+      if (channels > 1) {
+        pixels[p + 1] = static_cast<uint8_t>(40 + (y * 3) % 175);
+        pixels[p + 2] = static_cast<uint8_t>(30 + (x * 5) % 195);
+      }
+      if (channels == 4) pixels[p + 3] = 0;
+    }
+  }
+  jpeg_compress_struct jpeg{};
+  jpeg_error_mgr error{};
+  jpeg.err = jpeg_std_error(&error);
+  jpeg.client_data = client_data;
+  jpeg_create_compress(&jpeg);
+  unsigned char *encoded = nullptr;
+  unsigned long size = 0;
+  jpeg_mem_dest(&jpeg, &encoded, &size);
+  jpeg.image_width = width;
+  jpeg.image_height = height;
+  jpeg.input_components = channels;
+  jpeg.in_color_space = channels == 1 ? JCS_GRAYSCALE :
+                        channels == 4 ? JCS_CMYK : JCS_RGB;
+  jpeg_set_defaults(&jpeg);
+  if (format == JpegFixtureFormat::kRgb) jpeg_set_colorspace(&jpeg, JCS_RGB);
+  if (channels == 3 && format != JpegFixtureFormat::kRgb) {
+    jpeg.comp_info[0].h_samp_factor = format == JpegFixtureFormat::k444 ? 1 : 2;
+    jpeg.comp_info[0].v_samp_factor = format == JpegFixtureFormat::k420 ? 2 : 1;
+    for (unsigned c = 1; c < 3; ++c) {
+      jpeg.comp_info[c].h_samp_factor = 1;
+      jpeg.comp_info[c].v_samp_factor = 1;
+    }
+  }
+  jpeg_set_quality(&jpeg, 92, TRUE);
+  jpeg.restart_interval = restart_interval;
+  if (progressive) jpeg_simple_progression(&jpeg);
+  jpeg_start_compress(&jpeg, TRUE);
+  while (jpeg.next_scanline < height) {
+    JSAMPROW row = pixels.data() + size_t{jpeg.next_scanline} * width * channels;
+    jpeg_write_scanlines(&jpeg, &row, 1);
+  }
+  jpeg_finish_compress(&jpeg);
+  std::vector<uint8_t> result(encoded, encoded + size);
+  jpeg_destroy_compress(&jpeg);
+  TEST_ASSERT_TRUE(jpeg.client_data == client_data);
+  std::free(encoded);
+  return result;
+}
+
+// Independent final-image reference: ordinary libjpeg decoding, with neither
+// buffered scans nor the bounded progressive wrapper's row callback.
+std::vector<uint8_t> LibraryReference(const std::vector<uint8_t> &encoded,
+                                      unsigned divisor, uint32_t *width,
+                                      uint32_t *height,
+                                      void *client_data = nullptr) {
+  jpeg_decompress_struct jpeg{};
+  jpeg_error_mgr error{};
+  jpeg.err = jpeg_std_error(&error);
+  jpeg.client_data = client_data;
+  jpeg_create_decompress(&jpeg);
+  jpeg_mem_src(&jpeg, encoded.data(), encoded.size());
+  jpeg_read_header(&jpeg, TRUE);
+  jpeg.scale_num = 1;
+  jpeg.scale_denom = divisor;
+  jpeg.out_color_space = JCS_RGB;
+  jpeg_start_decompress(&jpeg);
+  *width = jpeg.output_width;
+  *height = jpeg.output_height;
+  std::vector<uint8_t> result(size_t{*width} * *height * 3);
+  while (jpeg.output_scanline < jpeg.output_height) {
+    JSAMPROW row = result.data() + size_t{jpeg.output_scanline} * *width * 3;
+    jpeg_read_scanlines(&jpeg, &row, 1);
+  }
+  jpeg_finish_decompress(&jpeg);
+  jpeg_destroy_decompress(&jpeg);
+  TEST_ASSERT_TRUE(jpeg.client_data == client_data);
+  return result;
+}
+
+std::vector<size_t> JpegMarkerOffsets(const std::vector<uint8_t> &jpeg,
+                                       uint8_t wanted) {
+  std::vector<size_t> offsets;
+  size_t p = 2;
+  while (p + 1 < jpeg.size()) {
+    if (jpeg[p] != 0xff) { ++p; continue; }
+    const size_t start = p;
+    while (p < jpeg.size() && jpeg[p] == 0xff) ++p;
+    if (p == jpeg.size()) break;
+    const uint8_t marker = jpeg[p++];
+    if (marker == 0 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (marker == wanted) offsets.push_back(start);
+    if (marker == 0xd9) break;
+    if (marker == 0x01) continue;
+    if (p + 1 >= jpeg.size()) break;
+    const size_t length = (size_t{jpeg[p]} << 8) | jpeg[p + 1];
+    if (length < 2 || length > jpeg.size() - p) break;
+    p += length;
+  }
+  return offsets;
+}
+
+struct ProgressiveProbe {
+  std::vector<uint8_t> rgb;
+  uint32_t width{0};
+  uint32_t height{0};
+  unsigned rows{0};
+  unsigned calls{0};
+  unsigned yields{0};
+  unsigned cancel_at{0};
+  unsigned cancel_after_rows{0};
+  bool reject_row{false};
+  bool delay_once{false};
+};
+
+int CollectProgressiveRow(void *opaque, uint32_t width, uint32_t height,
+                           uint32_t y, const uint8_t *rgb) {
+  auto *probe = static_cast<ProgressiveProbe *>(opaque);
+  TEST_ASSERT_EQUAL_UINT(probe->rows, y);
+  TEST_ASSERT_NOT_NULL(rgb);
+  if (probe->rows == 0) { probe->width = width; probe->height = height; }
+  TEST_ASSERT_EQUAL_UINT(probe->width, width);
+  TEST_ASSERT_EQUAL_UINT(probe->height, height);
+  probe->rgb.insert(probe->rgb.end(), rgb, rgb + width * 3);
+  ++probe->rows;
+  return !probe->reject_row;
+}
+
+int CancelProgressive(void *opaque) {
+  auto *probe = static_cast<ProgressiveProbe *>(opaque);
+  ++probe->calls;
+  return (probe->cancel_at && probe->calls >= probe->cancel_at) ||
+         (probe->cancel_after_rows && probe->rows >= probe->cancel_after_rows);
+}
+
+void YieldProgressive(void *opaque) {
+  auto *probe = static_cast<ProgressiveProbe *>(opaque);
+  ++probe->yields;
+  if (probe->delay_once) {
+    probe->delay_once = false;
+    // No injectable clock exists; a yield callback advances real monotonic
+    // time well beyond the deliberately tiny deadline.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+pixoo_jpeg_options ProgressiveOptions(ProgressiveProbe *probe) {
+  pixoo_jpeg_options options{};
+  options.row = CollectProgressiveRow;
+  options.cancel = CancelProgressive;
+  options.yield = YieldProgressive;
+  options.context = probe;
+  return options;
+}
+
+pixoo_jpeg_status DecodeProgressiveFixture(const std::vector<uint8_t> &jpeg,
+                                            uint32_t width, uint32_t height,
+                                            const pixoo_jpeg_options &options,
+                                            pixoo_jpeg_statistics *stats) {
+  const auto status = pixoo_decode_progressive_jpeg(
+      jpeg.data(), jpeg.size(), width, height, &options, stats);
+  TEST_ASSERT_EQUAL_UINT(0, stats->live_memory);
+  TEST_ASSERT_TRUE(stats->peak_memory <=
+      (options.memory_limit ? std::min<size_t>(options.memory_limit, PIXOO_JPEG_MEMORY_LIMIT)
+                            : PIXOO_JPEG_MEMORY_LIMIT));
+  return status;
+}
+
+// Destination-driven integer area integration, independent of the production
+// source-driven accumulation. Coordinates use units of 1/64 source pixel.
+std::array<uint16_t, artwork::kArtworkPixelCount> ReferenceArtwork(
+    const std::vector<uint8_t> &rgb, uint32_t width, uint32_t height) {
+  std::array<uint16_t, artwork::kArtworkPixelCount> result{};
+  const uint32_t extent = std::min(width, height);
+  const uint32_t left = (width - extent) / 2;
+  const uint32_t top = (height - extent) / 2;
+  const uint32_t area = extent * extent;
+  for (uint32_t dy = 0; dy < 64; ++dy) {
+    for (uint32_t dx = 0; dx < 64; ++dx) {
+      uint64_t sums[3]{};
+      for (uint32_t sy = dy * extent / 64; sy < ((dy + 1) * extent + 63) / 64; ++sy) {
+        const uint32_t wy = std::min((sy + 1) * 64, (dy + 1) * extent) -
+                            std::max(sy * 64, dy * extent);
+        for (uint32_t sx = dx * extent / 64; sx < ((dx + 1) * extent + 63) / 64; ++sx) {
+          const uint32_t wx = std::min((sx + 1) * 64, (dx + 1) * extent) -
+                              std::max(sx * 64, dx * extent);
+          const size_t p = (size_t{sy + top} * width + sx + left) * 3;
+          for (unsigned c = 0; c < 3; ++c) sums[c] += uint64_t{rgb[p + c]} * wx * wy;
+        }
+      }
+      result[dy * 64 + dx] = artwork::Rgb888ToRgb565(
+          (sums[0] + area / 2) / area, (sums[1] + area / 2) / area,
+          (sums[2] + area / 2) / area);
+    }
+  }
+  return result;
+}
+
+void AssertArtworkFailure(const std::vector<uint8_t> &jpeg,
+                           artwork::DecodeStatus expected,
+                           CancellationProbe *cancellation = nullptr) {
+  std::array<uint16_t, artwork::kArtworkPixelCount> output;
+  output.fill(0x5a5a);
+  const auto status = artwork::DecodeArtwork(
+      jpeg.data(), jpeg.size(), output.data(), output.size(), nullptr,
+      cancellation ? CancelAtCall : nullptr, cancellation);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(expected), static_cast<int>(status));
+  for (uint16_t pixel : output) TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
+}
+
 }  // namespace
 
 static void test_entity_ids() {
@@ -598,10 +830,12 @@ static void test_jpeg_marker_validation() {
 
   const size_t sof = FindJpegMarker(jpeg, 0xc0);
   TEST_ASSERT_LESS_THAN_UINT(jpeg.size(), sof);
+  // A sequential scan (Ss=0, Se=63) remains invalid when only SOF is changed;
+  // real progressive DC scans require Ss=Se=0.
   std::vector<uint8_t> progressive = jpeg;
   progressive[sof + 1] = 0xc2;
   TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kProgressiveJpeg),
+      static_cast<int>(artwork::DecodeStatus::kMalformed),
       static_cast<int>(artwork::InspectJpeg(progressive.data(),
                                             progressive.size(), &info)));
 
@@ -794,13 +1028,16 @@ static void test_actual_baseline_jpeg_decode_and_rejections() {
   TEST_ASSERT_UINT8_WITHIN(24, 170, GreenFrom565(output[5]));
   TEST_ASSERT_UINT8_WITHIN(24, 170, BlueFrom565(output[5]));
 
+  output.fill(0x5a5a);
   std::vector<uint8_t> progressive = jpeg;
   const size_t sof = FindJpegMarker(progressive, 0xc0);
   progressive[sof + 1] = 0xc2;
   TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(artwork::DecodeStatus::kProgressiveJpeg),
+      static_cast<int>(artwork::DecodeStatus::kMalformed),
       static_cast<int>(artwork::DecodeArtwork(
           progressive.data(), progressive.size(), output.data(), output.size())));
+  for (uint16_t pixel : output)
+    TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
   std::vector<uint8_t> incomplete = jpeg;
   incomplete.pop_back();
   TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kIncomplete),
@@ -863,6 +1100,471 @@ static void test_jpeg_decode_cancellation() {
     TEST_ASSERT_EQUAL_HEX16(0x5a5a, pixel);
 }
 
+static void test_progressive_final_image_formats_scaling_and_detail() {
+  for (const auto format : {JpegFixtureFormat::kGray, JpegFixtureFormat::k420,
+                            JpegFixtureFormat::k422, JpegFixtureFormat::k444}) {
+    for (const uint32_t shorter : {63u, 129u, 257u, 513u}) {
+      const uint32_t width = shorter + 10;
+      const uint32_t height = shorter;
+      unsigned divisor = 1;
+      while (divisor < 8 && shorter >= 128 * divisor) divisor *= 2;
+      const auto jpeg = MakeLibraryJpeg(width, height, format);
+      artwork::ImageInfo info{};
+      TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+          static_cast<int>(artwork::InspectArtwork(jpeg.data(), jpeg.size(), &info)));
+      TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::JpegMode::kProgressive),
+                            static_cast<int>(info.jpeg_mode));
+      TEST_ASSERT_EQUAL_UINT(width, info.width);
+      TEST_ASSERT_EQUAL_UINT(height, info.height);
+      const auto scans = JpegMarkerOffsets(jpeg, 0xda);
+      TEST_ASSERT_GREATER_THAN_UINT(1, scans.size());
+      uint32_t ref_width = 0, ref_height = 0;
+      const auto reference = LibraryReference(jpeg, divisor, &ref_width, &ref_height);
+      // Baseline and progressive encoders produce the same coefficients. Use
+      // libjpeg for both references, not JPEGDEC's different IDCT/upsampling.
+      const auto baseline = MakeLibraryJpeg(width, height, format, false);
+      uint32_t baseline_width = 0, baseline_height = 0;
+      const auto baseline_reference = LibraryReference(
+          baseline, divisor, &baseline_width, &baseline_height);
+      TEST_ASSERT_EQUAL_UINT(ref_width, baseline_width);
+      TEST_ASSERT_EQUAL_UINT(ref_height, baseline_height);
+      TEST_ASSERT_EQUAL_UINT8_ARRAY(reference.data(), baseline_reference.data(), reference.size());
+      ProgressiveProbe probe;
+      auto options = ProgressiveOptions(&probe);
+      pixoo_jpeg_statistics stats{};
+      TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+          DecodeProgressiveFixture(jpeg, width, height, options, &stats));
+      TEST_ASSERT_EQUAL_UINT((width + divisor - 1) / divisor, stats.width);
+      TEST_ASSERT_EQUAL_UINT((height + divisor - 1) / divisor, stats.height);
+      TEST_ASSERT_EQUAL_UINT(ref_height, probe.rows);
+      TEST_ASSERT_EQUAL_UINT(scans.size(), stats.scans);
+      TEST_ASSERT_GREATER_THAN_UINT(0, stats.peak_memory);
+      TEST_ASSERT_GREATER_THAN_UINT(probe.rows, probe.yields);
+      TEST_ASSERT_EQUAL_UINT(reference.size(), probe.rgb.size());
+      TEST_ASSERT_EQUAL_UINT8_ARRAY(reference.data(), probe.rgb.data(), reference.size());
+      // A DC-only decoder makes each 8x8 block constant. This fixture has
+      // substantial contrast *inside* a block, even at reduced IDCT sizes.
+      if (divisor == 1) {
+        int contrast = int(probe.rgb[0]) - int(probe.rgb[2 * 3]);
+        TEST_ASSERT_TRUE(std::abs(contrast) > 80);
+      }
+      std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+      TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+          static_cast<int>(artwork::DecodeArtwork(
+              jpeg.data(), jpeg.size(), output.data(), output.size(), &info)));
+      const auto expected = ReferenceArtwork(reference, ref_width, ref_height);
+      TEST_ASSERT_EQUAL_HEX16_ARRAY(expected.data(), output.data(), output.size());
+    }
+  }
+  // Portrait and sub-pixel upscaling use the same centered crop integration.
+  for (const auto dimensions : {std::array<uint32_t, 2>{1, 1},
+                                std::array<uint32_t, 2>{17, 29},
+                                std::array<uint32_t, 2>{65, 99}}) {
+    const auto jpeg = MakeLibraryJpeg(dimensions[0], dimensions[1], JpegFixtureFormat::k444);
+    uint32_t w = 0, h = 0;
+    const auto reference = LibraryReference(jpeg, 1, &w, &h);
+    const auto expected = ReferenceArtwork(reference, w, h);
+    std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::DecodeArtwork(jpeg.data(), jpeg.size(), output.data(), output.size())));
+    TEST_ASSERT_EQUAL_HEX16_ARRAY(expected.data(), output.data(), output.size());
+  }
+}
+
+static void test_libjpeg_foreign_client_data() {
+  struct ForeignClientData {
+    uint32_t sentinel;
+  } foreign{0x13579bdfu};
+  const auto jpeg = MakeLibraryJpeg(73, 65, JpegFixtureFormat::k420,
+                                    true, 0, &foreign);
+  TEST_ASSERT_EQUAL_HEX32(0x13579bdfu, foreign.sentinel);
+  TEST_ASSERT_GREATER_THAN_UINT(1, JpegMarkerOffsets(jpeg, 0xda).size());
+  uint32_t width = 0, height = 0;
+  // Progressive coefficient arrays are virtual arrays, so ordinary decoding
+  // exercises jpeg_mem_available as well as the global allocation/free hooks.
+  const auto reference = LibraryReference(jpeg, 1, &width, &height, &foreign);
+  TEST_ASSERT_EQUAL_HEX32(0x13579bdfu, foreign.sentinel);
+  TEST_ASSERT_EQUAL_UINT(73, width);
+  TEST_ASSERT_EQUAL_UINT(65, height);
+  uint32_t plain_width = 0, plain_height = 0;
+  const auto plain = LibraryReference(jpeg, 1, &plain_width, &plain_height);
+  TEST_ASSERT_EQUAL_UINT(width, plain_width);
+  TEST_ASSERT_EQUAL_UINT(height, plain_height);
+  TEST_ASSERT_EQUAL_UINT(reference.size(), plain.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(plain.data(), reference.data(), reference.size());
+}
+
+static void test_progressive_rgb_colorspace_full_detail() {
+  const auto encoded = MakeLibraryJpeg(73, 65, JpegFixtureFormat::kRgb);
+  const auto adobe = JpegMarkerOffsets(encoded, 0xee);
+  TEST_ASSERT_EQUAL_UINT(1, adobe.size());
+  TEST_ASSERT_EQUAL_UINT8(0, encoded[adobe[0] + 15]);  // Adobe RGB transform.
+  const size_t sof = FindJpegMarker(encoded, 0xc2);
+  TEST_ASSERT_EQUAL_UINT8('R', encoded[sof + 10]);
+  TEST_ASSERT_EQUAL_UINT8('G', encoded[sof + 13]);
+  TEST_ASSERT_EQUAL_UINT8('B', encoded[sof + 16]);
+  // Without APP14, the R/G/B component IDs still identify RGB colorspace.
+  auto without_adobe = encoded;
+  const size_t app14_length = (size_t{encoded[adobe[0] + 2]} << 8) |
+                             encoded[adobe[0] + 3];
+  without_adobe.erase(without_adobe.begin() + adobe[0],
+                      without_adobe.begin() + adobe[0] + app14_length + 2);
+  for (const auto *jpeg : std::array<const std::vector<uint8_t> *, 2>{&encoded, &without_adobe}) {
+    artwork::ImageInfo info{};
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::InspectArtwork(jpeg->data(), jpeg->size(), &info)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::JpegMode::kProgressive),
+                          static_cast<int>(info.jpeg_mode));
+    TEST_ASSERT_EQUAL_UINT(73, info.width);
+    TEST_ASSERT_EQUAL_UINT(65, info.height);
+    TEST_ASSERT_GREATER_THAN_UINT(1, JpegMarkerOffsets(*jpeg, 0xda).size());
+    uint32_t width = 0, height = 0;
+    const auto reference = LibraryReference(*jpeg, 1, &width, &height);
+    TEST_ASSERT_TRUE(std::abs(int(reference[0]) - int(reference[2 * 3])) > 80);
+    ProgressiveProbe probe;
+    const auto options = ProgressiveOptions(&probe);
+    pixoo_jpeg_statistics stats{};
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+        DecodeProgressiveFixture(*jpeg, 73, 65, options, &stats));
+    TEST_ASSERT_EQUAL_UINT(width, probe.width);
+    TEST_ASSERT_EQUAL_UINT(height, probe.rows);
+    TEST_ASSERT_EQUAL_UINT(reference.size(), probe.rgb.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(reference.data(), probe.rgb.data(), reference.size());
+    std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+        static_cast<int>(artwork::DecodeArtwork(
+            jpeg->data(), jpeg->size(), output.data(), output.size(), &info)));
+    const auto expected = ReferenceArtwork(reference, width, height);
+    TEST_ASSERT_EQUAL_HEX16_ARRAY(expected.data(), output.data(), output.size());
+  }
+}
+
+static void test_progressive_inspector_scan_validation() {
+  const auto jpeg = MakeLibraryJpeg(73, 65, JpegFixtureFormat::k420);
+  const size_t sof = FindJpegMarker(jpeg, 0xc2);
+  const auto scans = JpegMarkerOffsets(jpeg, 0xda);
+  TEST_ASSERT_GREATER_THAN_UINT(2, scans.size());
+  auto check = [](const std::vector<uint8_t> &input, artwork::DecodeStatus expected) {
+    artwork::ImageInfo info{};
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(expected),
+        static_cast<int>(artwork::InspectJpeg(input.data(), input.size(), &info)));
+    AssertArtworkFailure(input, expected);
+  };
+  auto bad = jpeg;
+  bad.push_back(0);
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad.resize(bad.size() - 2);
+  check(bad, artwork::DecodeStatus::kIncomplete);
+  bad = jpeg;
+  bad.resize(scans[1] + 3);
+  check(bad, artwork::DecodeStatus::kIncomplete);
+  bad = jpeg;
+  bad[scans[1] + 2] = 0x7f;
+  check(bad, artwork::DecodeStatus::kIncomplete);
+  bad = jpeg;
+  bad[scans[1] + 3] = 2;
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[sof + 1] = 0xc1;
+  check(bad, artwork::DecodeStatus::kUnsupportedFormat);
+  bad = jpeg;
+  bad[sof + 4] = 12;
+  check(bad, artwork::DecodeStatus::kUnsupportedFormat);
+  bad = jpeg;
+  bad[sof + 11] = 0; // Zero sampling factors cannot describe a component.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[sof + 12] = 4; // Quantization table selector is out of range.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  const size_t frame_length = (size_t{jpeg[sof + 2]} << 8) | jpeg[sof + 3];
+  bad.insert(bad.begin() + scans[0], jpeg.begin() + sof,
+             jpeg.begin() + sof + 2 + frame_length);
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[sof + 13] = bad[sof + 10]; // Duplicate frame component ID.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[scans[0] + 7] = bad[scans[0] + 5]; // Duplicate scan component ID.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[scans[1] + 5] = 99;
+  check(bad, artwork::DecodeStatus::kMalformed);
+  const size_t spectral = scans[1] + 5 + 2 * jpeg[scans[1] + 4];
+  for (const auto values : {std::array<uint8_t, 3>{5, 4, 0},
+                            std::array<uint8_t, 3>{1, 64, 0},
+                            std::array<uint8_t, 3>{0, 63, 0},
+                            std::array<uint8_t, 3>{1, 5, 0x31},
+                            std::array<uint8_t, 3>{1, 5, 0xee},
+                            std::array<uint8_t, 3>{1, 5, 0x10}}) {
+    bad = jpeg;
+    std::copy(values.begin(), values.end(), bad.begin() + spectral);
+    check(bad, artwork::DecodeStatus::kMalformed);
+  }
+  bad = jpeg;
+  const size_t dc_spectral = scans[0] + 5 + 2 * jpeg[scans[0] + 4];
+  bad[dc_spectral + 1] = 1; // A DC scan cannot include AC coefficients.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[dc_spectral] = 1; // AC scans cannot interleave components.
+  bad[dc_spectral + 1] = 5;
+  check(bad, artwork::DecodeStatus::kMalformed);
+  bad = jpeg;
+  bad[scans[0] + 6] = 0x40; // Huffman table selector is out of range.
+  check(bad, artwork::DecodeStatus::kMalformed);
+  // Repeating a first DC scan without refinement violates coefficient history.
+  bad = jpeg;
+  const size_t first_length = (size_t{jpeg[scans[0] + 2]} << 8) | jpeg[scans[0] + 3];
+  bad.insert(bad.begin() + scans[1], jpeg.begin() + scans[0],
+             jpeg.begin() + scans[0] + 2 + first_length);
+  check(bad, artwork::DecodeStatus::kMalformed);
+  // Arithmetic coding and deferred dimensions are outside the supported modes.
+  for (uint8_t marker : {uint8_t{0xcc}, uint8_t{0xdc}}) {
+    bad = jpeg;
+    const std::vector<uint8_t> segment{0xff, marker, 0, 4, 0, 0};
+    bad.insert(bad.begin() + scans[0], segment.begin(), segment.end());
+    check(bad, artwork::DecodeStatus::kUnsupportedFormat);
+  }
+}
+
+static void test_progressive_entropy_corruption_and_cleanup() {
+  const auto jpeg = MakeLibraryJpeg(73, 65, JpegFixtureFormat::k444);
+  auto bad_huffman = jpeg;
+  const auto tables = JpegMarkerOffsets(jpeg, 0xc4);
+  TEST_ASSERT_FALSE(tables.empty());
+  // An oversubscribed canonical Huffman tree: 255 one-bit symbols cannot fit.
+  bad_huffman[tables[0] + 5] = 255;
+  artwork::ImageInfo info{};
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::InspectJpeg(bad_huffman.data(), bad_huffman.size(), &info)));
+  const auto scans = JpegMarkerOffsets(jpeg, 0xda);
+  auto missing_entropy = jpeg;
+  const size_t last = scans.back();
+  const size_t length = (size_t{jpeg[last + 2]} << 8) | jpeg[last + 3];
+  missing_entropy.erase(missing_entropy.begin() + last + 2 + length,
+                         missing_entropy.end() - 2);
+  for (unsigned repeat = 0; repeat < 8; ++repeat) {
+    for (const auto *bad : {&bad_huffman, &missing_entropy}) {
+      ProgressiveProbe probe;
+      const auto options = ProgressiveOptions(&probe);
+      pixoo_jpeg_statistics stats{};
+      TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MALFORMED,
+          DecodeProgressiveFixture(*bad, 73, 65, options, &stats));
+      TEST_ASSERT_EQUAL_UINT(0, probe.rows);
+      AssertArtworkFailure(*bad, artwork::DecodeStatus::kMalformed);
+    }
+    ProgressiveProbe probe;
+    const auto options = ProgressiveOptions(&probe);
+    pixoo_jpeg_statistics stats{};
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+        DecodeProgressiveFixture(jpeg, 73, 65, options, &stats));
+    TEST_ASSERT_EQUAL_UINT(65, probe.rows);
+  }
+  // Missing EOI is also a library failure when called without the inspector.
+  auto truncated = jpeg;
+  truncated.resize(truncated.size() - 2);
+  ProgressiveProbe probe;
+  const auto options = ProgressiveOptions(&probe);
+  pixoo_jpeg_statistics stats{};
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MALFORMED,
+      DecodeProgressiveFixture(truncated, 73, 65, options, &stats));
+  auto trailing = jpeg;
+  trailing.push_back(0);
+  ProgressiveProbe trailing_probe;
+  const auto trailing_options = ProgressiveOptions(&trailing_probe);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MALFORMED,
+      DecodeProgressiveFixture(trailing, 73, 65, trailing_options, &stats));
+  // A late core failure can follow row emission; the public adapter must still
+  // leave the caller's image untouched (its inspector rejects trailing bytes).
+  TEST_ASSERT_EQUAL_UINT(65, trailing_probe.rows);
+  AssertArtworkFailure(trailing, artwork::DecodeStatus::kMalformed);
+}
+
+static void test_progressive_restart_markers_and_scan_truncation() {
+  const auto jpeg = MakeLibraryJpeg(97, 65, JpegFixtureFormat::k420, true, 3);
+  TEST_ASSERT_LESS_THAN_UINT(jpeg.size(), FindJpegMarker(jpeg, 0xdd));
+  const size_t restart = FindJpegMarker(jpeg, 0xd0);
+  TEST_ASSERT_LESS_THAN_UINT(jpeg.size(), restart);
+  ProgressiveProbe success;
+  auto options = ProgressiveOptions(&success);
+  pixoo_jpeg_statistics stats{};
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+      DecodeProgressiveFixture(jpeg, 97, 65, options, &stats));
+  uint32_t width = 0, height = 0;
+  const auto reference = LibraryReference(jpeg, 1, &width, &height);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(reference.data(), success.rgb.data(), reference.size());
+  const auto expected = ReferenceArtwork(reference, width, height);
+  std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(jpeg.data(), jpeg.size(), output.data(), output.size())));
+  TEST_ASSERT_EQUAL_HEX16_ARRAY(expected.data(), output.data(), output.size());
+  for (size_t scan : JpegMarkerOffsets(jpeg, 0xda)) {
+    auto truncated = jpeg;
+    truncated.resize(scan + 3); // Truncated length field at every scan, not only the first.
+    ProgressiveProbe probe;
+    options = ProgressiveOptions(&probe);
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MALFORMED,
+        DecodeProgressiveFixture(truncated, 97, 65, options, &stats));
+    TEST_ASSERT_EQUAL_UINT(0, probe.rows);
+    AssertArtworkFailure(truncated, artwork::DecodeStatus::kIncomplete);
+  }
+  auto corrupt = jpeg;
+  corrupt[restart + 1] = 0xd7; // Restart sequence must begin at RST0.
+  ProgressiveProbe probe;
+  options = ProgressiveOptions(&probe);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MALFORMED,
+      DecodeProgressiveFixture(corrupt, 97, 65, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(0, probe.rows);
+  AssertArtworkFailure(corrupt, artwork::DecodeStatus::kMalformed);
+}
+
+static void test_progressive_memory_and_work_limits() {
+  const auto jpeg = MakeLibraryJpeg(129, 131, JpegFixtureFormat::k420);
+  ProgressiveProbe success;
+  auto options = ProgressiveOptions(&success);
+  pixoo_jpeg_statistics stats{};
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  const size_t peak = stats.peak_memory;
+  for (const size_t budget : {size_t{1}, size_t{2048}, peak / 2, peak - 1}) {
+    ProgressiveProbe probe;
+    options = ProgressiveOptions(&probe);
+    options.memory_limit = budget;
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MEMORY,
+        DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  }
+  ProgressiveProbe exact;
+  options = ProgressiveOptions(&exact);
+  options.memory_limit = peak;
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  ProgressiveProbe clamped;
+  options = ProgressiveOptions(&clamped);
+  options.memory_limit = PIXOO_JPEG_MEMORY_LIMIT + size_t{1};
+  options.scan_limit = PIXOO_JPEG_SCAN_LIMIT + 1;
+  options.time_limit_ms = 10001;
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_SUCCESS,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(peak, stats.peak_memory);
+  ProgressiveProbe limited;
+  options = ProgressiveOptions(&limited);
+  options.scan_limit = 1;
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_WORK_LIMIT,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(0, limited.rows);
+  ProgressiveProbe timed;
+  timed.delay_once = true;
+  options = ProgressiveOptions(&timed);
+  options.time_limit_ms = 1;
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_WORK_LIMIT,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(0, timed.rows);
+  // Scaled output is small, but full-resolution coefficients exceed the cap.
+  const auto large = MakeLibraryJpeg(2049, 2049, JpegFixtureFormat::kGray);
+  TEST_ASSERT_LESS_THAN_UINT(artwork::kMaxEncodedBytes, large.size());
+  ProgressiveProbe large_probe;
+  options = ProgressiveOptions(&large_probe);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_MEMORY,
+      DecodeProgressiveFixture(large, 2049, 2049, options, &stats));
+  AssertArtworkFailure(large, artwork::DecodeStatus::kOutOfMemory);
+  // The inspector's scan bound is independent of the entropy decoder. All
+  // preceding scan headers have legal, non-overlapping coefficient history.
+  std::vector<uint8_t> many{0xff, 0xd8};
+  AppendJpegSegment(&many, 0xc2, {8, 0, 8, 0, 8, 1, 1, 0x11, 0});
+  AppendJpegSegment(&many, 0xda, {1, 1, 0, 0, 0, 2});
+  many.push_back(0);
+  for (uint8_t c = 1; c <= 63; ++c) {
+    AppendJpegSegment(&many, 0xda, {1, 1, 0, c, c, 0});
+    many.push_back(0);
+  }
+  AppendJpegSegment(&many, 0xda, {1, 1, 0, 0, 0, 0x21});
+  many.insert(many.end(), {0, 0xff, 0xd9});
+  AssertArtworkFailure(many, artwork::DecodeStatus::kWorkLimitExceeded);
+}
+
+static void test_progressive_cancellation_scan_and_row_output() {
+  const auto jpeg = MakeLibraryJpeg(129, 131, JpegFixtureFormat::k422);
+  pixoo_jpeg_statistics stats{};
+  for (unsigned at : {1u, 4u, 12u}) {
+    ProgressiveProbe probe;
+    probe.cancel_at = at;
+    const auto options = ProgressiveOptions(&probe);
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_CANCELLED,
+        DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+    TEST_ASSERT_EQUAL_UINT(at, probe.calls);
+    TEST_ASSERT_EQUAL_UINT(0, probe.rows); // Cancellation during scan consumption.
+    CancellationProbe adapter{0, at};
+    AssertArtworkFailure(jpeg, artwork::DecodeStatus::kCancelled, &adapter);
+  }
+  ProgressiveProbe rows;
+  rows.cancel_after_rows = 3;
+  auto options = ProgressiveOptions(&rows);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_CANCELLED,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(3, rows.rows);
+  TEST_ASSERT_GREATER_THAN_UINT(1, stats.scans);
+  // The adapter checks twice per 65-pixel output row as well as the core's
+  // checkpoints. A completed dry run supplies a stable late-output threshold.
+  std::array<uint16_t, artwork::kArtworkPixelCount> output{};
+  CancellationProbe count{0, size_t(-1)};
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(artwork::DecodeStatus::kSuccess),
+      static_cast<int>(artwork::DecodeArtwork(jpeg.data(), jpeg.size(),
+          output.data(), output.size(), nullptr, CancelAtCall, &count)));
+  CancellationProbe late{0, count.calls - 10};
+  AssertArtworkFailure(jpeg, artwork::DecodeStatus::kCancelled, &late);
+  ProgressiveProbe rejected;
+  rejected.reject_row = true;
+  options = ProgressiveOptions(&rejected);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_OUTPUT_FAILED,
+      DecodeProgressiveFixture(jpeg, 129, 131, options, &stats));
+  TEST_ASSERT_EQUAL_UINT(1, rejected.rows);
+  auto incomplete = jpeg;
+  incomplete.pop_back();
+  CancellationProbe validation_first{0, 1};
+  AssertArtworkFailure(incomplete, artwork::DecodeStatus::kIncomplete, &validation_first);
+  TEST_ASSERT_EQUAL_UINT(0, validation_first.calls);
+}
+
+static void test_progressive_internal_invalid_and_unsupported_modes() {
+  pixoo_jpeg_statistics stats{};
+  for (const auto format : {JpegFixtureFormat::kGray, JpegFixtureFormat::kCmyk}) {
+    const bool progressive = format != JpegFixtureFormat::kGray;
+    const auto jpeg = MakeLibraryJpeg(65, 67, format, progressive);
+    ProgressiveProbe probe;
+    const auto options = ProgressiveOptions(&probe);
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID,
+        DecodeProgressiveFixture(jpeg, 65, 67, options, &stats));
+    TEST_ASSERT_EQUAL_UINT(0, probe.rows);
+    if (format == JpegFixtureFormat::kCmyk)
+      AssertArtworkFailure(jpeg, artwork::DecodeStatus::kUnsupportedFormat);
+  }
+  const auto jpeg = MakeLibraryJpeg(65, 67, JpegFixtureFormat::kGray);
+  ProgressiveProbe probe;
+  auto options = ProgressiveOptions(&probe);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID,
+      DecodeProgressiveFixture(jpeg, 66, 67, options, &stats));
+  for (const uint32_t width : {0u, 4097u}) {
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID,
+        DecodeProgressiveFixture(jpeg, width, 67, options, &stats));
+  }
+  options.row = nullptr;
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID,
+      DecodeProgressiveFixture(jpeg, 65, 67, options, &stats));
+  options = ProgressiveOptions(&probe);
+  for (const size_t size : {size_t{0}, size_t{512 * 1024 + 1}}) {
+    TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID, pixoo_decode_progressive_jpeg(
+        jpeg.data(), size, 65, 67, &options, &stats));
+    TEST_ASSERT_EQUAL_UINT(0, stats.live_memory);
+  }
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID, pixoo_decode_progressive_jpeg(
+      nullptr, jpeg.size(), 65, 67, &options, &stats));
+  TEST_ASSERT_EQUAL_UINT(0, stats.live_memory);
+  TEST_ASSERT_EQUAL_INT(PIXOO_JPEG_INVALID, pixoo_decode_progressive_jpeg(
+      jpeg.data(), jpeg.size(), 65, 67, nullptr, &stats));
+  TEST_ASSERT_EQUAL_UINT(0, stats.live_memory);
+}
+
 static void test_record_and_redaction() {
   static_assert(std::is_trivially_copyable<cfg::ConfigRecord>::value, "preference record");
   static_assert(sizeof(cfg::ConfigRecord::entity_id) == 97, "entity field");
@@ -898,6 +1600,15 @@ int RunNowPlayingAdapterTests() {
   RUN_TEST(test_actual_baseline_jpeg_decode_and_rejections);
   RUN_TEST(test_jpeg_reduced_decode_callback_tiling);
   RUN_TEST(test_jpeg_decode_cancellation);
+  RUN_TEST(test_progressive_final_image_formats_scaling_and_detail);
+  RUN_TEST(test_libjpeg_foreign_client_data);
+  RUN_TEST(test_progressive_rgb_colorspace_full_detail);
+  RUN_TEST(test_progressive_inspector_scan_validation);
+  RUN_TEST(test_progressive_entropy_corruption_and_cleanup);
+  RUN_TEST(test_progressive_restart_markers_and_scan_truncation);
+  RUN_TEST(test_progressive_memory_and_work_limits);
+  RUN_TEST(test_progressive_cancellation_scan_and_row_output);
+  RUN_TEST(test_progressive_internal_invalid_and_unsupported_modes);
   RUN_TEST(test_record_and_redaction);
   return UNITY_END();
 }

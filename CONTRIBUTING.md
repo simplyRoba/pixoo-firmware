@@ -4,11 +4,12 @@
 
 The documented commands use a POSIX shell and are supported on macOS and Ubuntu.
 Windows is untested. Use Python 3.12 to match CI. Native tests and reaction-art
-generation also require a C++ compiler and Cairo:
+generation require a C++ compiler and Cairo. The host render target also requires
+a C compiler, Make, and CMake >= 3.15 on `PATH`:
 
-- macOS: install the Xcode command-line tools and `brew install cairo`;
-- Ubuntu: install `build-essential`, `libcairo2-dev`, `pkg-config`, and the Python
-  venv package for the selected interpreter.
+- macOS: install the Xcode command-line tools and `brew install cairo cmake`;
+- Ubuntu: install `build-essential`, `cmake`, `libcairo2-dev`, `pkg-config`, and
+  the Python venv package for the selected interpreter.
 
 Create the development environment from the repository root:
 
@@ -60,7 +61,21 @@ The native suites test the framework-independent protocol, application-policy,
 and content layers. Configuration tests validate the production composition and
 expected failures for invalid wiring or schema combinations. The host render
 target exercises the real renderer, fonts, deterministic animation states, and
-now-playing adapter and image-decoder fixtures.
+now-playing adapter and image-decoder fixtures, including full progressive JPEG
+output and resource-limit failures. Host results and ESP32 compilation do not
+establish on-device progressive decode latency or memory availability; those
+require hardware verification.
+
+The host render target runs `tools/build-libjpeg-host.py` as a PlatformIO
+prebuild hook. It downloads the pinned libjpeg-turbo 3.2.0 release archive,
+verifies its SHA-256, and uses native CMake with `Unix Makefiles` to build the
+static libjpeg API library with `WITH_JPEG8=ON` and SIMD disabled. TurboJPEG,
+command-line tools, and upstream tests are disabled. The archive, extracted
+source, build, and installation are cached under
+`esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-render-test/libjpeg-turbo/`;
+the first build requires network access. This generated tree is not a checked-in
+source input. Upstream license notices retained for distribution are documented
+in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md#libjpeg-turbo-320).
 
 ## Generated sources
 

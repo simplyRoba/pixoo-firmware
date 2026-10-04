@@ -352,6 +352,37 @@ one coherent presentation while visible replacement artwork is pending, then
 fades to the ready image or generated fallback. Entry requires completion of
 the initial Home Assistant attribute sweep, no staged metadata publication, a
 ready source snapshot, and ready artwork when an artwork identity exists.
+Unsupported images and decode failures resolve to deterministic fallback artwork,
+including during dashboard entry.
+
+`artwork_decoder.cpp` retains JPEGDEC 1.8.4 for baseline JPEG and uses
+libjpeg-turbo 3.2.0 for progressive JPEG. Both paths feed the centered area
+resampler for the final 64×64 image. `progressive_jpeg.c` consumes every scan,
+then performs one final scaled output pass; it does not publish partial-scan
+previews. Its C boundary contains libjpeg's `setjmp`/`longjmp` error handling
+without crossing C++ object lifetimes. JPEG support is restricted to 8-bit
+Huffman-coded grayscale, RGB, and YCbCr, with one or three components and ordinary
+sampling; arithmetic coding, lossless JPEG, and 12-bit precision are unsupported.
+PNG restrictions and operator-facing format limits are owned by the
+[manual](manual.md#wi-fi-home-assistant-and-api-credentials).
+
+Progressive decoding retains full-resolution source coefficient arrays even
+when the output transform is scaled. On ESP32, the project-owned allocator uses
+PSRAM only, with no internal-RAM fallback or backing store. The hard per-decode
+budget is 3.25 MiB, including the resampling accumulator, allocation headers,
+decoder state, row storage, and library allocations. The encoded body has a
+separate 512 KiB cap. The shared source-dimension ceiling is 4096 pixels per axis,
+not a guarantee that progressive images fit: coefficient storage can exhaust
+the budget well below that ceiling. Work is limited to 64 scans and a 10-second
+decode deadline checked cooperatively alongside cancellation and yielding;
+checkpoints are not a preemptive latency bound.
+
+The target pins the managed `espressif/libjpeg-turbo` component to `==3.2.0~1`.
+The project's complete memory backend replaces `jmemnobs`; the package's
+PSRAM-allocation wrappers are disabled. Host builds use the same upstream
+version through the [contributor build setup](../CONTRIBUTING.md#setup).
+Attribution and retained upstream notices are in
+[THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md#libjpeg-turbo-320).
 
 Open-Meteo and artwork share bounded HTTP retrieval: it rejects oversized
 advertised bodies, reads capped chunks to transfer completion, and ends the
