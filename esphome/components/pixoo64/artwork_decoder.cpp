@@ -12,7 +12,6 @@
 #include "progressive_jpeg.h"
 
 #ifdef ESP_PLATFORM
-#include "esphome/core/log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -581,7 +580,8 @@ int ProgressiveRow(void *opaque, uint32_t width, uint32_t height,
 DecodeStatus DecodeProgressiveJpeg(const uint8_t *encoded, size_t encoded_size,
                                    const ImageInfo &info, uint16_t *destination,
                                    CancellationCallback cancellation,
-                                   void *cancellation_context) {
+                                   void *cancellation_context,
+                                   DecodeStatistics *decode_statistics) {
   ScopedAccumulation accumulation;
   if (!accumulation.get()) return DecodeStatus::kOutOfMemory;
   SampleContext samples{};
@@ -599,16 +599,12 @@ DecodeStatus DecodeProgressiveJpeg(const uint8_t *encoded, size_t encoded_size,
   pixoo_jpeg_statistics statistics{};
   const auto status = pixoo_decode_progressive_jpeg(
       encoded, encoded_size, info.width, info.height, &options, &statistics);
-#ifdef ESP_PLATFORM
-  ESP_LOGD("pixoo64.artwork",
-           "progressive JPEG %ux%u: %u scans, %u bytes peak, %llu ms, status %u",
-           static_cast<unsigned>(info.width), static_cast<unsigned>(info.height),
-           statistics.scans,
-           static_cast<unsigned>(statistics.peak_memory +
-                                 kArtworkPixelCount * sizeof(PixelAccumulation)),
-           static_cast<unsigned long long>(statistics.elapsed_ms),
-           static_cast<unsigned>(status));
-#endif
+  if (decode_statistics != nullptr) {
+    decode_statistics->scans = statistics.scans;
+    decode_statistics->peak_memory = statistics.peak_memory +
+                                    kArtworkPixelCount * sizeof(PixelAccumulation);
+    decode_statistics->elapsed_ms = statistics.elapsed_ms;
+  }
   if (samples.cancelled || status == PIXOO_JPEG_CANCELLED)
     return DecodeStatus::kCancelled;
   switch (status) {
@@ -1019,7 +1015,10 @@ DecodeStatus DecodeArtwork(const uint8_t *encoded, size_t encoded_size,
                            uint16_t *destination, size_t destination_count,
                            ImageInfo *decoded_info,
                            CancellationCallback cancellation,
-                           void *cancellation_context) {
+                           void *cancellation_context,
+                           DecodeStatistics *statistics) {
+  if (statistics != nullptr)
+    *statistics = {};
   if (encoded == nullptr || destination == nullptr ||
       destination_count < kArtworkPixelCount || encoded_size == 0)
     return DecodeStatus::kInvalidArgument;
@@ -1037,7 +1036,7 @@ DecodeStatus DecodeArtwork(const uint8_t *encoded, size_t encoded_size,
                      cancellation_context);
   if (info.format == ImageMagic::kJpeg && info.jpeg_mode == JpegMode::kProgressive)
     return DecodeProgressiveJpeg(encoded, encoded_size, info, destination,
-                                 cancellation, cancellation_context);
+                                 cancellation, cancellation_context, statistics);
   if (info.format == ImageMagic::kJpeg)
     return DecodeJpeg(const_cast<uint8_t *>(encoded), encoded_size, info,
                       destination, cancellation, cancellation_context);

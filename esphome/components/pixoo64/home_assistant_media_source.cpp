@@ -883,9 +883,20 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
 
   artwork::DecodeStatus decode_status = artwork::DecodeStatus::kDecodeFailed;
   if (target != nullptr && current()) {
+    artwork::ImageInfo info{};
+    artwork::DecodeStatistics statistics{};
     decode_status = artwork::DecodeArtwork(
-        encoded, encoded_size, target, artwork::kArtworkPixelCount, nullptr,
-        ArtworkCancelled, &cancellation);
+        encoded, encoded_size, target, artwork::kArtworkPixelCount, &info,
+        ArtworkCancelled, &cancellation, &statistics);
+    if (info.jpeg_mode == artwork::JpegMode::kProgressive &&
+        statistics.peak_memory != 0) {
+      ESP_LOGD(TAG,
+               "progressive JPEG %ux%u: %u scans, %u bytes peak, %llu ms, status %u",
+               static_cast<unsigned>(info.width), static_cast<unsigned>(info.height),
+               statistics.scans, static_cast<unsigned>(statistics.peak_memory),
+               static_cast<unsigned long long>(statistics.elapsed_ms),
+               static_cast<unsigned>(decode_status));
+    }
   }
 
   uint8_t *previous_encoded = nullptr;

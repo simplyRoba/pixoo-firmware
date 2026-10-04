@@ -61,6 +61,12 @@ struct ImageInfo {
   JpegMode jpeg_mode{JpegMode::kUnknown};
 };
 
+struct DecodeStatistics {
+  size_t peak_memory{0};
+  uint64_t elapsed_ms{0};
+  unsigned scans{0};
+};
+
 struct CropRect {
   uint32_t x{0};
   uint32_t y{0};
@@ -91,6 +97,7 @@ DecodeStatus DecodeArtwork(const uint8_t *encoded, size_t encoded_size,
                            uint16_t *destination, size_t destination_count,
                            ImageInfo *decoded_info = nullptr,
                            CancellationCallback cancellation = nullptr,
-                           void *cancellation_context = nullptr);
+                           void *cancellation_context = nullptr,
+                           DecodeStatistics *statistics = nullptr);
 
 }  // namespace esphome::pixoo64::artwork
