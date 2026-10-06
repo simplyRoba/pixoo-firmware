@@ -16,6 +16,7 @@
 #include "dashboard/now_playing/now_playing_dashboard.h"
 #include "dashboard/weather/weather_icon.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
+#include "esphome/core/wake.h"
 #include "png.h"
 
 #ifdef USE_PIXOO64_NOW_PLAYING
@@ -1166,12 +1167,17 @@ void RenderTestDisplay::setup() {
       // proves an early stop without depending on host speed or ready() state.
       const auto marker = packet(0, latest_rgb, 3, true);
       for (int i = 0; i < 33; ++i) send_ddp(marker);
+      wake_request_take();
       ddp.loop();
+      ddp_valid &= wake_request_take();
       uint8_t peek;
       ddp_valid &= ddp.fd() >= 0 && ::recv(ddp.fd(), &peek, 1, MSG_PEEK) == 1;
       drain();
       ddp_valid &= ::recv(ddp.fd(), &peek, 1, MSG_PEEK) == -1 &&
                    (errno == EAGAIN || errno == EWOULDBLOCK);
+      wake_request_take();
+      ddp.loop();
+      ddp_valid &= !wake_request_take();  // An empty queue does not rearm service.
 
       const pixoo::Notification ddp_note{"Streaming", pixoo::Severity::kInfo};
       send_ddp(packet(3, first_rgb, 3, true));
@@ -1232,7 +1238,9 @@ void RenderTestDisplay::setup() {
       drain();
       send_ddp(packet(9, latest_rgb, 3, true));
       this->content_controller_->HideBaseContent(ddp.advance());
+      wake_request_take();
       ddp.loop();
+      ddp_valid &= !wake_request_take();
       ddp_valid &= !ddp.active() && ddp.fd() == -1 && ddp.ReadyToShow();
       send_ddp(packet(12, latest_rgb, 3, true));  // Hidden port has no listener.
       render_ddp();
@@ -1250,7 +1258,9 @@ void RenderTestDisplay::setup() {
       send_ddp(packet(0, latest_rgb, 3, true));
       drain();
       ddp.close_listener();  // Force a runtime receive error without test hooks in production.
+      wake_request_take();
       ddp.loop();
+      ddp_valid &= !wake_request_take();
       const uint32_t failed_at_ms = ddp.now();
       ddp_valid &= ddp.active() && ddp.fd() == -1 &&
                    ddp.status_has_warning() && !ddp.is_failed();

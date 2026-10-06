@@ -11,6 +11,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "esphome/core/wake.h"
 
 namespace esphome::pixoo64::dashboard {
 namespace {
@@ -173,17 +174,19 @@ void DdpDashboard::Service_(uint32_t now_ms) {
   if (this->listener_) {
     const uint32_t started_us = micros();
     bool receive_failed = false;
+    bool drain_exhausted = true;
     for (size_t attempt = 0; attempt < kReadAttempts; ++attempt) {
       if (uint32_t(micros() - started_us) >= kReceiveBudgetUs)
         break;
-      // Retry every loop even after a bounded drain; ready() need not report
-      // already-buffered packets again. UDP length zero is data, not EOF.
+      // ready() need not report already-buffered packets again.
+      // UDP length zero is data, not EOF.
       const ssize_t length = this->listener_->recvfrom(
           this->receive_buffer_.data(), this->receive_buffer_.size(), nullptr, nullptr);
       if (length >= 0) {
         this->metrics_.RecordDatagram(this->frames_->Apply(
             this->receive_buffer_.data(), static_cast<size_t>(length)));
       } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        drain_exhausted = false;
         break;
       } else if (errno != EINTR) {
         receive_failed = true;
@@ -191,8 +194,13 @@ void DdpDashboard::Service_(uint32_t now_ms) {
       }
     }
     this->metrics_.RecordReceivePass(uint32_t(micros() - started_us));
-    if (receive_failed)
+    if (receive_failed) {
       this->ListenerFailed_(now_ms);
+    } else if (drain_exhausted) {
+      // Arrival wakes are coalesced; queued packets do not emit a fresh event.
+      // Request another bounded pass without waiting for the idle loop interval.
+      wake_loop_threadsafe();
+    }
   }
   if (this->metrics_.IsDue(now_ms))
     this->ReportMetrics_(now_ms);

@@ -402,8 +402,10 @@ response before JSON parsing or image validation/decoding. A shared
 `DdpDashboard` services a non-blocking IPv4 UDP socket from its ESPHome component
 loop, independently of dashboard ticks. Each service pass permits at most 32 read
 attempts and checks a 1,000 µs budget before each read; this is a cooperative
-cutoff, not a preemptive latency bound. Socket failures close the listener and
-retry after one second while visible. Hiding or shutdown closes the listener and
+cutoff, not a preemptive latency bound. Reaching either limit requests another
+main-loop component pass; queued packets need no new arrival event to continue
+draining. A read that finds the queue empty does not request continuation. Socket
+failures close the listener and retry after one second while visible. Hiding or shutdown closes the listener and
 clears staged and published pixels. The ESP32 target configures a 32-datagram
 receive mailbox per UDP socket. Incoming packets wait there before application
 reads; a full mailbox still drops datagrams. The test sender emits nine packets
