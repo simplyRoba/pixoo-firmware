@@ -6,7 +6,7 @@ debug:
 
 pixoo64:
   frame_metrics:
-    window: 5s
+    window: 300s
     average:
       name: End-to-End Frame Time Average
     maximum:
@@ -15,7 +15,7 @@ pixoo64:
       name: Rendered FPS
 
 pixoo64_content:
-  update_interval: 5s
+  update_interval: 300s
   render_metrics:
     budget: 26ms
     average:

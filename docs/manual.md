@@ -240,7 +240,7 @@ For logs over the network or an attached 3.3 V UART adapter:
 The configured serial logger uses 115200 baud. The USB-C connector itself does
 not provide serial data.
 
-While DDP is visible, the `pixoo64.ddp` log tag reports five-second windows and a
+While DDP is visible, the `pixoo64.ddp` log tag reports five-minute windows and a
 final partial window when hidden:
 
 - `received` and `rejected` count datagrams, including empty or malformed input.
@@ -255,7 +255,7 @@ final partial window when hidden:
 - `internal_free_bytes` and `psram_free_bytes` sample available memory at report
   time on ESP32.
 
-The existing render and end-to-end frame sensors publish five-second windows.
+The existing render and end-to-end frame sensors publish five-minute windows.
 For controlled streams and sender pause/overload tests, use the
 [contributor test sender](../CONTRIBUTING.md#tools). None of these counters alone
 establishes packet loss or sustainable on-device throughput.

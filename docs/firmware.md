@@ -523,7 +523,7 @@ Boot, off, initialization, and waiting ticks are excluded. Base refreshes beneat
 a live notification contribute to renderer timing but not complete presented-frame
 timing when they do not call the panel.
 
-`DdpDashboard` aggregates five-second windows while visible and closes a final
+`DdpDashboard` aggregates five-minute windows while visible and closes a final
 partial window on hide or shutdown. Its standalone metrics model counts received
 and rejected datagrams, PUSH publications, and distinct published revisions drawn
 by the dashboard. Revision identity survives window boundaries and resets on
@@ -536,7 +536,7 @@ retry handling, and reporting. Loop-gap timing measures the interval between
 active component-loop entries, including other framework work and idle time;
 it is not CPU execution time. ESP32 free internal RAM and PSRAM are sampled only
 when a report is emitted. The deployed render and complete-frame sensor windows
-are also five seconds; their existing ownership and measurement boundaries are
+are also five minutes; their existing ownership and measurement boundaries are
 unchanged.
 
 Operator-facing logs, privacy behavior, and current limitations are documented in

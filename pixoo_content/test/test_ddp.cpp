@@ -422,8 +422,9 @@ static void test_metrics_latest_render_and_window_identity() {
   TEST_ASSERT_EQUAL_UINT32(2, s.publications);
   TEST_ASSERT_EQUAL_UINT32(1, s.rendered_revisions);
   TEST_ASSERT_EQUAL_UINT64(2, s.latest_revision);
-  TEST_ASSERT_FALSE(metrics.IsDue(5099));
-  TEST_ASSERT_TRUE(metrics.IsDue(5100));
+  TEST_ASSERT_EQUAL_UINT32(300000, MetricsWindow::kWindowMs);
+  TEST_ASSERT_FALSE(metrics.IsDue(100 + MetricsWindow::kWindowMs - 1));
+  TEST_ASSERT_TRUE(metrics.IsDue(100 + MetricsWindow::kWindowMs));
   TEST_ASSERT_TRUE(metrics.Close(6200, &s));
   TEST_ASSERT_EQUAL_UINT32(6100, s.elapsed_ms);
   metrics.RecordRender(true);
@@ -449,7 +450,8 @@ static void test_metrics_wrap_empty_pass_and_session_reset() {
   metrics.RecordReceivePass(10);
   metrics.RecordReceivePass(30);
   metrics.RecordSocketError();
-  TEST_ASSERT_TRUE(metrics.IsDue(5000));
+  TEST_ASSERT_FALSE(metrics.IsDue(0xFFFFFF00U + MetricsWindow::kWindowMs - 1));
+  TEST_ASSERT_TRUE(metrics.IsDue(0xFFFFFF00U + MetricsWindow::kWindowMs));
   TEST_ASSERT_TRUE(metrics.Close(5000, &s));
   TEST_ASSERT_EQUAL_UINT32(5256, s.elapsed_ms);
   TEST_ASSERT_EQUAL_UINT32(48, s.loop_gap_max_us);

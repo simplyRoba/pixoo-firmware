@@ -160,8 +160,10 @@ receiver FPS. Slow sender work skips scheduled slots rather than replaying them.
 Each UDP send has a 250 ms timeout; a send failure prints the final local summary
 and exits with a nonzero status. Hostname resolution is outside this timeout.
 Compare actual local send counts with the device's
-[DDP logs](docs/manual.md#logs) and existing frame-timing sensors. Device logs and
-captures stay outside this repository.
+[DDP logs](docs/manual.md#logs) and existing frame-timing sensors. Monitoring
+windows are five minutes; switching away from DDP flushes its final partial
+window for a shorter test. Frame-timing sensors retain their own publication
+schedule. Device logs and captures stay outside this repository.
 
 ## Render snapshots
 

@@ -27,7 +27,7 @@ struct MetricsSnapshot {
 // published revisions drawn by the dashboard, not frames presented by a panel.
 class MetricsWindow {
  public:
-  static constexpr uint32_t kWindowMs = 5000;
+  static constexpr uint32_t kWindowMs = 300000;
 
   void Reset(uint32_t now_ms) {
     started_ = true;

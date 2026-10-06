@@ -85,6 +85,8 @@ class EspHomeConfigTest(unittest.TestCase):
         self.assertIn("new(ddp_dashboard) pixoo64::dashboard::DdpDashboard();", generated)
         self.assertRegex(generated, r"App\.register_component_\(ddp_dashboard, \d+\);")
         self.assertIn("ddp_dashboard->set_frame_interval_ms(33);", generated)
+        self.assertIn("pixoo_firmware->set_frame_metrics_window_ms(300000);", generated)
+        self.assertIn("panel_content_controller->set_update_interval(300000);", generated)
         self.assertIn("panel_content_controller->add_dashboard(ddp_dashboard);", generated)
         sdkconfig = (self.fixture / "esphome/.esphome/build/pixoo64/"
                      "sdkconfig.pixoo64.esphomeinternal").read_text()
@@ -707,7 +709,7 @@ class EspHomeConfigTest(unittest.TestCase):
             (
                 "frame metrics window",
                 "esphome/monitoring.yaml",
-                "    window: 5s\n",
+                "    window: 300s\n",
                 "    window: 5000000s\n",
                 "frame metrics window must not exceed 2147483647 milliseconds",
             ),
@@ -739,7 +741,7 @@ class EspHomeConfigTest(unittest.TestCase):
                 "render metrics schedule",
                 "esphome/monitoring.yaml",
                 """pixoo64_content:
-  update_interval: 5s
+  update_interval: 300s
   render_metrics:
 """,
                 """pixoo64_content:
