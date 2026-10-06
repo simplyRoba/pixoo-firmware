@@ -86,6 +86,9 @@ class EspHomeConfigTest(unittest.TestCase):
         self.assertRegex(generated, r"App\.register_component_\(ddp_dashboard, \d+\);")
         self.assertIn("ddp_dashboard->set_frame_interval_ms(33);", generated)
         self.assertIn("panel_content_controller->add_dashboard(ddp_dashboard);", generated)
+        sdkconfig = (self.fixture / "esphome/.esphome/build/pixoo64/"
+                     "sdkconfig.pixoo64.esphomeinternal").read_text()
+        self.assertIn("CONFIG_LWIP_UDP_RECVMBOX_SIZE=32\n", sdkconfig)
 
     def test_ddp_registers_only_its_configured_udp_socket(self):
         script = (

@@ -174,8 +174,8 @@ over the live image; reactions freeze the displayed background while reception
 continues. Entry starts black, and the last published image remains when the
 sender stops. Hiding clears both the displayed image and unpublished writes.
 Partial updates retain other pixels; lost or reordered packets can leave stale
-regions, with no retransmission or sequence-based recovery. On-device throughput
-and LedFX interoperability have not been verified.
+regions, with no retransmission or sequence-based recovery. Sustainable streaming
+rates and LedFX interoperability have not been established.
 
 ## OTA update
 
@@ -198,7 +198,8 @@ encryption once that firmware is running. The CLI prefers encryption using
 uploads remain accepted; encryption is not required. An upgrade from ESPHome
 2026.7 firmware needs the existing `ota_password` for the first upload, which
 is plaintext. Keep the existing key and password unchanged for that upload.
-Encrypted OTA behavior has not been verified on this hardware. See the
+An encrypted OTA upload has succeeded on one Pixoo64 running ESPHome 2026.9.1.
+See the
 [ESPHome OTA reference](https://esphome.io/components/ota/esphome/#encryption)
 for protocol details.
 

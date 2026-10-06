@@ -106,6 +106,8 @@ esp32:
       CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "y"
       # Wi-Fi and lwIP buffers prefer PSRAM, falling back to internal RAM.
       CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: "y"
+      # UDP socket mailboxes accommodate nine-datagram DDP image bursts.
+      CONFIG_LWIP_UDP_RECVMBOX_SIZE: "32"
 
 # External PSRAM on the WROVER-IE module: quad chip at 40 MHz.
 psram:

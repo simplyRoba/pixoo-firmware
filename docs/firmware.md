@@ -404,10 +404,10 @@ loop, independently of dashboard ticks. Each service pass permits at most 32 rea
 attempts and checks a 1,000 µs budget before each read; this is a cooperative
 cutoff, not a preemptive latency bound. Socket failures close the listener and
 retry after one second while visible. Hiding or shutdown closes the listener and
-clears staged and published pixels. The ESP32 target inherits the framework's
-six-datagram UDP receive mailbox. Incoming packets wait there before application
-reads; a full mailbox drops datagrams. The test sender emits nine packets per
-full image. On-device burst-loss behavior is unverified.
+clears staged and published pixels. The ESP32 target configures a 32-datagram
+receive mailbox per UDP socket. Incoming packets wait there before application
+reads; a full mailbox still drops datagrams. The test sender emits nine packets
+per full image. This transport queue is separate from retained-image storage.
 
 The standalone DDP model owns two fixed 12,288-byte buffers. Byte-offset writes
 modify the assembly buffer; PUSH replaces the published image. Partial updates
