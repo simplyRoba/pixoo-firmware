@@ -36,6 +36,8 @@ LEDBoard` REV1.0 (`20210525`). Other board revisions and variants are unknown.
   playback progress
 - Text, weather, microphone equalizer, Game of Life, clock, stopwatch, and timer
   dashboards
+- Restricted [DDP image-input dashboard](docs/manual.md#controls-and-features);
+  on-device streaming performance and LedFX interoperability are unverified
 - Notifications, animated reactions, buzzer sounds, front-button controls, and
   diagnostic entities
 

@@ -156,9 +156,26 @@ resulting provisioning and settings state after reset.
 
 Available dashboards are text, now-playing, forecast weather, landscape weather,
 equalizer bars, equalizer waveform, Game of Life, split-flap clock, analog clock,
-binary clock, digital clock, stopwatch, and timer. Weather needs configured
+binary clock, digital clock, stopwatch, timer, and DDP. Weather needs configured
 location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
+
+Select `ddp` to receive RGB images over IPv4 UDP port 4048. Map 4,096 pixels in
+row-major order from the top-left corner, with one byte each for red, green, and
+blue. The receiver accepts DDP version 1 ordinary writes to destination ID 1,
+RGB24 type `0x0B` or legacy LedFX type `0x01`, and at most 1,440 payload bytes per
+packet. PUSH publishes the accumulated image; a zero-length PUSH is supported.
+Timecodes, queries, replies, storage commands, and other types or destinations
+are rejected.
+
+Reception starts when the dashboard becomes visible and stops when it is hidden,
+including display-off and firmware-update presentation. Notifications remain
+over the live image; reactions freeze the displayed background while reception
+continues. Entry starts black, and the last published image remains when the
+sender stops. Hiding clears both the displayed image and unpublished writes.
+Partial updates retain other pixels; lost or reordered packets can leave stale
+regions, with no retransmission or sequence-based recovery. On-device throughput
+and LedFX interoperability have not been verified.
 
 ## OTA update
 
@@ -222,6 +239,26 @@ For logs over the network or an attached 3.3 V UART adapter:
 The configured serial logger uses 115200 baud. The USB-C connector itself does
 not provide serial data.
 
+While DDP is visible, the `pixoo64.ddp` log tag reports five-second windows and a
+final partial window when hidden:
+
+- `received` and `rejected` count datagrams, including empty or malformed input.
+- `publications` counts accepted PUSH commands, not complete-frame coverage.
+  `rendered_revisions` counts distinct latest images drawn, not panel FPS;
+  reactions can pause drawing while publications continue. `latest_revision` is
+  the publication counter for the current visible session.
+- `receive_avg_us` and `receive_max_us` measure receive passes, including empty
+  reads. `loop_gap_max_us` is the longest interval between active receiver-loop
+  entries, including other work and idle time. `socket_errors` counts listener
+  setup and receive failures.
+- `internal_free_bytes` and `psram_free_bytes` sample available memory at report
+  time on ESP32.
+
+The existing render and end-to-end frame sensors publish five-second windows.
+For controlled streams and sender pause/overload tests, use the
+[contributor test sender](../CONTRIBUTING.md#tools). None of these counters alone
+establishes packet loss or sustainable on-device throughput.
+
 ## Troubleshooting
 
 - **No serial response or flash connection:** confirm ROM download mode, common
@@ -251,8 +288,13 @@ not provide serial data.
 
 ## Privacy and limitations
 
-The configuration contains no Divoom cloud client, MQTT client, web server, or
-raw-frame API. Weather requests go to `https://api.open-meteo.com/v1/forecast`
+The configuration contains no Divoom cloud client, MQTT client, or web server.
+DDP input is unauthenticated and unencrypted; any sender that can reach UDP port
+4048 can supply pixels while the DDP dashboard is visible. Use only on a trusted
+network and do not expose this port to the Internet. DDP does not grant control
+over dashboard selection, panel power, brightness, or native-API actions.
+
+Weather requests go to `https://api.open-meteo.com/v1/forecast`
 and include latitude and longitude rounded to four decimal places plus weather
 query fields. The request sends no credentials.
 
@@ -268,7 +310,7 @@ The shared HTTP client follows no redirects, and TLS certificate
 verification is disabled for weather and artwork. SNTP is enabled; its server is
 not specified here.
 
-Current limitations include no SD-card reading, no raw RGB streaming API, no
-Divoom app/cloud compatibility, no panel-MCU reflashing, disabled HTTP certificate
+Current limitations include no SD-card reading, no Home Assistant raw-frame API,
+no Divoom app/cloud compatibility, no panel-MCU reflashing, disabled HTTP certificate
 verification, and no full-operation HTTP cancellation. Hardware compatibility
 beyond the documented target is unknown.

@@ -69,6 +69,50 @@ class EspHomeConfigTest(unittest.TestCase):
         result = self.run_config(self.fixture)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_ddp_catalog_and_codegen(self):
+        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
+        self.assertEqual(production.count("    - platform: ddp\n"), 1)
+        self.assertIn("      dashboard_id: ddp\n", production)
+        self.assertIn("      - ddp\n", production)
+        self.assertIn("  default_dashboard: clock_analog\n", production)
+        self.assertIn("    initial_option: clock_analog\n", production)
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+        self.assertIn("new(ddp_dashboard) pixoo64::dashboard::DdpDashboard();", generated)
+        self.assertRegex(generated, r"App\.register_component_\(ddp_dashboard, \d+\);")
+        self.assertIn("ddp_dashboard->set_frame_interval_ms(33);", generated)
+        self.assertIn("panel_content_controller->add_dashboard(ddp_dashboard);", generated)
+
+    def test_ddp_registers_only_its_configured_udp_socket(self):
+        script = (
+            "from pathlib import Path; from esphome.core import CORE; "
+            "from esphome.config import read_config; "
+            "from esphome.components.socket import get_socket_counts; "
+            "CORE.config_path = Path('esphome/pixoo64.yaml').resolve(); "
+            "assert read_config({}) is not None; "
+            "print(get_socket_counts().udp_details)"
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            shutil.copytree(self.fixture, repo)
+            for configured in (True, False):
+                with self.subTest(configured=configured):
+                    if not configured:
+                        path = repo / "esphome/pixoo64.yaml"
+                        text = path.read_text()
+                        text = re.sub(r"    - platform: ddp\n(?:      .*\n)+", "", text)
+                        path.write_text(text.replace("      - ddp\n", ""))
+                    result = subprocess.run(
+                        [sys.executable, "-c", script], cwd=repo,
+                        text=True, capture_output=True, timeout=60, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual("pixoo64_content.ddp=1" in result.stdout, configured)
+
     def test_now_playing_codegen_pins_libjpeg_and_disables_allocator_wrappers(self):
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
@@ -382,6 +426,37 @@ class EspHomeConfigTest(unittest.TestCase):
     def test_final_validators_reject_invalid_board_wiring(self):
         cases = (
             (
+                "duplicate DDP dashboard",
+                "esphome/pixoo64.yaml",
+                "      dashboard_id: ddp\n",
+                "      dashboard_id: ddp\n"
+                "    - platform: ddp\n"
+                "      id: ddp_dashboard_other\n"
+                "      dashboard_id: ddp_other\n",
+                "at most one ddp dashboard may be configured",
+            ),
+            (
+                "DDP select catalog",
+                "esphome/pixoo64.yaml",
+                "      - ddp\n",
+                "",
+                "dashboard select options must exactly match the selected renderer dashboard IDs",
+            ),
+            (
+                "DDP frame interval",
+                "esphome/pixoo64.yaml",
+                "      dashboard_id: ddp\n",
+                "      dashboard_id: ddp\n      frame_interval: 0ms\n",
+                "frame_interval must be at least 1 ms",
+            ),
+            (
+                "DDP rejects unsupported port setting",
+                "esphome/pixoo64.yaml",
+                "      dashboard_id: ddp\n",
+                "      dashboard_id: ddp\n      port: 4048\n",
+                "[port] is an invalid option",
+            ),
+            (
                 "solar brightness missing sun calculator",
                 "esphome/pixoo64.yaml",
                 "    sun: panel_sun\n\n# Dashboard rendering and content sources.",
@@ -629,7 +704,7 @@ class EspHomeConfigTest(unittest.TestCase):
             (
                 "frame metrics window",
                 "esphome/monitoring.yaml",
-                "    window: 300s\n",
+                "    window: 5s\n",
                 "    window: 5000000s\n",
                 "frame metrics window must not exceed 2147483647 milliseconds",
             ),
@@ -661,7 +736,7 @@ class EspHomeConfigTest(unittest.TestCase):
                 "render metrics schedule",
                 "esphome/monitoring.yaml",
                 """pixoo64_content:
-  update_interval: 300s
+  update_interval: 5s
   render_metrics:
 """,
                 """pixoo64_content:

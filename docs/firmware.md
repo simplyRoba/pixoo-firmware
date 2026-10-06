@@ -163,8 +163,8 @@ pixoo_app/
 
 pixoo_content/
   include/ src/        framework-independent weather, now-playing, equalizer,
-                       clock, and Game of Life models
-  test/                content-model, animation, DSP, and clock tests
+                       clock, Game of Life, and DDP models
+  test/                content-model, animation, DSP, clock, and DDP tests
 
 esphome/
   components/pixoo64/          ESPHome application, panel, weather, now-playing,
@@ -220,8 +220,9 @@ This layer contains models that can be compiled and tested without ESPHome:
 - now-playing snapshots, metadata publication policy, playback progress,
   media/artwork identities, text timing, and deterministic fallback artwork;
 - microphone spectrum analysis and equalizer level processing;
-- split-flap, analog, binary, and digital clock animation state; and
-- the bounded 64×64 Game of Life board.
+- split-flap, analog, binary, and digital clock animation state;
+- the bounded 64×64 Game of Life board; and
+- DDP byte-offset RGB writes and retained-image publication on PUSH.
 
 These models do not draw through ESPHome. The concrete dashboard classes under
 `esphome/components/pixoo64_content/` combine them with fonts, display drawing,
@@ -287,7 +288,9 @@ application enables capture only while the selected base dashboard requires it.
 
 Each configured dashboard has a stable ID and implements the shared `Dashboard`
 interface. ESPHome's typed schema admits the closed dashboard families `text`,
-`now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
+`ddp`, `now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
+The `ddp` dashboard enters immediately with black pixels and scopes reception to
+its visible lifetime. At most one DDP dashboard may be configured.
 Final validation checks that
 the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.
@@ -396,6 +399,26 @@ response before JSON parsing or image validation/decoding. A shared
 `HttpRequestGate` serializes ESPHome's HTTP client only from `get()` through
 `container->end()`; it does not cover parsing or decoding.
 
+`DdpDashboard` services a non-blocking IPv4 UDP socket from its ESPHome component
+loop, independently of dashboard ticks. Each service pass permits at most 32 read
+attempts and checks a 1,000 µs budget before each read; this is a cooperative
+cutoff, not a preemptive latency bound. Socket failures close the listener and
+retry after one second while visible. Hiding or shutdown closes the listener and
+clears staged and published pixels. The ESP32 target inherits the framework's
+six-datagram UDP receive mailbox. Incoming packets wait there before application
+reads; a full mailbox drops datagrams. The test sender emits nine packets per
+full image. On-device burst-loss behavior is unverified.
+
+The standalone DDP model owns two fixed 12,288-byte buffers. Byte-offset writes
+modify the assembly buffer; PUSH replaces the published image. Partial updates
+retain other bytes, and sequence numbers do not group frames. There is no image
+queue or packet-loss recovery. Visibility, reception, publication, and rendering
+share the main loop, so no cross-task handoff is required. The model is allocated
+once on first entry in PSRAM, with no internal-RAM fallback. Allocation failure
+leaves a black presentation with a component warning and no listener. The
+receiver's restricted wire contract and network exposure are documented in the
+[manual](manual.md#controls-and-features).
+
 The microphone adapter captures I2S samples into retained windows. Completed
 windows pass through the framework-independent spectrum and equalizer processors,
 then normalized levels are sent to every configured equalizer face. Rendering
@@ -463,8 +486,9 @@ policy in YAML. Deployment and operation are documented in the
 - Keep framework-independent policy and models covered by native tests; use host
   rendering only for integration behavior that depends on fonts and drawing.
 
-There is intentionally no external or Home Assistant raw-frame streaming API.
-All visual content exposed by the deployed firmware is rendered on the device.
+External raw-frame input is confined to the DDP dashboard and follows the normal
+renderer and panel-output path. Network arrival does not trigger presentation or
+bypass application policy. There is no Home Assistant raw-frame streaming API.
 
 Contributor-facing rules for YAML logic, required checks, generators, and visual
 snapshot updates are in [CONTRIBUTING.md](../CONTRIBUTING.md).
@@ -478,9 +502,9 @@ be tested at its natural level:
 |---|---|
 | `pixoo_protocol` | Native tests for frame encoding, framebuffer geometry, and UART parsing. |
 | `pixoo_app` | Native tests for lifecycle and product policy using fake ports. |
-| `pixoo_content` | Native tests for weather, now-playing, DSP, clock, and Game of Life models. |
+| `pixoo_content` | Native tests for weather, now-playing, DSP, clock, Game of Life, DDP assembly, and DDP metrics. |
 | ESPHome composition | Configuration tests for schemas, references, and expected invalid wiring. |
-| Host integration | Deterministic render snapshots plus now-playing configuration, artwork-policy, and bounded JPEG/PNG decoder fixtures. |
+| Host integration | Deterministic render snapshots, DDP UDP reception and application lifecycle, plus now-playing configuration, artwork-policy, and bounded JPEG/PNG decoder fixtures. |
 | Hardware adapters | ESP32 target compilation plus behavior on the documented board. |
 
 The commands and snapshot-update procedure are owned by
@@ -496,6 +520,22 @@ publish windowed diagnostics rather than updating ESPHome entities per frame.
 Boot, off, initialization, and waiting ticks are excluded. Base refreshes beneath
 a live notification contribute to renderer timing but not complete presented-frame
 timing when they do not call the panel.
+
+`DdpDashboard` aggregates five-second windows while visible and closes a final
+partial window on hide or shutdown. Its standalone metrics model counts received
+and rejected datagrams, PUSH publications, and distinct published revisions drawn
+by the dashboard. Revision identity survives window boundaries and resets on
+entry. Publication does not establish full-frame coverage; drawing does not
+establish panel presentation. Reactions permit reception without increasing the
+rendered-revision count until the base resumes rendering.
+
+Receive-pass timing includes empty non-blocking reads and excludes socket setup,
+retry handling, and reporting. Loop-gap timing measures the interval between
+active component-loop entries, including other framework work and idle time;
+it is not CPU execution time. ESP32 free internal RAM and PSRAM are sampled only
+when a report is emitted. The deployed render and complete-frame sensor windows
+are also five seconds; their existing ownership and measurement boundaries are
+unchanged.
 
 Operator-facing logs, privacy behavior, and current limitations are documented in
 the [manual](manual.md).
