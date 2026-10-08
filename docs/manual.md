@@ -160,22 +160,15 @@ binary clock, digital clock, stopwatch, timer, and DDP. Weather needs configured
 location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
 
-Select `ddp` to receive RGB images over IPv4 UDP port 4048. Map 4,096 pixels in
-row-major order from the top-left corner, with one byte each for red, green, and
-blue. The receiver accepts DDP version 1 ordinary writes to destination ID 1,
-RGB24 type `0x0B` or legacy LedFX type `0x01`, and at most 1,440 payload bytes per
-packet. PUSH publishes the accumulated image; a zero-length PUSH is supported.
-Timecodes, queries, replies, storage commands, and other types or destinations
-are rejected.
+Select `ddp` to display images from a DDP sender. Configure the sender with the
+display's IPv4 address, UDP port 4048, destination ID 1, and 4,096 RGB pixels
+arranged as 64 rows of 64 pixels, left-to-right from the top-left corner.
 
-Reception starts when the dashboard becomes visible and stops when it is hidden,
-including display-off and firmware-update presentation. Notifications remain
-over the live image; reactions freeze the displayed background while reception
-continues. Entry starts black, and the last published image remains when the
-sender stops. Hiding clears both the displayed image and unpublished writes.
-Partial updates retain other pixels; lost or reordered packets can leave stale
-regions, with no retransmission or sequence-based recovery. Sustainable streaming
-rates and LedFX interoperability have not been established.
+Reception is active only while DDP is visible. Entry starts black; stopping the
+sender leaves the last image until you switch dashboards or turn the display off.
+Lost or reordered packets can leave stale regions; there is no retransmission.
+The supported [DDP packet contract](firmware.md#54-external-data-and-microphone-work)
+is documented in the firmware reference.
 
 ## OTA update
 
@@ -198,8 +191,7 @@ encryption once that firmware is running. The CLI prefers encryption using
 uploads remain accepted; encryption is not required. An upgrade from ESPHome
 2026.7 firmware needs the existing `ota_password` for the first upload, which
 is plaintext. Keep the existing key and password unchanged for that upload.
-An encrypted OTA upload has succeeded on one Pixoo64 running ESPHome 2026.9.1.
-See the
+Encrypted OTA behavior has not been verified on this hardware. See the
 [ESPHome OTA reference](https://esphome.io/components/ota/esphome/#encryption)
 for protocol details.
 
@@ -239,26 +231,6 @@ For logs over the network or an attached 3.3 V UART adapter:
 
 The configured serial logger uses 115200 baud. The USB-C connector itself does
 not provide serial data.
-
-While DDP is visible, the `pixoo64.ddp` log tag reports five-minute windows and a
-final partial window when hidden:
-
-- `received` and `rejected` count datagrams, including empty or malformed input.
-- `publications` counts accepted PUSH commands, not complete-frame coverage.
-  `rendered_revisions` counts distinct latest images drawn, not panel FPS;
-  reactions can pause drawing while publications continue. `latest_revision` is
-  the publication counter for the current visible session.
-- `receive_avg_us` and `receive_max_us` measure receive passes, including empty
-  reads. `loop_gap_max_us` is the longest interval between active receiver-loop
-  entries, including other work and idle time. `socket_errors` counts listener
-  setup and receive failures.
-- `internal_free_bytes` and `psram_free_bytes` sample available memory at report
-  time on ESP32.
-
-The existing render and end-to-end frame sensors publish five-minute windows.
-For controlled streams and sender pause/overload tests, use the
-[contributor test sender](../CONTRIBUTING.md#tools). None of these counters alone
-establishes packet loss or sustainable on-device throughput.
 
 ## Troubleshooting
 

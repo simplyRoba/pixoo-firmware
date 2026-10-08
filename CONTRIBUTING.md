@@ -64,12 +64,9 @@ and content layers. Configuration tests validate the production composition and
 expected failures for invalid wiring or schema combinations. The host render
 target exercises the real renderer, fonts, deterministic animation states, and
 now-playing adapter and image-decoder fixtures, including full progressive JPEG
-output and resource-limit failures. DDP tests exercise UDP reception through the
-real application and renderer, with synchronous recording panel output. Native
-DDP tests compare randomized packet sequences against an independent retained
-image model. Host results and ESP32 compilation do not establish on-device DDP
-burst reception, progressive decode latency, or memory availability; those require
-hardware verification.
+output and resource-limit failures. Host results and ESP32 compilation do not
+establish on-device progressive decode latency or memory availability; those
+require hardware verification.
 
 The host render target runs `tools/build-libjpeg-host.py` as a PlatformIO
 prebuild hook. It downloads the pinned libjpeg-turbo 3.2.0 release archive,
@@ -126,44 +123,11 @@ Device and capture work:
 - `tools/uart-capture.py` — passive UART boot-log capture.
 - `tools/notify-pixoo.py` — call the device `notify`, `reaction`, and
   `clear_overlay_queue` API actions over the network.
-- `tools/send-ddp.py` — send a finite, low-brightness RGB test pattern with a
-  moving stripe, orientation markers, and a binary frame counter; supports
-  pauses, temporary overload, and legacy LedFX data type.
 - `tools/decode-panel-spi.py` — decode a logic-analyzer capture into panel
   protocol frames; optionally dump a full-frame RGB payload.
 - `tools/read-sr-capture.py` — report the structure of a sigrok/PulseView `.sr`
   capture.
 - `tools/render-panel-frame.py` — render a 12288-byte RGB payload to a PNG.
-
-For DDP testing, use an installed build with the dashboard visible as described
-in the [manual](docs/manual.md#controls-and-features). Replace `DEVICE_IP` with
-the display's IPv4 address. Run 30-second streams at each input rate:
-
-```bash
-for fps in 10 30 60; do
-  .venv/bin/python tools/send-ddp.py --host DEVICE_IP --fps "$fps" --seconds 30
-done
-```
-
-Exercise sender pause/resume and overload recovery in one run:
-
-```bash
-.venv/bin/python tools/send-ddp.py --host DEVICE_IP --fps 30 --seconds 30 \
-  --pause-at 10 --pause-seconds 2 \
-  --overload-at 20 --overload-fps 120 --overload-seconds 2
-```
-
-Event times are elapsed wall time; a pause takes precedence over an overlapping
-overload. `--legacy-type` exercises the legacy sender type. Local summaries are
-cumulative and include pauses in elapsed time; they do not establish delivery or
-receiver FPS. Slow sender work skips scheduled slots rather than replaying them.
-Each UDP send has a 250 ms timeout; a send failure prints the final local summary
-and exits with a nonzero status. Hostname resolution is outside this timeout.
-Compare actual local send counts with the device's
-[DDP logs](docs/manual.md#logs) and existing frame-timing sensors. Monitoring
-windows are five minutes; switching away from DDP flushes its final partial
-window for a shorter test. Frame-timing sensors retain their own publication
-schedule. Device logs and captures stay outside this repository.
 
 ## Render snapshots
 
