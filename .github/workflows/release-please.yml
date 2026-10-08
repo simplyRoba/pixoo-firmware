@@ -1,0 +1,12 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release-please:
+    permissions:
+      contents: read
+    uses: simplyRoba/.github/.github/workflows/rust-release-please.yml@v1
+    secrets: inherit
