@@ -1,5 +1,5 @@
-platformio==6.1.19
+platformio==6.2.0
 esphome==2026.9.1
-aioesphomeapi==46.3.0
+aioesphomeapi==46.6.0
 CairoSVG==2.9.1
 Pillow==12.3.0
