@@ -8,6 +8,7 @@
 #include "blend_canvas.h"
 #include "dashboard/clock/clock_dashboard.h"
 #include "dashboard/dashboard.h"
+#include "dashboard/ddp_dashboard.h"
 #include "dashboard/equalizer/equalizer_dashboard.h"
 #include "dashboard/game_of_life/game_of_life_dashboard.h"
 #include "dashboard/now_playing/now_playing_dashboard.h"

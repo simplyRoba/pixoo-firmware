@@ -287,7 +287,7 @@ application enables capture only while the selected base dashboard requires it.
 
 Each configured dashboard has a stable ID and implements the shared `Dashboard`
 interface. ESPHome's typed schema admits the closed dashboard families `text`,
-`now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
+`ddp`, `now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
 Final validation checks that
 the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.
@@ -396,6 +396,28 @@ response before JSON parsing or image validation/decoding. A shared
 `HttpRequestGate` serializes ESPHome's HTTP client only from `get()` through
 `container->end()`; it does not cover parsing or decoding.
 
+`DdpDashboard` services a non-blocking IPv4 UDP socket on port 4048 from its
+ESPHome component loop, independently of rendering ticks. At most one DDP
+dashboard may be configured. `OnShow()` opens reception; `OnHide()` and shutdown
+close the socket and reset both image buffers. Each service pass permits at most
+32 read attempts and checks a 1,000 µs budget before each read. Exhausting either
+limit requests another main-loop pass; an empty queue does not. The budget is
+cooperative, not preemptive. Socket failures retry after one second while visible.
+The ESP32 UDP receive mailbox holds 32 datagrams; a full mailbox drops input.
+
+The receiver accepts DDP v1 ordinary writes to destination 1, RGB24 type `0x0B`
+or legacy type `0x01`, with at most 1,440 payload bytes. Timecodes, queries,
+replies, storage commands, and other types or destinations are rejected. Valid
+byte-offset writes update an assembly buffer; PUSH publishes it, including a
+zero-length PUSH. Partial writes retain other pixels. Sequence numbers do not
+group images; there is no completeness check, retransmission, or image queue.
+
+The standalone model owns two 12,288-byte buffers allocated once on first entry
+in PSRAM, with no internal-RAM fallback. Allocation failure leaves black content,
+a warning, and no listener. Reception, publication, and rendering share the main
+loop; no cross-task handoff is required. Operator behavior and network exposure
+are documented in the [manual](manual.md#controls-and-features).
+
 The microphone adapter captures I2S samples into retained windows. Completed
 windows pass through the framework-independent spectrum and equalizer processors,
 then normalized levels are sent to every configured equalizer face. Rendering
@@ -463,8 +485,9 @@ policy in YAML. Deployment and operation are documented in the
 - Keep framework-independent policy and models covered by native tests; use host
   rendering only for integration behavior that depends on fonts and drawing.
 
-There is intentionally no external or Home Assistant raw-frame streaming API.
-All visual content exposed by the deployed firmware is rendered on the device.
+External raw-frame input is confined to the DDP dashboard and follows the normal
+renderer and panel-output path. Network arrival does not trigger presentation or
+bypass application policy. There is no Home Assistant raw-frame streaming API.
 
 Contributor-facing rules for YAML logic, required checks, generators, and visual
 snapshot updates are in [CONTRIBUTING.md](../CONTRIBUTING.md).

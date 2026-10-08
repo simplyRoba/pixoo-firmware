@@ -5,7 +5,7 @@ import yaml
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-from esphome.components import display, font, sensor, text, time
+from esphome.components import display, font, sensor, socket, text, time
 from esphome.const import (
     CONF_FILE,
     CONF_GLYPHS,
@@ -42,7 +42,7 @@ CONF_RENDER_AVERAGE = "average"
 CONF_RENDER_MAX = "maximum"
 CONF_RENDER_OVER_BUDGET = "over_budget"
 
-AUTO_LOAD = ["time", "font", "sensor"]
+AUTO_LOAD = ["time", "font", "sensor", "socket"]
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 pixoo64_ns = cg.esphome_ns.namespace("pixoo64")
@@ -57,6 +57,7 @@ ContentController = content_ns.class_(
     "ContentController", display.Display, RenderPort, EqualizerLevelsSink
 )
 TextDashboard = dashboard_ns.class_("TextDashboard", Dashboard)
+DdpDashboard = dashboard_ns.class_("DdpDashboard", Dashboard, cg.Component)
 WeatherDashboard = dashboard_ns.class_("WeatherDashboard", Dashboard)
 # Closed weather-face vocabulary; each face is a WeatherDashboard subclass bound
 # to that face.
@@ -167,9 +168,21 @@ GAME_OF_LIFE_SCHEMA = cv.Schema(
         cv.Optional(CONF_SEED): cv.uint32_t,
     }
 )
+DDP_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(DdpDashboard),
+            cv.Required(CONF_DASHBOARD_ID): cv.string_strict,
+            cv.Optional(CONF_FRAME_INTERVAL, default="33ms"):
+                cv.positive_time_period_milliseconds,
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    socket.consume_sockets(1, "pixoo64_content.ddp", socket.SocketType.UDP),
+)
 ENTRY_SCHEMA = cv.typed_schema(
     {
         "text": TEXT_SCHEMA,
+        "ddp": DDP_SCHEMA,
         "weather": WEATHER_SCHEMA,
         "equalizer": EQUALIZER_SCHEMA,
         "clock": CLOCK_SCHEMA,
@@ -197,6 +210,8 @@ def validate_dashboard_config(config):
             raise cv.Invalid(
                 "frame_interval must fit a positive signed 32-bit millisecond value"
             )
+    if sum(entry[CONF_PLATFORM] == "ddp" for entry in config[CONF_DASHBOARDS]) > 1:
+        raise cv.Invalid("at most one ddp dashboard may be configured")
     now_playing_entries = [
         entry for entry in config[CONF_DASHBOARDS]
         if entry[CONF_PLATFORM] == "now_playing"
@@ -411,8 +426,19 @@ async def _build_game_of_life(entry):
     return dashboard
 
 
+async def _build_ddp(entry):
+    dashboard = cg.new_Pvariable(entry[CONF_ID])
+    await cg.register_component(dashboard, entry)
+    cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
+    cg.add(
+        dashboard.set_frame_interval_ms(entry[CONF_FRAME_INTERVAL].total_milliseconds)
+    )
+    return dashboard
+
+
 DASHBOARD_BUILDERS = {
     "text": _build_text,
+    "ddp": _build_ddp,
     "weather": _build_weather,
     "equalizer": _build_equalizer,
     "clock": _build_clock,

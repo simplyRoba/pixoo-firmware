@@ -156,9 +156,19 @@ resulting provisioning and settings state after reset.
 
 Available dashboards are text, now-playing, forecast weather, landscape weather,
 equalizer bars, equalizer waveform, Game of Life, split-flap clock, analog clock,
-binary clock, digital clock, stopwatch, and timer. Weather needs configured
+binary clock, digital clock, stopwatch, timer, and DDP. Weather needs configured
 location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
+
+Select `ddp` to display images from a DDP sender. Configure the sender with the
+display's IPv4 address, UDP port 4048, destination ID 1, and 4,096 RGB pixels
+arranged as 64 rows of 64 pixels, left-to-right from the top-left corner.
+
+Reception is active only while DDP is visible. Entry starts black; stopping the
+sender leaves the last image until you switch dashboards or turn the display off.
+Lost or reordered packets can leave stale regions; there is no retransmission.
+The supported [DDP packet contract](firmware.md#54-external-data-and-microphone-work)
+is documented in the firmware reference.
 
 ## OTA update
 
@@ -251,8 +261,13 @@ not provide serial data.
 
 ## Privacy and limitations
 
-The configuration contains no Divoom cloud client, MQTT client, web server, or
-raw-frame API. Weather requests go to `https://api.open-meteo.com/v1/forecast`
+The configuration contains no Divoom cloud client, MQTT client, or web server.
+DDP input is unauthenticated and unencrypted; any sender that can reach UDP port
+4048 can supply pixels while the DDP dashboard is visible. Use only on a trusted
+network and do not expose this port to the Internet. DDP does not grant control
+over dashboard selection, panel power, brightness, or native-API actions.
+
+Weather requests go to `https://api.open-meteo.com/v1/forecast`
 and include latitude and longitude rounded to four decimal places plus weather
 query fields. The request sends no credentials.
 
@@ -268,7 +283,7 @@ The shared HTTP client follows no redirects, and TLS certificate
 verification is disabled for weather and artwork. SNTP is enabled; its server is
 not specified here.
 
-Current limitations include no SD-card reading, no raw RGB streaming API, no
-Divoom app/cloud compatibility, no panel-MCU reflashing, disabled HTTP certificate
+Current limitations include no SD-card reading, no Home Assistant raw-frame API,
+no Divoom app/cloud compatibility, no panel-MCU reflashing, disabled HTTP certificate
 verification, and no full-operation HTTP cancellation. Hardware compatibility
 beyond the documented target is unknown.

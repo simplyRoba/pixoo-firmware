@@ -61,6 +61,8 @@ esphome:
     - ../pixoo_content/src/dashboard/clock/binary_clock.cpp
     - ../pixoo_content/include/dashboard/clock/digital_clock.h
     - ../pixoo_content/src/dashboard/clock/digital_clock.cpp
+    - ../pixoo_content/include/dashboard/ddp/ddp_frame.h
+    - ../pixoo_content/src/dashboard/ddp/ddp_frame.cpp
     - ../pixoo_content/include/dashboard/game_of_life/game_of_life.h
     - ../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp
     - ../pixoo_content/include/dashboard/equalizer/spectrum.h
@@ -103,6 +105,8 @@ esp32:
       CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "y"
       # Wi-Fi and lwIP buffers prefer PSRAM, falling back to internal RAM.
       CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: "y"
+      # UDP socket mailboxes accommodate nine-datagram DDP image bursts.
+      CONFIG_LWIP_UDP_RECVMBOX_SIZE: "32"
 
 # External PSRAM on the WROVER-IE module: quad chip at 40 MHz.
 psram:
@@ -326,6 +330,10 @@ pixoo64_content:
       panel_font: font_8
       panel_text: panel_content
 
+    - platform: ddp
+      id: ddp_dashboard
+      dashboard_id: ddp
+
     - platform: now_playing
       id: now_playing_dashboard
       dashboard_id: now_playing
@@ -445,6 +453,7 @@ select:
       - clock_digital
       - stopwatch
       - timer
+      - ddp
     initial_option: clock_analog
     optimistic: true
     restore_value: true

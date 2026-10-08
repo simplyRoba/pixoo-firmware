@@ -8,10 +8,15 @@
 #include <map>
 #include <numeric>
 #include <utility>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 
+#include "dashboard/ddp_dashboard.h"
 #include "dashboard/now_playing/now_playing_dashboard.h"
 #include "dashboard/weather/weather_icon.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
+#include "esphome/core/wake.h"
 #include "png.h"
 
 #ifdef USE_PIXOO64_NOW_PLAYING
@@ -1012,6 +1017,534 @@ void RenderTestDisplay::setup() {
     if (!lifecycle_valid) {
       std::printf("render test: FAILED dashboard visibility lifecycle\n");
       ++failures;
+    }
+
+    uint32_t ddp_clock_ms = 2000;
+    struct TestDdpDashboard final : pixoo64::dashboard::DdpDashboard {
+      explicit TestDdpDashboard(uint32_t &clock_ms) : clock_ms_(clock_ms) {}
+      uint32_t now() const { return this->clock_ms_; }
+      uint32_t advance(uint32_t elapsed_ms = 1) {
+        return this->clock_ms_ += elapsed_ms;
+      }
+      void OnShow(uint32_t now_ms) override {
+        this->clock_ms_ = std::max(this->clock_ms_, now_ms);
+        DdpDashboard::OnShow(this->clock_ms_);
+      }
+      void OnHide(uint32_t now_ms) override {
+        this->clock_ms_ = std::max(this->clock_ms_, now_ms);
+        DdpDashboard::OnHide(this->clock_ms_);
+      }
+      void loop() override { this->Service_(this->clock_ms_); }
+      void on_shutdown() override { this->Stop_(); }
+      void Render(display::Display &display) const override {
+        ++this->render_calls;
+        DdpDashboard::Render(display);
+      }
+      mutable size_t render_calls{0};
+      int fd() const { return this->listener_ ? this->listener_->get_fd() : -1; }
+      void close_listener() {
+        if (this->listener_ != nullptr)
+          this->listener_->close();
+      }
+     private:
+      uint32_t &clock_ms_;
+    } ddp(ddp_clock_ms);
+    ddp.set_id("__ddp");
+    bool ddp_valid = ddp.available() && ddp.ReadyToShow() &&
+                     ddp.HasPresentation() && !ddp.active() &&
+                     !ddp.requires_microphone() && ddp.frame_interval_ms() == 33;
+    ddp.Prepare(ddp.now());
+    ddp.Prepare(ddp.advance());
+    ddp_valid &= !ddp.active() && ddp.ReadyToShow();
+    ddp.CancelPreparation(ddp.advance());
+    ddp_valid &= !ddp.active();
+    ddp.OnShow(ddp.advance());
+    ddp_valid &= ddp.active();
+    ddp.OnHide(ddp.advance());
+    ddp_valid &= !ddp.active() && ddp.HasPresentation();
+
+    // Clear a colored display through the dashboard's ordinary drawing path.
+    std::fill(this->framebuffer_.begin(), this->framebuffer_.end(), 255);
+    ddp.Render(*this);
+    ddp_valid &= std::all_of(this->framebuffer_.begin(),
+                            this->framebuffer_.end(),
+                            [](uint8_t value) { return value == 0; });
+    this->content_controller_->add_dashboard(&ddp);
+    pixoo::DashboardSelection ddp_selection;
+    ddp_valid &= this->content_controller_->ResolveDashboard("__ddp", &ddp_selection) &&
+                 ddp_selection.frame_interval_ms == 33;
+    ddp_valid &= this->render_frame_(ddp.advance(), "__ddp", nullptr, 0, true) &&
+                 ddp.active() &&
+                 std::all_of(this->framebuffer_.begin(),
+                             this->framebuffer_.end(),
+                             [](uint8_t value) { return value == 0; });
+    ddp_valid &= this->render_frame_(ddp.advance(), "__ddp", nullptr, 0, true) && ddp.active();
+    ddp_valid &= render_lifecycle(ddp.advance(), "__lifecycle_first", true) && !ddp.active();
+    ddp_valid &= render_lifecycle(ddp.advance(), "__ddp", true) && ddp.active();
+    ddp.loop();
+    ddp_valid &= ddp.fd() >= 0 && (::fcntl(ddp.fd(), F_GETFL) & O_NONBLOCK) != 0;
+    const int sender = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (ddp.fd() >= 0 && sender >= 0) {
+      sockaddr_in destination{};
+      destination.sin_family = AF_INET;
+      destination.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      destination.sin_port = htons(4048);
+      const auto send_packet = [&](const uint8_t *data, size_t size) {
+        const bool sent = ::sendto(sender, data, size, 0,
+                                   reinterpret_cast<sockaddr *>(&destination), sizeof(destination)) ==
+                          static_cast<ssize_t>(size);
+        // Host loopback delivery may finish on another thread after sendto returns.
+        ::usleep(1000);
+        return sent;
+      };
+      const auto packet = [](size_t offset, const uint8_t *data, size_t size, bool push) {
+        std::vector<uint8_t> result(10 + size);
+        result[0] = push ? 0x41 : 0x40;
+        result[1] = 7;  // LedFX uses the same sequence across a frame's chunks.
+        result[2] = 0x0B;
+        result[3] = 1;
+        result[4] = offset >> 24;
+        result[5] = offset >> 16;
+        result[6] = offset >> 8;
+        result[7] = offset;
+        result[8] = size >> 8;
+        result[9] = size;
+        if (size) std::memcpy(result.data() + 10, data, size);
+        return result;
+      };
+      const auto send_ddp = [&](const std::vector<uint8_t> &data) {
+        ddp_valid &= send_packet(data.data(), data.size());
+      };
+      const auto drain = [&]() {
+        // A slow host may hit the time budget before the packet cap.
+        for (int i = 0; i < 8; ++i) ddp.loop();
+      };
+      const auto render_ddp = [&]() {
+        ddp_valid &= this->render_frame_(ddp.advance(), "__ddp", nullptr, 0, true);
+      };
+      std::vector<uint8_t> expected(pixoo::ddp::kFrameBytes);
+      for (size_t i = 0; i < expected.size(); ++i) expected[i] = (i * 17 + i / 192) & 255;
+      for (size_t offset = 0; offset < expected.size(); offset += 1440) {
+        const size_t size = std::min(size_t(1440), expected.size() - offset);
+        send_ddp(packet(offset, expected.data() + offset, size, false));
+        drain();
+      }
+      render_ddp();
+      ddp_valid &= std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                              [](uint8_t value) { return value == 0; });
+      send_ddp(packet(0, nullptr, 0, true));
+      drain();
+      ddp.OnShow(ddp.advance());  // Repeated entry must retain the published frame.
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected;
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected;
+
+      // Zero-length and truncated oversized UDP datagrams must not stop the drain
+      // or publish bytes from an otherwise valid-looking header.
+      ddp_valid &= send_packet(nullptr, 0);
+      auto oversized = packet(0, expected.data(), 1440, true);
+      oversized.resize(4096, 255);
+      std::fill(oversized.begin() + 10, oversized.end(), 255);
+      send_ddp(oversized);
+      drain();
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected && ddp.fd() >= 0;
+      const uint8_t first_rgb[] = {12, 34, 56};
+      const uint8_t latest_rgb[] = {78, 90, 123};
+      send_ddp(packet(0, first_rgb, 3, true));
+      send_ddp(packet(0, latest_rgb, 3, true));
+      drain();
+      std::copy_n(latest_rgb, 3, expected.begin());
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected;
+
+      // At most 32 attempts: 33 small packets fit ordinary host UDP queues. Peek
+      // proves an early stop without depending on host speed or ready() state.
+      const auto marker = packet(0, latest_rgb, 3, true);
+      for (int i = 0; i < 33; ++i) send_ddp(marker);
+      wake_request_take();
+      ddp.loop();
+      ddp_valid &= wake_request_take();
+      uint8_t peek;
+      ddp_valid &= ddp.fd() >= 0 && ::recv(ddp.fd(), &peek, 1, MSG_PEEK) == 1;
+      drain();
+      ddp_valid &= ::recv(ddp.fd(), &peek, 1, MSG_PEEK) == -1 &&
+                   (errno == EAGAIN || errno == EWOULDBLOCK);
+      wake_request_take();
+      ddp.loop();
+      ddp_valid &= !wake_request_take();  // An empty queue does not rearm service.
+
+      const pixoo::Notification ddp_note{"Streaming", pixoo::Severity::kInfo};
+      send_ddp(packet(3, first_rgb, 3, true));
+      drain();
+      std::copy_n(first_rgb, 3, expected.begin() + 3);
+      ddp_valid &= this->render_frame_(ddp.advance(), "__ddp", &ddp_note, 0, true);
+      const size_t banner_bytes = 64 * pixoo64::content::NotificationRenderer::kHeight * 3;
+      ddp_valid &= std::equal(expected.begin() + banner_bytes, expected.end(),
+                              this->framebuffer_.begin() + banner_bytes);
+      pixoo::Overlay ddp_reaction;
+      ddp_reaction.tag = pixoo::OverlayTag::kReaction;
+      ddp_reaction.reaction = pixoo::Reaction::kLaughing;
+      render_ddp();  // Reaction entry must capture clean DDP, not the banner.
+      ddp_valid &= this->framebuffer_ == expected;
+      pixoo::FrameView frozen;
+      ddp_valid &= this->content_controller_->RenderContent(
+          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 0, true, true, true, true, &frozen);
+      const bool control_rendered = this->content_controller_->RenderContent(
+          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 250, true, true, false, true, &frozen);
+      std::vector<uint8_t> frozen_copy;
+      if (control_rendered && frozen.data != nullptr &&
+          frozen.size == pixoo::ddp::kFrameBytes) {
+        frozen_copy.assign(frozen.data, frozen.data + frozen.size);
+      } else {
+        std::printf("render test: FAILED DDP reaction control frame invalid\n");
+        ddp_valid = false;
+      }
+      const size_t before_frozen_render_calls = ddp.render_calls;
+      send_ddp(packet(6, latest_rgb, 3, true));
+      drain();  // No dashboard Tick during a reaction; Component::loop still runs.
+      std::copy_n(latest_rgb, 3, expected.begin() + 6);
+      const bool updated_rendered = this->content_controller_->RenderContent(
+          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 250, true, true, false, true, &frozen);
+      ddp_valid &= updated_rendered && frozen.data != nullptr &&
+                   frozen.size == pixoo::ddp::kFrameBytes &&
+                   frozen_copy.size() == frozen.size &&
+                   std::equal(frozen_copy.begin(), frozen_copy.end(), frozen.data);
+      ddp_valid &= ddp.render_calls == before_frozen_render_calls;
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected &&
+                   ddp.render_calls == before_frozen_render_calls + 1;
+
+      TestDdpDashboard competing(ddp_clock_ms);
+      competing.OnShow(ddp.advance());
+      competing.loop();
+      ddp_valid &= competing.active() && competing.fd() == -1 &&
+                   competing.status_has_warning() && !competing.is_failed();
+      competing.loop();
+      ddp_valid &= competing.fd() == -1;
+      competing.on_shutdown();
+
+      // Drop both unpublished assembly bytes and queued input on hide/re-entry.
+      send_ddp(packet(0, first_rgb, 3, false));
+      drain();
+      send_ddp(packet(9, latest_rgb, 3, true));
+      this->content_controller_->HideBaseContent(ddp.advance());
+      wake_request_take();
+      ddp.loop();
+      ddp_valid &= !wake_request_take();
+      ddp_valid &= !ddp.active() && ddp.fd() == -1 && ddp.ReadyToShow();
+      send_ddp(packet(12, latest_rgb, 3, true));  // Hidden port has no listener.
+      render_ddp();
+      ddp_valid &= ddp.fd() == -1;
+      ddp.loop();
+      drain();
+      render_ddp();
+      ddp_valid &= std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                              [](uint8_t value) { return value == 0; });
+      send_ddp(packet(0, nullptr, 0, true));
+      drain();
+      render_ddp();
+      ddp_valid &= std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                              [](uint8_t value) { return value == 0; });
+      send_ddp(packet(0, latest_rgb, 3, true));
+      drain();
+      ddp.close_listener();  // Force a runtime receive error without test hooks in production.
+      wake_request_take();
+      ddp.loop();
+      ddp_valid &= !wake_request_take();
+      const uint32_t failed_at_ms = ddp.now();
+      ddp_valid &= ddp.active() && ddp.fd() == -1 &&
+                   ddp.status_has_warning() && !ddp.is_failed();
+      ddp.loop();
+      ddp_valid &= ddp.fd() == -1;
+      render_ddp();
+      ddp_valid &= std::equal(latest_rgb, latest_rgb + 3, this->framebuffer_.begin());
+      const auto retained_frame = this->framebuffer_;
+      ddp.advance(999 - (ddp.now() - failed_at_ms));
+      ddp.loop();
+      ddp_valid &= ddp.fd() == -1 && ddp.status_has_warning();
+      ddp.advance(1);
+      ddp.loop();
+      const bool reopened = ddp.fd() >= 0 && !ddp.status_has_warning();
+      if (!reopened)
+        std::printf("render test: FAILED DDP listener did not recover after 1s\n");
+      ddp_valid &= reopened;
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == retained_frame;
+      send_ddp(packet(0, first_rgb, 3, true));
+      drain();
+      render_ddp();
+      auto recovered_frame = retained_frame;
+      std::copy_n(first_rgb, 3, recovered_frame.begin());
+      ddp_valid &= this->framebuffer_ == recovered_frame;
+      ddp.on_shutdown();
+      ddp.loop();
+      ddp_valid &= !ddp.active() && ddp.fd() == -1 && !ddp.status_has_warning();
+
+      // Exercise the real application policy with the real renderer and UDP
+      // receiver. The panel copies borrowed frames before the renderer reuses them.
+      struct RecordingPanel final : pixoo::PanelPort {
+        explicit RecordingPanel(TestDdpDashboard &dashboard) : ddp(dashboard) {}
+        TestDdpDashboard &ddp;
+        bool powered{false};
+        bool initialize_ok{true};
+        bool valid_frames{true};
+        bool expect_closed{false};
+        bool closed_at_present{false};
+        bool forced{false};
+        float brightness{0};
+        size_t brightness_calls{0};
+        size_t presents{0};
+        std::vector<uint8_t> pixels;
+        void SetPower(bool on) override { powered = on; }
+        bool Initialize() override { return powered && initialize_ok; }
+        void SetBrightness(float value) override {
+          brightness = value;
+          ++brightness_calls;
+        }
+        bool Present(pixoo::FrameView frame, bool force) override {
+          ++presents;
+          forced = force;
+          if (expect_closed) closed_at_present = !ddp.active() && ddp.fd() == -1;
+          if (frame.data == nullptr || frame.size != pixoo::ddp::kFrameBytes) {
+            valid_frames = false;
+            return false;
+          }
+          pixels.assign(frame.data, frame.data + frame.size);
+          return true;
+        }
+      } panel(ddp);
+      bool app_valid = true;
+      const auto check_app = [&](bool condition, const char *what) {
+        if (!condition) {
+          std::printf("render test: FAILED DDP application %s\n", what);
+          app_valid = false;
+        }
+      };
+      pixoo::FirmwareAppConfig config;
+      config.cold_init_delay_ms = 0;
+      config.repower_delay_ms = 0;
+      config.boot_animation_ms = 0;
+      // Observe update ordering without substituting any rendering behavior.
+      struct ObservedRenderer final : pixoo::RenderPort {
+        ObservedRenderer(pixoo::RenderPort &renderer, TestDdpDashboard &dashboard)
+            : real(renderer), ddp(dashboard) {}
+        pixoo::RenderPort &real;
+        TestDdpDashboard &ddp;
+        bool closed_before_update{false};
+        bool ResolveDashboard(const std::string &id,
+                              pixoo::DashboardSelection *selection) override {
+          return real.ResolveDashboard(id, selection);
+        }
+        pixoo::FrameView RenderBootAnimation(uint32_t elapsed) override {
+          return real.RenderBootAnimation(elapsed);
+        }
+        pixoo::FrameView RenderFirmwareUpdate() override {
+          closed_before_update = !ddp.active() && ddp.fd() == -1;
+          return real.RenderFirmwareUpdate();
+        }
+        uint32_t NotificationMinVisibleMs(const pixoo::Notification &note) override {
+          return real.NotificationMinVisibleMs(note);
+        }
+        void HideBaseContent(uint32_t now) override { real.HideBaseContent(now); }
+        void ReleaseOverlayResources() override { real.ReleaseOverlayResources(); }
+        bool RenderContent(uint32_t now, const std::string &id,
+                           const pixoo::StopwatchSnapshot &stopwatch,
+                           const pixoo::TimerSnapshot &timer, const pixoo::Overlay *overlay,
+                           uint32_t elapsed, bool visible, bool frozen, bool base,
+                           bool composite, pixoo::FrameView *frame) override {
+          return real.RenderContent(now, id, stopwatch, timer, overlay, elapsed,
+                                    visible, frozen, base, composite, frame);
+        }
+      } renderer(*this->content_controller_, ddp);
+      pixoo::FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr, config);
+      const auto tick = [&](uint32_t elapsed_ms = 0) {
+        app.Tick(ddp.advance(elapsed_ms));
+      };
+      const auto black_panel = [&]() {
+        return panel.pixels.size() == pixoo::ddp::kFrameBytes &&
+               std::all_of(panel.pixels.begin(), panel.pixels.end(),
+                           [](uint8_t value) { return value == 0; });
+      };
+      check_app(app.Start(ddp.advance(), {true, 1.0f}, "__ddp"), "startup");
+      check_app(!ddp.active() && ddp.fd() == -1 && panel.presents == 0,
+                "does not receive before initialization");
+      tick();  // Initialize; zero-duration boot still has its own lifecycle tick.
+      check_app(app.phase() == pixoo::FirmwareApp::Phase::kBootAnimation &&
+                    !ddp.active(), "boot hides receiver");
+      tick();
+      check_app(app.phase() == pixoo::FirmwareApp::Phase::kRunning &&
+                    ddp.active() && black_panel(), "running enters black");
+      ddp.loop();
+      const bool app_listener_ready = ddp.fd() >= 0;
+      check_app(app_listener_ready, "UDP setup (check port 4048 occupancy)");
+      if (app_listener_ready) {
+        std::vector<uint8_t> app_expected(pixoo::ddp::kFrameBytes, 0);
+        const size_t tail = app_expected.size() - 3;
+        const auto push_tail = [&](const uint8_t *rgb) {
+          const auto datagram = packet(tail, rgb, 3, true);
+          check_app(send_packet(datagram.data(), datagram.size()), "UDP send");
+          drain();
+          std::copy_n(rgb, 3, app_expected.begin() + tail);
+        };
+        const auto tail_matches = [&]() {
+          return panel.pixels.size() == app_expected.size() &&
+                 std::equal(app_expected.begin() + tail, app_expected.end(),
+                            panel.pixels.begin() + tail);
+        };
+        size_t count = panel.presents;
+        const size_t before_receive_render_calls = ddp.render_calls;
+        push_tail(first_rgb);
+        check_app(panel.presents == count && black_panel() &&
+                      ddp.render_calls == before_receive_render_calls,
+                  "receive does not render or present");
+        tick(32);
+        check_app(panel.presents == count, "33ms cadence waits");
+        tick(1);
+        check_app(panel.presents == ++count && panel.pixels == app_expected,
+                  "33ms cadence presents published image");
+        push_tail(first_rgb);
+        push_tail(latest_rgb);
+        push_tail(first_rgb);
+        push_tail(latest_rgb);
+        check_app(panel.presents == count, "rapid PUSH does not present");
+        tick(99);  // Three deadlines passed; exactly one latest frame is due.
+        check_app(panel.presents == ++count && panel.pixels == app_expected,
+                  "missed deadlines present latest once");
+        tick();
+        tick(32);
+        check_app(panel.presents == count, "no queued presentation burst");
+        tick(1);
+        check_app(panel.presents == ++count && panel.pixels == app_expected,
+                  "cadence resumes after missed deadlines");
+
+        const size_t light_calls = panel.brightness_calls;
+        app.SetUserLight({true, 0.25f}, ddp.now());
+        tick();
+        check_app(panel.brightness == 0.25f && panel.brightness_calls > light_calls &&
+                      panel.pixels == app_expected, "brightness port leaves payload raw");
+
+        pixoo::NotificationRequest note;
+        note.notification = pixoo::Notification{"Live", pixoo::Severity::kInfo};
+        note.requested_duration_ms = 100;
+        const uint32_t note_duration = std::max(
+            note.requested_duration_ms,
+            this->content_controller_->NotificationMinVisibleMs(note.notification));
+        check_app(app.Notify(note, ddp.now()), "enqueue notification");
+        tick();
+        check_app(app.notification_visible() && ddp.active() && tail_matches(),
+                  "notification keeps base live");
+        push_tail(first_rgb);
+        tick(33);
+        check_app(tail_matches(), "notification refreshes incoming pixels");
+        check_app(app.React(pixoo::Reaction::kLaughing, ddp.now()) &&
+                      app.Notify(note, ddp.now()), "enqueue reaction then notification");
+        tick(note_duration - 33);
+        check_app(app.overlay_visible() && app.current_overlay() != nullptr &&
+                      app.current_overlay()->tag == pixoo::OverlayTag::kReaction &&
+                      ddp.active() && ddp.fd() >= 0, "reaction keeps listener open");
+        const size_t frozen_render_calls = ddp.render_calls;
+        count = panel.presents;
+        push_tail(first_rgb);
+        push_tail(latest_rgb);
+        check_app(panel.presents == count && ddp.render_calls == frozen_render_calls,
+                  "frozen reception does not render or present");
+        tick(33);
+        check_app(ddp.render_calls == frozen_render_calls,
+                  "reaction does not render base");
+        // No further UDP drain: the resumed pixels must have arrived while frozen.
+        tick(pixoo::ReactionVisibleDurationMs(pixoo::Reaction::kLaughing) - 33);
+        check_app(app.notification_visible() && tail_matches() &&
+                      ddp.render_calls == frozen_render_calls + 1,
+                  "reaction to notification resumes latest received image");
+        tick(note_duration);
+        check_app(app.overlay_queue_size() == 0 && panel.pixels == app_expected,
+                  "notification to base has no stale queue");
+
+        app.SelectDashboard("__lifecycle_first");
+        tick();
+        check_app(!ddp.active() && ddp.fd() == -1, "switch away closes listener");
+        app.SelectDashboard("__ddp");
+        tick();
+        check_app(ddp.active() && black_panel() && ddp.fd() == -1,
+                  "reentry resets black before receiver loop");
+        ddp.loop();
+        check_app(ddp.fd() >= 0, "reentry opens listener");
+        push_tail(latest_rgb);
+        tick(33);
+        check_app(tail_matches(), "reentry receives live pixels");
+
+        app.SetUserLight({false, 0.25f}, ddp.now());
+        count = panel.presents;
+        check_app(app.phase() == pixoo::FirmwareApp::Phase::kOff && !panel.powered &&
+                      !ddp.active() && ddp.fd() == -1, "off closes listener");
+        tick(33);
+        check_app(panel.presents == count, "off suppresses presentation");
+        check_app(app.Notify(note, ddp.now()), "off notification wake");
+        tick();
+        tick();
+        ddp.loop();
+        check_app(app.notification_visible() && panel.powered && !ddp.active() &&
+                      ddp.fd() == -1, "temporary wake never opens base receiver");
+        app.ClearOverlayQueue(ddp.now());
+        check_app(app.phase() == pixoo::FirmwareApp::Phase::kOff && !panel.powered,
+                  "temporary wake restores off");
+        app.SelectDashboard("__lifecycle_first");
+        app.SelectDashboard("__ddp");
+        tick();
+        ddp.loop();
+        check_app(!ddp.active() && ddp.fd() == -1, "off selection stays hidden");
+        panel.initialize_ok = false;
+        app.SetUserLight({true, 0.25f}, ddp.now());
+        tick();
+        check_app(panel.powered && app.phase() == pixoo::FirmwareApp::Phase::kWaitingInit &&
+                      !ddp.active(), "selection waits for powered initialization");
+        panel.initialize_ok = true;
+        tick();
+        check_app(app.phase() == pixoo::FirmwareApp::Phase::kRunning && !ddp.active(),
+                  "selection waits for running render");
+        tick();
+        check_app(ddp.active() && black_panel(), "off selection enters reset black");
+        ddp.loop();
+        check_app(ddp.fd() >= 0, "repower listener opens");
+        push_tail(latest_rgb);
+        tick(33);
+
+        panel.expect_closed = true;
+        count = panel.presents;
+        check_app(app.BeginFirmwareUpdate(ddp.now()) && panel.presents == count + 1 &&
+                      panel.forced && panel.closed_at_present && renderer.closed_before_update,
+                  "update closes listener before rendering and force-presents");
+        const auto update_frame = this->content_controller_->RenderFirmwareUpdate();
+        check_app(update_frame.data != nullptr && update_frame.size == panel.pixels.size() &&
+                      std::equal(panel.pixels.begin(), panel.pixels.end(), update_frame.data) &&
+                      panel.presents == count + 1,
+                  "application presents the real update frame");
+        check_app(app.phase() == pixoo::FirmwareApp::Phase::kRunning,
+                  "update preserves existing lifecycle phase");
+        panel.expect_closed = false;
+        tick();
+        check_app(ddp.active() && black_panel(), "post-update tick rebuilds base");
+      }
+      check_app(panel.valid_frames, "valid synchronous frame copies");
+      app.SetUserLight({false, 0.25f}, ddp.now());
+      this->content_controller_->HideBaseContent(ddp.advance());
+      if (!app_valid) ++failures;
+      else std::printf("render test: ok DDP application lifecycle and scheduling\n");
+    } else {
+      std::printf("render test: FAILED DDP UDP setup (listener=%d, sender=%d); "
+                  "check whether port 4048 is occupied\n", ddp.fd(), sender);
+      ddp_valid = false;
+    }
+    ddp.on_shutdown();
+    this->content_controller_->HideBaseContent(ddp.advance());
+    if (sender >= 0) ::close(sender);
+    if (!ddp_valid) {
+      std::printf("render test: FAILED DDP readiness, lifecycle, or UDP rendering\n");
+      ++failures;
+    } else {
+      std::printf("render test: ok DDP readiness, lifecycle, and UDP rendering\n");
     }
 
     const size_t now_playing_ticks = static_cast<size_t>(std::count_if(
