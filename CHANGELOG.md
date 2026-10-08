@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.0.0...v1.1.0) (2026-10-08)
+
+
+### Features
+
+* add experimental DDP dashboard ([4d806c9](https://github.com/simplyRoba/pixoo-firmware/commit/4d806c9070e554592264393e1d52f962fadf4d97))
+
 ## 1.0.0 (2026-10-08)
 
 

@@ -13,7 +13,7 @@ esphome:
   friendly_name: Pixoo64
   project:
     name: simplyRoba.pixoo-firmware
-    version: "1.0.0" # x-release-please-version
+    version: "1.1.0" # x-release-please-version
   includes:
     # Structured pixoo64_content subdirectories.
     - components/pixoo64_content/dashboard
