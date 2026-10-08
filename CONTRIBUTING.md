@@ -161,9 +161,10 @@ in the [manual](docs/manual.md).
 
 Use Conventional Commits for commit subjects and PR titles. Squash-merge PRs with
 the same Conventional Commit title. `feat:` bumps the minor version;
-`fix:`, `perf:`, `deps:`, and `build:` bump the patch version. Use `!` or a
-`BREAKING CHANGE:` footer for a major bump. `ci:`, `docs:`, `test:`, and `chore:`
-are excluded from release notes and do not trigger releases on their own.
+`fix:`, `perf:`, `refactor:`, `docs:`, and `deps:` bump the patch version.
+Use `!` or a `BREAKING CHANGE:` footer for a major bump. `chore:`, `test:`,
+`ci:`, `build:`, and `style:` are excluded from release notes and do not trigger
+releases on their own unless they contain a breaking change.
 
 Release Please maintains one release PR on `main`. That PR updates `version.txt`,
 `CHANGELOG.md`, `.release-please-manifest.json`, and the annotated
