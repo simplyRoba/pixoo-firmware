@@ -15,6 +15,11 @@ on:
       - "requirements.txt"
       - "ci-requirements.txt"
       - ".github/workflows/firmware-ci.yml"
+      - ".github/workflows/release-please.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - "version.txt"
+      - "CHANGELOG.md"
   pull_request:
     paths:
       - "esphome/**"
@@ -27,6 +32,11 @@ on:
       - "requirements.txt"
       - "ci-requirements.txt"
       - ".github/workflows/firmware-ci.yml"
+      - ".github/workflows/release-please.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - "version.txt"
+      - "CHANGELOG.md"
   workflow_dispatch:
 
 # One run per ref; a newer run supersedes an older one still in flight.

@@ -153,6 +153,31 @@ before connecting any instrument.
 Public tools may decode or render locally held captures, but proprietary or
 credential-bearing source artifacts must not be committed.
 
+## Releases
+
+Releases contain source archives only. Users compile firmware with their own
+secrets; compiled firmware images are not published. Installation procedures are
+in the [manual](docs/manual.md).
+
+Use Conventional Commits for commit subjects and PR titles. Squash-merge PRs with
+the same Conventional Commit title. `feat:` bumps the minor version;
+`fix:`, `perf:`, `deps:`, and `build:` bump the patch version. Use `!` or a
+`BREAKING CHANGE:` footer for a major bump. `ci:`, `docs:`, `test:`, and `chore:`
+are excluded from release notes and do not trigger releases on their own.
+
+Release Please maintains one release PR on `main`. That PR updates `version.txt`,
+`CHANGELOG.md`, `.release-please-manifest.json`, and the annotated
+`esphome.project.version` in `esphome/pixoo64.yaml`. Merge it after CI passes to
+create the `v<version>` tag and GitHub release. Project metadata identifies the
+firmware release in ESPHome logs and the native API; it does not change the
+independently pinned ESPHome or Arduino versions.
+
+The shared release workflow requires a GitHub App installed for this repository
+with Contents and Pull requests write permissions. Configure repository Actions
+secrets `RELEASE_BOT_CLIENT_ID` and `RELEASE_BOT_PRIVATE_KEY`. App-created release
+PRs trigger CI. Dependabot groups the monthly Python toolchain updates with
+`deps:` subjects; GitHub Actions updates use `ci:`.
+
 ## Repository rules
 
 - Preserve the dependency and ownership rules in the
