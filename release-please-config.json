@@ -3,6 +3,7 @@
   "bootstrap-sha": "d80edb7e57e42e00ac485ec08e25234deff83621",
   "release-type": "simple",
   "initial-version": "1.0.0",
+  "always-update": true,
   "include-component-in-tag": false,
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
