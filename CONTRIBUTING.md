@@ -168,8 +168,9 @@ releases on their own unless they contain a breaking change.
 
 Release Please maintains one release PR on `main`. That PR updates `version.txt`,
 `CHANGELOG.md`, `.release-please-manifest.json`, and the annotated
-`esphome.project.version` in `esphome/pixoo64.yaml`. Merge it after CI passes to
-create the `v<version>` tag and GitHub release. Project metadata identifies the
+`esphome.project.version` in `esphome/pixoo64.yaml`. Merge it once the
+[PR requirements](#repository-rules) are met to create the `v<version>` tag and
+GitHub release. Project metadata identifies the
 firmware release in ESPHome logs and the native API; it does not change the
 independently pinned ESPHome or Arduino versions.
 
@@ -181,6 +182,9 @@ PRs trigger CI. Dependabot groups the monthly Python toolchain updates with
 
 ## Repository rules
 
+- PRs must be up to date with `main` and pass all firmware CI checks, with at
+  least one code-owner approval and resolved review discussions. New commits dismiss
+  previous approvals.
 - Preserve the dependency and ownership rules in the
   [firmware architecture](docs/firmware.md).
 - Keep build, test, and generator inputs required by public contributors checked
