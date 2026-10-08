@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "ddp_frame.h"
-#include "ddp_metrics.h"
 
 using namespace pixoo::ddp;
 
@@ -406,95 +405,7 @@ static void test_seeded_assembly_against_reference() {
   TEST_ASSERT_EQUAL_UINT(124, resets);
 }
 
-static void test_metrics_latest_render_and_window_identity() {
-  MetricsWindow metrics;
-  metrics.Reset(100);
-  metrics.RecordRender(false);
-  metrics.RecordDatagram(DatagramResult::kAccepted);
-  metrics.RecordDatagram(DatagramResult::kRejected);
-  metrics.RecordDatagram(DatagramResult::kPublished);
-  metrics.RecordDatagram(DatagramResult::kPublished);
-  metrics.RecordRender(true);
-  metrics.RecordRender(true);
-  auto s = metrics.Snapshot(200);
-  TEST_ASSERT_EQUAL_UINT32(4, s.received);
-  TEST_ASSERT_EQUAL_UINT32(1, s.rejected);
-  TEST_ASSERT_EQUAL_UINT32(2, s.publications);
-  TEST_ASSERT_EQUAL_UINT32(1, s.rendered_revisions);
-  TEST_ASSERT_EQUAL_UINT64(2, s.latest_revision);
-  TEST_ASSERT_EQUAL_UINT32(300000, MetricsWindow::kWindowMs);
-  TEST_ASSERT_FALSE(metrics.IsDue(100 + MetricsWindow::kWindowMs - 1));
-  TEST_ASSERT_TRUE(metrics.IsDue(100 + MetricsWindow::kWindowMs));
-  TEST_ASSERT_TRUE(metrics.Close(6200, &s));
-  TEST_ASSERT_EQUAL_UINT32(6100, s.elapsed_ms);
-  metrics.RecordRender(true);
-  TEST_ASSERT_EQUAL_UINT32(0, metrics.Snapshot(6300).rendered_revisions);
-  metrics.RecordDatagram(DatagramResult::kPublished);
-  TEST_ASSERT_TRUE(metrics.Close(6400, &s));
-  metrics.RecordRender(true);  // Publication can be drawn in a later window.
-  s = metrics.Snapshot(6500);
-  TEST_ASSERT_EQUAL_UINT32(1, s.rendered_revisions);
-  TEST_ASSERT_EQUAL_UINT64(3, s.latest_revision);
-}
-
-static void test_metrics_wrap_empty_pass_and_session_reset() {
-  MetricsWindow metrics;
-  MetricsSnapshot s;
-  TEST_ASSERT_FALSE(metrics.Close(1, &s));
-  metrics.Reset(0xFFFFFF00U);
-  TEST_ASSERT_FALSE(metrics.Close(0xFFFFFF00U, &s));
-  TEST_ASSERT_FALSE(metrics.Close(1, nullptr));
-  metrics.RecordLoop(0xFFFFFFF0U);
-  metrics.RecordLoop(0x20U);
-  // Includes the duration of a receive pass that immediately returns EAGAIN.
-  metrics.RecordReceivePass(10);
-  metrics.RecordReceivePass(30);
-  metrics.RecordSocketError();
-  TEST_ASSERT_FALSE(metrics.IsDue(0xFFFFFF00U + MetricsWindow::kWindowMs - 1));
-  TEST_ASSERT_TRUE(metrics.IsDue(0xFFFFFF00U + MetricsWindow::kWindowMs));
-  TEST_ASSERT_TRUE(metrics.Close(5000, &s));
-  TEST_ASSERT_EQUAL_UINT32(5256, s.elapsed_ms);
-  TEST_ASSERT_EQUAL_UINT32(48, s.loop_gap_max_us);
-  TEST_ASSERT_EQUAL_UINT32(2, s.receive_passes);
-  TEST_ASSERT_EQUAL_UINT64(40, s.receive_total_us);
-  TEST_ASSERT_EQUAL_FLOAT(20, s.receive_average_us);
-  TEST_ASSERT_EQUAL_UINT32(30, s.receive_max_us);
-  TEST_ASSERT_EQUAL_UINT32(1, s.socket_errors);
-  metrics.RecordLoop(0x40U);
-  TEST_ASSERT_EQUAL_UINT32(32, metrics.Snapshot(5001).loop_gap_max_us);
-  metrics.Reset(9000);  // Hidden time is not a loop gap in the next session.
-  metrics.RecordLoop(1000000);
-  metrics.RecordRender(true);
-  TEST_ASSERT_TRUE(metrics.Close(14000, &s));
-  TEST_ASSERT_EQUAL_UINT32(0, s.loop_gap_max_us);
-  TEST_ASSERT_EQUAL_UINT64(0, s.latest_revision);
-  TEST_ASSERT_EQUAL_UINT32(0, s.rendered_revisions);
-  TEST_ASSERT_EQUAL_UINT32(0, s.received);
-  TEST_ASSERT_EQUAL_FLOAT(0, s.receive_average_us);
-  TEST_ASSERT_EQUAL_UINT32(0, s.receive_max_us);
-}
-
-static void test_metrics_zero_and_malformed_datagrams() {
-  FrameBuffer frames;
-  MetricsWindow metrics;
-  metrics.Reset(0);
-  metrics.RecordDatagram(frames.Apply(nullptr, 0));
-  const auto malformed = Packet(0, 1, true);
-  metrics.RecordDatagram(frames.Apply(malformed.data(), 5));
-  const auto push = Packet(0, 0, true);
-  metrics.RecordDatagram(frames.Apply(push.data(), push.size()));
-  metrics.RecordRender(frames.has_frame());
-  const auto s = metrics.Snapshot(1);
-  TEST_ASSERT_EQUAL_UINT32(3, s.received);
-  TEST_ASSERT_EQUAL_UINT32(2, s.rejected);
-  TEST_ASSERT_EQUAL_UINT32(1, s.publications);
-  TEST_ASSERT_EQUAL_UINT32(1, s.rendered_revisions);
-}
-
 void RunDdpTests() {
-  RUN_TEST(test_metrics_latest_render_and_window_identity);
-  RUN_TEST(test_metrics_wrap_empty_pass_and_session_reset);
-  RUN_TEST(test_metrics_zero_and_malformed_datagrams);
   RUN_TEST(test_initial_state_and_reset);
   RUN_TEST(test_ledfx_nine_chunk_frames_and_sequence_variants);
   RUN_TEST(test_arbitrary_byte_offsets_partial_push_and_latest_wins);

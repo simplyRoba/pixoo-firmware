@@ -35,7 +35,6 @@ esphome:
     - ../../../pixoo_content/include/dashboard/clock/digital_clock.h
     - ../../../pixoo_content/src/dashboard/clock/digital_clock.cpp
     - ../../../pixoo_content/include/dashboard/ddp/ddp_frame.h
-    - ../../../pixoo_content/include/dashboard/ddp/ddp_metrics.h
     - ../../../pixoo_content/src/dashboard/ddp/ddp_frame.cpp
     - ../../../pixoo_content/include/dashboard/game_of_life/game_of_life.h
     - ../../../pixoo_content/src/dashboard/game_of_life/game_of_life.cpp

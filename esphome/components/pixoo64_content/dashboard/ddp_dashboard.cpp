@@ -2,7 +2,6 @@
 
 #include <cerrno>
 #include <fcntl.h>
-#include <cinttypes>
 #include <new>
 
 #ifdef ESP_PLATFORM
@@ -10,12 +9,10 @@
 #endif
 
 #include "esphome/core/hal.h"
-#include "esphome/core/log.h"
 #include "esphome/core/wake.h"
 
 namespace esphome::pixoo64::dashboard {
 namespace {
-constexpr const char *kTag = "pixoo64.ddp";
 constexpr uint16_t kPort = 4048;
 constexpr uint32_t kRetryMs = 1000;
 constexpr uint32_t kReceiveBudgetUs = 1000;
@@ -51,8 +48,6 @@ bool DdpDashboard::EnsureFrameStorage_() {
 }
 
 void DdpDashboard::Render(display::Display &display) const {
-  if (this->active_)
-    this->metrics_.RecordRender(this->frames_ != nullptr && this->frames_->has_frame());
   if (this->frames_ == nullptr) {
     display.fill(Color(0, 0, 0));
     return;
@@ -67,11 +62,10 @@ void DdpDashboard::Render(display::Display &display) const {
   }
 }
 
-void DdpDashboard::OnShow(uint32_t now_ms) {
+void DdpDashboard::OnShow(uint32_t) {
   if (this->active_)
     return;
   this->active_ = true;
-  this->metrics_.Reset(now_ms);
   this->retry_pending_ = false;
   if (!this->EnsureFrameStorage_()) {
     this->status_set_warning();
@@ -80,8 +74,8 @@ void DdpDashboard::OnShow(uint32_t now_ms) {
   this->frames_->Reset();
 }
 
-void DdpDashboard::OnHide(uint32_t now_ms) {
-  this->Stop_(now_ms);
+void DdpDashboard::OnHide(uint32_t) {
+  this->Stop_();
 }
 
 void DdpDashboard::CloseListener_() {
@@ -92,30 +86,10 @@ void DdpDashboard::CloseListener_() {
 }
 
 void DdpDashboard::on_shutdown() {
-  this->Stop_(millis());
+  this->Stop_();
 }
 
-void DdpDashboard::ReportMetrics_(uint32_t now_ms) {
-  pixoo::ddp::MetricsSnapshot s;
-  if (!this->active_ || !this->metrics_.Close(now_ms, &s))
-    return;
-  ESP_LOGI(kTag, "elapsed_ms=%" PRIu32 " received=%" PRIu32
-           " rejected=%" PRIu32 " publications=%" PRIu32
-           " rendered_revisions=%" PRIu32 " latest_revision=%" PRIu64
-           " receive_passes=%" PRIu32 " receive_avg_us=%.1f receive_max_us=%" PRIu32
-           " loop_gap_max_us=%" PRIu32 " socket_errors=%" PRIu32,
-           s.elapsed_ms, s.received, s.rejected, s.publications,
-           s.rendered_revisions, s.latest_revision, s.receive_passes,
-           s.receive_average_us, s.receive_max_us, s.loop_gap_max_us, s.socket_errors);
-#ifdef ESP_PLATFORM
-  ESP_LOGI(kTag, "internal_free_bytes=%u psram_free_bytes=%u",
-           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
-#endif
-}
-
-void DdpDashboard::Stop_(uint32_t now_ms) {
-  this->ReportMetrics_(now_ms);
+void DdpDashboard::Stop_() {
   this->active_ = false;
   this->CloseListener_();
   if (this->frames_ != nullptr)
@@ -125,7 +99,6 @@ void DdpDashboard::Stop_(uint32_t now_ms) {
 }
 
 void DdpDashboard::ListenerFailed_(uint32_t now_ms) {
-  this->metrics_.RecordSocketError();
   this->CloseListener_();
   this->failed_at_ms_ = now_ms;
   this->retry_pending_ = true;
@@ -164,10 +137,8 @@ void DdpDashboard::loop() {
 }
 
 void DdpDashboard::Service_(uint32_t now_ms) {
-  const uint32_t entry_us = micros();
   if (!this->active_)
     return;
-  this->metrics_.RecordLoop(entry_us);
   if (this->frames_ != nullptr && !this->listener_ &&
       (!this->retry_pending_ || uint32_t(now_ms - this->failed_at_ms_) >= kRetryMs))
     this->OpenListener_(now_ms);
@@ -183,8 +154,8 @@ void DdpDashboard::Service_(uint32_t now_ms) {
       const ssize_t length = this->listener_->recvfrom(
           this->receive_buffer_.data(), this->receive_buffer_.size(), nullptr, nullptr);
       if (length >= 0) {
-        this->metrics_.RecordDatagram(this->frames_->Apply(
-            this->receive_buffer_.data(), static_cast<size_t>(length)));
+        this->frames_->Apply(this->receive_buffer_.data(),
+                             static_cast<size_t>(length));
       } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         drain_exhausted = false;
         break;
@@ -193,7 +164,6 @@ void DdpDashboard::Service_(uint32_t now_ms) {
         break;
       }
     }
-    this->metrics_.RecordReceivePass(uint32_t(micros() - started_us));
     if (receive_failed) {
       this->ListenerFailed_(now_ms);
     } else if (drain_exhausted) {
@@ -202,8 +172,6 @@ void DdpDashboard::Service_(uint32_t now_ms) {
       wake_loop_threadsafe();
     }
   }
-  if (this->metrics_.IsDue(now_ms))
-    this->ReportMetrics_(now_ms);
 }
 
 }  // namespace esphome::pixoo64::dashboard

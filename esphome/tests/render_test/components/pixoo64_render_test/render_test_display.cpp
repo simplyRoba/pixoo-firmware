@@ -1035,7 +1035,12 @@ void RenderTestDisplay::setup() {
         DdpDashboard::OnHide(this->clock_ms_);
       }
       void loop() override { this->Service_(this->clock_ms_); }
-      void on_shutdown() override { this->Stop_(this->clock_ms_); }
+      void on_shutdown() override { this->Stop_(); }
+      void Render(display::Display &display) const override {
+        ++this->render_calls;
+        DdpDashboard::Render(display);
+      }
+      mutable size_t render_calls{0};
       int fd() const { return this->listener_ ? this->listener_->get_fd() : -1; }
       void close_listener() {
         if (this->listener_ != nullptr)
@@ -1132,12 +1137,8 @@ void RenderTestDisplay::setup() {
       ddp.OnShow(ddp.advance());  // Repeated entry must retain the published frame.
       render_ddp();
       ddp_valid &= this->framebuffer_ == expected;
-      auto diagnostics = ddp.diagnosticsSnapshot(ddp.now());
-      ddp_valid &= diagnostics.received == 10 && diagnostics.rejected == 0 &&
-                   diagnostics.publications == 1 && diagnostics.rendered_revisions == 1 &&
-                   diagnostics.latest_revision == 1 && diagnostics.receive_passes > 0;
       render_ddp();
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions == 1;
+      ddp_valid &= this->framebuffer_ == expected;
 
       // Zero-length and truncated oversized UDP datagrams must not stop the drain
       // or publish bytes from an otherwise valid-looking header.
@@ -1149,18 +1150,13 @@ void RenderTestDisplay::setup() {
       drain();
       render_ddp();
       ddp_valid &= this->framebuffer_ == expected && ddp.fd() >= 0;
-      diagnostics = ddp.diagnosticsSnapshot(ddp.now());
-      ddp_valid &= diagnostics.received == 12 && diagnostics.rejected == 2 &&
-                   diagnostics.publications == 1 && diagnostics.rendered_revisions == 1;
       const uint8_t first_rgb[] = {12, 34, 56};
       const uint8_t latest_rgb[] = {78, 90, 123};
       send_ddp(packet(0, first_rgb, 3, true));
       send_ddp(packet(0, latest_rgb, 3, true));
       drain();
       std::copy_n(latest_rgb, 3, expected.begin());
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).latest_revision == 3;
       render_ddp();
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions == 2;
       ddp_valid &= this->framebuffer_ == expected;
 
       // At most 32 attempts: 33 small packets fit ordinary host UDP queues. Peek
@@ -1205,7 +1201,7 @@ void RenderTestDisplay::setup() {
         std::printf("render test: FAILED DDP reaction control frame invalid\n");
         ddp_valid = false;
       }
-      const auto before_frozen = ddp.diagnosticsSnapshot(ddp.now());
+      const size_t before_frozen_render_calls = ddp.render_calls;
       send_ddp(packet(6, latest_rgb, 3, true));
       drain();  // No dashboard Tick during a reaction; Component::loop still runs.
       std::copy_n(latest_rgb, 3, expected.begin() + 6);
@@ -1215,14 +1211,10 @@ void RenderTestDisplay::setup() {
                    frozen.size == pixoo::ddp::kFrameBytes &&
                    frozen_copy.size() == frozen.size &&
                    std::equal(frozen_copy.begin(), frozen_copy.end(), frozen.data);
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions ==
-                   before_frozen.rendered_revisions;
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).latest_revision ==
-                   before_frozen.latest_revision + 1;
+      ddp_valid &= ddp.render_calls == before_frozen_render_calls;
       render_ddp();
-      ddp_valid &= this->framebuffer_ == expected;
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions ==
-                   before_frozen.rendered_revisions + 1;
+      ddp_valid &= this->framebuffer_ == expected &&
+                   ddp.render_calls == before_frozen_render_calls + 1;
 
       TestDdpDashboard competing(ddp_clock_ms);
       competing.OnShow(ddp.advance());
@@ -1278,11 +1270,7 @@ void RenderTestDisplay::setup() {
       if (!reopened)
         std::printf("render test: FAILED DDP listener did not recover after 1s\n");
       ddp_valid &= reopened;
-      diagnostics = ddp.diagnosticsSnapshot(ddp.now());
-      ddp_valid &= diagnostics.socket_errors == 1 && diagnostics.elapsed_ms < 5000;
       render_ddp();
-      ddp_valid &= ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions ==
-                   diagnostics.rendered_revisions;
       ddp_valid &= this->framebuffer_ == retained_frame;
       send_ddp(packet(0, first_rgb, 3, true));
       drain();
@@ -1406,12 +1394,11 @@ void RenderTestDisplay::setup() {
                             panel.pixels.begin() + tail);
         };
         size_t count = panel.presents;
-        auto received = ddp.diagnosticsSnapshot(ddp.now());
+        const size_t before_receive_render_calls = ddp.render_calls;
         push_tail(first_rgb);
         check_app(panel.presents == count && black_panel() &&
-                      ddp.diagnosticsSnapshot(ddp.now()).latest_revision ==
-                          received.latest_revision + 1,
-                  "receive publishes without presenting");
+                      ddp.render_calls == before_receive_render_calls,
+                  "receive does not render or present");
         tick(32);
         check_app(panel.presents == count, "33ms cadence waits");
         tick(1);
@@ -1457,21 +1444,20 @@ void RenderTestDisplay::setup() {
         check_app(app.overlay_visible() && app.current_overlay() != nullptr &&
                       app.current_overlay()->tag == pixoo::OverlayTag::kReaction &&
                       ddp.active() && ddp.fd() >= 0, "reaction keeps listener open");
-        const auto frozen_metrics = ddp.diagnosticsSnapshot(ddp.now());
+        const size_t frozen_render_calls = ddp.render_calls;
         count = panel.presents;
         push_tail(first_rgb);
         push_tail(latest_rgb);
-        check_app(panel.presents == count, "frozen reception does not present");
+        check_app(panel.presents == count && ddp.render_calls == frozen_render_calls,
+                  "frozen reception does not render or present");
         tick(33);
-        const auto live_metrics = ddp.diagnosticsSnapshot(ddp.now());
-        check_app(live_metrics.latest_revision == frozen_metrics.latest_revision + 2 &&
-                      live_metrics.rendered_revisions == frozen_metrics.rendered_revisions,
-                  "reaction receives without rendering base");
+        check_app(ddp.render_calls == frozen_render_calls,
+                  "reaction does not render base");
+        // No further UDP drain: the resumed pixels must have arrived while frozen.
         tick(pixoo::ReactionVisibleDurationMs(pixoo::Reaction::kLaughing) - 33);
         check_app(app.notification_visible() && tail_matches() &&
-                      ddp.diagnosticsSnapshot(ddp.now()).rendered_revisions ==
-                          frozen_metrics.rendered_revisions + 1,
-                  "reaction to notification resumes latest image");
+                      ddp.render_calls == frozen_render_calls + 1,
+                  "reaction to notification resumes latest received image");
         tick(note_duration);
         check_app(app.overlay_queue_size() == 0 && panel.pixels == app_expected,
                   "notification to base has no stale queue");

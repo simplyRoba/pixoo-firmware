@@ -5,7 +5,6 @@
 
 #include "dashboard.h"
 #include "ddp_frame.h"
-#include "ddp_metrics.h"
 #include "esphome/components/socket/socket.h"
 #include "esphome/core/component.h"
 
@@ -20,13 +19,10 @@ class DdpDashboard : public Dashboard, public Component {
   void loop() override;
   void on_shutdown() override;
   bool active() const { return this->active_; }
-  pixoo::ddp::MetricsSnapshot diagnosticsSnapshot(uint32_t now_ms) const {
-    return this->metrics_.Snapshot(now_ms);
-  }
 
  protected:
   void Service_(uint32_t now_ms);
-  void Stop_(uint32_t now_ms);
+  void Stop_();
   std::unique_ptr<socket::Socket> listener_;
 
  private:
@@ -37,8 +33,6 @@ class DdpDashboard : public Dashboard, public Component {
   bool OpenListener_(uint32_t now_ms);
   void ListenerFailed_(uint32_t now_ms);
   void CloseListener_();
-  void ReportMetrics_(uint32_t now_ms);
-  mutable pixoo::ddp::MetricsWindow metrics_;
   // Visibility, socket reads, and frame publication share the ESPHome main loop.
   bool active_{false};
   bool retry_pending_{false};
