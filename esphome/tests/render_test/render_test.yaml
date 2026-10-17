@@ -1377,12 +1377,25 @@ pixoo64_content:
       face: binary
       fixed_time: 1616421938
 
-    # 14:05:38: four decimal digits and a breathing colon.
+    # 14:05:38: centered time inside the seconds wake.
     - platform: clock
       id: clock_digital
       dashboard_id: clock_digital
       face: digital
       fixed_time: 1616421938
+
+    # Together with 14:05, these exercise every numeral and the track seam.
+    - platform: clock
+      id: clock_digital_round
+      dashboard_id: clock_digital_round
+      face: digital
+      fixed_time: 1616401560
+
+    - platform: clock
+      id: clock_digital_curves
+      dashboard_id: clock_digital_curves
+      face: digital
+      fixed_time: 1616434799
 
 display:
   - platform: pixoo64_render_test
@@ -1728,21 +1741,39 @@ display:
       - dashboard: clock_binary
         now_ms: 480
         snapshot: clock_binary
-      # Rounded cyan segments sweep in left to right over a visible colon. The
-      # first digit reaches its flare at 63ms, the sweep spans the display at
-      # 240ms, and every segment has settled by 405ms.
+      # The time fades in uniformly while the seconds wake travels clockwise.
+      # Its extra revolution eases into the live seconds phase at 1600ms.
       - dashboard: clock_digital
         now_ms: 0
         snapshot: clock_digital_entry
       - dashboard: clock_digital
-        now_ms: 63
+        now_ms: 350
         snapshot: clock_digital_load_start
       - dashboard: clock_digital
-        now_ms: 240
+        now_ms: 800
         snapshot: clock_digital_load
       - dashboard: clock_digital
-        now_ms: 405
+        now_ms: 1200
+        snapshot: clock_digital_load_end
+      - dashboard: clock_digital
+        now_ms: 1599
+        snapshot: clock_digital_handoff_before
+      - dashboard: clock_digital
+        now_ms: 1600
         snapshot: clock_digital
+      - dashboard: clock_digital
+        now_ms: 1601
+        snapshot: clock_digital_handoff_after
+      - dashboard: clock_digital_round
+        now_ms: 0
+      - dashboard: clock_digital_round
+        now_ms: 1600
+        snapshot: clock_digital_round
+      - dashboard: clock_digital_curves
+        now_ms: 0
+      - dashboard: clock_digital_curves
+        now_ms: 1600
+        snapshot: clock_digital_curves
       # With no previous dashboard, the controller owns the loading frame until
       # the first source condition initializes the weather face.
       - dashboard: weather_landscape_loading
