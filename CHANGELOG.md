@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.1.0...v1.2.0) (2026-10-17)
+
+
+### Features
+
+* redesign digital clock with perimeter wake ([ea669dd](https://github.com/simplyRoba/pixoo-firmware/commit/ea669dd07cf6abee11d1326a8614339c8eee9d51))
+
 ## [1.1.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.0.0...v1.1.0) (2026-10-08)
 
 
