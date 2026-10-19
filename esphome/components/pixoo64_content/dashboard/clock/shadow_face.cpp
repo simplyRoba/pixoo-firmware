@@ -40,14 +40,13 @@ constexpr int kOne = 256;
 constexpr int kDirectionScale = 32768;
 constexpr int kHourLength = 16 * kOne;
 constexpr int kMinuteLength = 27 * kOne;
-constexpr int kHourWidth = 333;
-constexpr int kMinuteWidth = 230;
+constexpr int kHourWidth = kOne / 2;
+constexpr int kMinuteWidth = kOne / 2;
 constexpr int kSecondLength = 28 * kOne;
 constexpr int kSecondWidth = 77;
-constexpr int kSecondTail = 4 * kOne;
+constexpr int kSecondTail = 0;
 constexpr int kSecondStrokeWidth = kOne / 2;
 constexpr int kSecondInk = detail::kShadowSecondInk;
-constexpr int kHubRadius = 5 * kOne / 4;
 
 constexpr int ClampByte(int value) {
   return value < 0 ? 0 : (value > 255 ? 255 : value);
@@ -123,9 +122,8 @@ struct Direction {
   }
 };
 
-// Rounded, finite hand body with a tail behind the pivot. The octagonal norm
-// only affects subpixel corner coverage.
-int BodyDistance(int along, int across, int length, int width, int tail = 2 * kOne) {
+// Rounded, finite hand body. The octagonal norm only affects subpixel corners.
+int BodyDistance(int along, int across, int length, int width, int tail = 0) {
   const int radius = Min(width, 154);
   const int qa = Abs(along - (length - tail) / 2) -
                  (length + tail) / 2 + radius;
@@ -134,14 +132,14 @@ int BodyDistance(int along, int across, int length, int width, int tail = 2 * kO
   return Max(oa, os) + Min(oa, os) * 3 / 8 + Min(Max(qa, qs), 0) - radius;
 }
 
-int BodyCoverage(int along, int across, int length, int width, int tail = 2 * kOne) {
+int BodyCoverage(int along, int across, int length, int width, int tail = 0) {
   if (along <= -tail - 128 || along >= length + 128 || Abs(across) >= width + 128)
     return 0;
   return ClampByte(128 - BodyDistance(along, across, length, width, tail));
 }
 
 std::array<Point, 4> BodyCorners(const Direction &direction, int length, int width,
-                                int tail = 2 * kOne) {
+                                int tail = 0) {
   return {direction.World(-tail, -width), direction.World(length, -width),
           direction.World(length, width), direction.World(-tail, width)};
 }
@@ -364,7 +362,7 @@ LightSample SampleHand(int along, int across, int length, int width) {
   const bool edge_floor = edge_front > 0 || (edge_front == 0 && end == 0);
   const bool cap_floor = cap_along > 0 || (cap_along == 0 && across == 0);
   // Outside these bounds the crease table index saturates to its zero entry.
-  const bool edge_crease = Abs(side) <= 361 && end <= 361;
+  const bool edge_crease = Abs(across) <= 361 && end <= 361;
   const bool tip_crease = Abs(across) <= 361 && Abs(cap_along) <= 361;
   int edge_light = 0, cap_light = 0, crease = 0, cap_crease = 0;
   if (edge_floor || edge_crease) {
@@ -374,8 +372,10 @@ LightSample SampleHand(int along, int across, int length, int width) {
                                kEmissionDiffuse[Min(squared >> 19, 255)]);
       edge_light = Mul(field, EmissionFacing(end, edge_front, false));
     }
+    // Direct emission follows the hand axis, not an offset beside its body.
     if (edge_crease)
-      crease = kEmissionCrease[Min(squared >> 9, 255)];
+      crease = Mul(kEmissionCrease[Min((across * across + end * end) >> 9, 255)],
+                   ClampByte(along + kOne / 2));
   }
   if (cap_floor || tip_crease) {
     const int squared = across * across + cap_along * cap_along;
@@ -413,7 +413,7 @@ int SurfaceGain(int emission, Point surface, const Direction &emitter, int side,
 int Shade(const LightSample &hour, const LightSample &minute,
           int hour_edge_visible, int hour_cap_visible,
           int minute_edge_visible, int minute_cap_visible,
-          int second_body, int second, int hub) {
+          int second_body, int second) {
   if ((hour.edge_light | hour.cap_light | minute.edge_light | minute.cap_light |
        hour.crease | minute.crease) == 0)
     return Mul(kSecondInk, second);
@@ -423,19 +423,17 @@ int Shade(const LightSample &hour, const LightSample &minute,
   const int minute_light = Screen(Mul(minute.edge_light, minute_edge_visible),
                                   Mul(minute.cap_light, minute_cap_visible));
   int value = Mul(Screen(hour_light, minute_light), outside_hands);
-  const int hour_edge = Mul(hour.crease, outside_hands);
-  const int minute_edge = Mul(minute.crease, 255 - minute.body);
+  const int hour_edge = Mul(hour.crease, 255 - minute.body);
+  const int minute_edge = minute.crease;
   value = Screen(value, Screen(hour_edge, minute_edge));
   value = Mul(value, 255 - second_body);
-  value = Mul(value, 255 - hub);
   return Mul(value, 255 - second) + Mul(kSecondInk, second);
 }
 
 }  // namespace
 
 uint8_t SHADOW_HOT detail::ShadowSecondCoverage(int along, int across) {
-  // The unlit counterweight remains part of the occlusion geometry.
-  return BodyCoverage(along, across, kSecondLength, kSecondStrokeWidth, 0);
+  return BodyCoverage(along, across, kSecondLength, kSecondStrokeWidth, kSecondTail);
 }
 
 void ShadowFace::OnShow(uint32_t now_ms) {
@@ -482,7 +480,6 @@ void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_r
   for (int y = first_row; y < last_row; y += row_step) {
     uint8_t *row = gray + (y - first_row) * pixoo::kWidth;
     const int dy = 2 * y - 63;
-    const int root_y = Abs(dy);
     int ah = -63 * hour.x + dy * hour.y;
     int sh = 63 * hour.y + dy * hour.x;
     int am = -63 * minute.x + dy * minute.y;
@@ -507,15 +504,6 @@ void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_r
             Mul(m.cap_crease, SurfaceGain(m.cap_crease, {kMinuteLength, 0}, minute, -1,
             hour, kHourLength, kHourWidth, second, false)));
       }
-      int hub = 0;
-      const int root_x = Abs(2 * x - 63);
-      if (root_x < 9 && root_y < 9) {
-        const int distance = Max(root_x, root_y) * 128 + Min(root_x, root_y) * 48;
-        hub = ClampByte(kHubRadius + kOne / 2 - distance);
-        const int edge_gain = ClampByte((distance - kOne) / 2);
-        h.crease = Mul(h.crease, edge_gain);
-        m.crease = Mul(m.crease, edge_gain);
-      }
       const int s_along = as / 256, s_across = ss / 256;
       const int second_body = BodyCoverage(
           s_along, s_across, kSecondLength, kSecondWidth, kSecondTail);
@@ -529,7 +517,7 @@ void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_r
       const int mc = exposed && m.cap_light != 0
           ? LineVisibility(minute_shadows.cap, m_across + kMinuteWidth, m_along) : 0;
       const int value = Shade(h, m, he, hc, me, mc,
-          second_body, detail::ShadowSecondCoverage(s_along, s_across), hub);
+          second_body, detail::ShadowSecondCoverage(s_along, s_across));
       *row++ = static_cast<uint8_t>(Mul(value, opacity));
       ah += 2 * hour.x;
       sh -= 2 * hour.y;

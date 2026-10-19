@@ -477,6 +477,17 @@ void RenderTestDisplay::setup() {
         return this->framebuffer_[(y * 64 + x) * 3];
       };
       shadow_state({0, 0, 0, true}, 10000, 129, 255);
+      shadow_state({11, 0, 0, true}, 10500, 129, 255);
+      check("clock_shadow_eleven");
+      constexpr double kElevenRadians = 330.0 * 3.14159265358979323846 / 180.0;
+      for (int along = 4; along <= 14; ++along) {
+        const int x = static_cast<int>(std::lround(31.5 + along * std::sin(kElevenRadians)));
+        const int y = static_cast<int>(std::lround(31.5 - along * std::cos(kElevenRadians)));
+        if (gray_at(x, y) < 128) {
+          std::printf("render test: FAILED shadow clock hour hand on its axis at 11:00 (%d,%d)\n", x, y);
+          ++failures;
+        }
+      }
       shadow_state({3, 15, 0, true}, 11000, 129, 255);
       check("clock_shadow_overlap_exact");
       if (gray_at(46, 26) < 16 || gray_at(46, 39) < 16) {
@@ -490,12 +501,12 @@ void RenderTestDisplay::setup() {
       check("clock_shadow_midnight_exact");
       if (gray_at(31, 32) != 0 || gray_at(32, 32) != 0 ||
           gray_at(31, 31) < 64 || gray_at(32, 31) < 64) {
-        std::printf("render test: FAILED shadow clock matte joint/seconds attachment\n");
+        std::printf("render test: FAILED shadow clock rear glint/seconds attachment\n");
         ++failures;
       }
       for (int y = 6; y <= 29; ++y) {
-        if (gray_at(30, y) < 128) {
-          std::printf("render test: FAILED shadow clock continuous minute edge at y=%d\n", y);
+        if (gray_at(31, y) < 128 || gray_at(32, y) < 128) {
+          std::printf("render test: FAILED shadow clock continuous centred minute hand at y=%d\n", y);
           ++failures;
         }
       }
@@ -512,6 +523,17 @@ void RenderTestDisplay::setup() {
       shadow_state({12, 0, 0, true}, 14000, 129, 255);
       if (this->framebuffer_ != midnight_frame) {
         std::printf("render test: FAILED shadow clock 12-hour periodicity\n");
+        ++failures;
+      }
+      shadow_state({10, 9, 30, true}, 18000, 129, 255);
+      for (int y = 28; y <= 29; ++y) {
+        if (gray_at(31, y) < 200 || gray_at(32, y) < 200) {
+          std::printf("render test: FAILED shadow clock rear seconds-body occlusion at y=%d\n", y);
+          ++failures;
+        }
+      }
+      if (gray_at(31, 31) < 128 || gray_at(32, 31) < 128) {
+        std::printf("render test: FAILED shadow clock shared hand junction\n");
         ++failures;
       }
       // Crossing the minute emitter changes the illuminated background,
