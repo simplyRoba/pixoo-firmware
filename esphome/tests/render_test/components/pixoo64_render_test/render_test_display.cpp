@@ -189,8 +189,7 @@ void RenderTestDisplay::setup() {
     if (this->animation_only_) {
       for (const AnimationFrame &frame : this->animation_frames_) {
         if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
-                                 frame.base_visible, frame.stopwatch,
-                                 frame.timer)) {
+                                 frame.base_visible, frame.timing)) {
           std::printf("render test: FAILED to render %s at %ums\n",
                       frame.dashboard_id.c_str(), frame.now_ms);
           ++failures;
@@ -583,8 +582,7 @@ void RenderTestDisplay::setup() {
 
     for (const AnimationFrame &frame : this->animation_frames_) {
       if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
-                               frame.base_visible, frame.stopwatch,
-                               frame.timer)) {
+                               frame.base_visible, frame.timing)) {
         std::printf("render test: FAILED to render %s at %ums\n",
                     frame.dashboard_id.c_str(), frame.now_ms);
         ++failures;
@@ -958,8 +956,7 @@ void RenderTestDisplay::setup() {
       overlay.reaction = reaction;
       pixoo::FrameView frame;
       if (!this->content_controller_->RenderContent(
-              elapsed_ms, "clock_binary", pixoo::StopwatchSnapshot{},
-              pixoo::TimerSnapshot{}, &overlay, elapsed_ms, true, true, false,
+              elapsed_ms, "clock_binary", {}, &overlay, elapsed_ms, true, true, false,
               true, &frame) ||
           !frame.valid() || frame.size != this->framebuffer_.size())
         return false;
@@ -1037,7 +1034,7 @@ void RenderTestDisplay::setup() {
     pixoo::FrameView weather_reaction_frame;
     weather_reaction_valid =
         weather_reaction_valid && this->content_controller_->RenderContent(
-                                      2048, "weather_landscape_day", {}, {},
+                                      2048, "weather_landscape_day", {},
                                       &weather_reaction, 0, true, true, false,
                                       true, &weather_reaction_frame) &&
         weather_reaction_frame.valid() &&
@@ -1056,7 +1053,7 @@ void RenderTestDisplay::setup() {
         pixoo::ReactionVisibleDurationMs(weather_reaction.reaction) * 7 / 20;
     weather_reaction_valid =
         weather_reaction_valid && this->content_controller_->RenderContent(
-                                      2048, "weather_landscape_day", {}, {},
+                                      2048, "weather_landscape_day", {},
                                       &weather_reaction,
                                       weather_reaction_elapsed, true, true,
                                       false, true, &weather_reaction_frame) &&
@@ -1114,16 +1111,14 @@ void RenderTestDisplay::setup() {
     replacement_valid =
         replacement_valid &&
         this->content_controller_->RenderContent(
-            16, "clock_binary", pixoo::StopwatchSnapshot{},
-            pixoo::TimerSnapshot{}, &replacement_overlay, 16, true, false, true,
+            16, "clock_binary", {}, &replacement_overlay, 16, true, false, true,
             false, &base_refresh_frame) &&
         base_refresh_frame.valid();
     pixoo::FrameView replacement_frame;
     replacement_valid =
         replacement_valid &&
         this->content_controller_->RenderContent(
-            33, "clock_binary", pixoo::StopwatchSnapshot{},
-            pixoo::TimerSnapshot{}, &replacement_overlay, 33, true, false,
+            33, "clock_binary", {}, &replacement_overlay, 33, true, false,
             false, true, &replacement_frame) &&
         replacement_frame.valid() &&
         replacement_frame.size == this->framebuffer_.size() &&
@@ -1256,7 +1251,7 @@ void RenderTestDisplay::setup() {
                                          bool base_visible) {
       pixoo::FrameView frame;
       return this->content_controller_->RenderContent(
-          now_ms, id, {}, {}, nullptr, 0, base_visible, false, true, false,
+          now_ms, id, {}, nullptr, 0, base_visible, false, true, false,
           &frame);
     };
     bool lifecycle_valid =
@@ -1450,9 +1445,9 @@ void RenderTestDisplay::setup() {
       ddp_valid &= this->framebuffer_ == expected;
       pixoo::FrameView frozen;
       ddp_valid &= this->content_controller_->RenderContent(
-          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 0, true, true, true, true, &frozen);
+          ddp.advance(), "__ddp", {}, &ddp_reaction, 0, true, true, true, true, &frozen);
       const bool control_rendered = this->content_controller_->RenderContent(
-          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 250, true, true, false, true, &frozen);
+          ddp.advance(), "__ddp", {}, &ddp_reaction, 250, true, true, false, true, &frozen);
       std::vector<uint8_t> frozen_copy;
       if (control_rendered && frozen.data != nullptr &&
           frozen.size == pixoo::ddp::kFrameBytes) {
@@ -1466,7 +1461,7 @@ void RenderTestDisplay::setup() {
       drain();  // No dashboard Tick during a reaction; Component::loop still runs.
       std::copy_n(latest_rgb, 3, expected.begin() + 6);
       const bool updated_rendered = this->content_controller_->RenderContent(
-          ddp.advance(), "__ddp", {}, {}, &ddp_reaction, 250, true, true, false, true, &frozen);
+          ddp.advance(), "__ddp", {}, &ddp_reaction, 250, true, true, false, true, &frozen);
       ddp_valid &= updated_rendered && frozen.data != nullptr &&
                    frozen.size == pixoo::ddp::kFrameBytes &&
                    frozen_copy.size() == frozen.size &&
@@ -1610,11 +1605,11 @@ void RenderTestDisplay::setup() {
         void HideBaseContent(uint32_t now) override { real.HideBaseContent(now); }
         void ReleaseOverlayResources() override { real.ReleaseOverlayResources(); }
         bool RenderContent(uint32_t now, const std::string &id,
-                           const pixoo::StopwatchSnapshot &stopwatch,
-                           const pixoo::TimerSnapshot &timer, const pixoo::Overlay *overlay,
+                           const pixoo::TimingSnapshot &timing,
+                           const pixoo::Overlay *overlay,
                            uint32_t elapsed, bool visible, bool frozen, bool base,
                            bool composite, pixoo::FrameView *frame) override {
-          return real.RenderContent(now, id, stopwatch, timer, overlay, elapsed,
+          return real.RenderContent(now, id, timing, overlay, elapsed,
                                     visible, frozen, base, composite, frame);
         }
       } renderer(*this->content_controller_, ddp);
@@ -1894,7 +1889,7 @@ void RenderTestDisplay::setup() {
       StaticNowPlayingSource::SetCurrentRenderTime(now_ms);
       pixoo::FrameView frame;
       const bool rendered = this->content_controller_->RenderContent(
-          now_ms, id, {}, {}, nullptr, 0, true, false, true, false, &frame);
+          now_ms, id, {}, nullptr, 0, true, false, true, false, &frame);
       if (!rendered || !frame.valid() || frame.size != this->framebuffer_.size())
         return false;
       std::memcpy(this->framebuffer_.data(), frame.data, frame.size);
@@ -1979,7 +1974,7 @@ void RenderTestDisplay::setup() {
     reaction_overlay.tag = pixoo::OverlayTag::kReaction;
     pixoo::FrameView reaction_frame;
     preparation_valid &= this->content_controller_->RenderContent(
-        2063, "__prepare_replacement", {}, {}, &reaction_overlay, 0, true,
+        2063, "__prepare_replacement", {}, &reaction_overlay, 0, true,
         true, false, false, &reaction_frame);
     preparation_valid &=
         waiting.cancel_count == waiting_cancel_before_reaction + 1 &&
@@ -1998,7 +1993,7 @@ void RenderTestDisplay::setup() {
                                          : 0;
     pixoo::FrameView hidden_weather_frame;
     this->content_controller_->RenderContent(
-        0, "weather_landscape_loading", {}, {}, nullptr, 0, false, false, true,
+        0, "weather_landscape_loading", {}, nullptr, 0, false, false, true,
         false, &hidden_weather_frame);
     bool weather_preparation_valid =
         this->weather_source_ != nullptr &&
@@ -2089,6 +2084,106 @@ void RenderTestDisplay::setup() {
         2u * pixoo::now_playing::kArtworkRgb565Bytes,
         sizeof(StaticNowPlayingSource));
 
+    {
+      struct CoveredDashboard final : pixoo64::dashboard::Dashboard {
+        int shows{0}, hides{0}, prepares{0}, ticks{0}, cancels{0};
+        uint32_t last_tick{0};
+        bool ready{true};
+        bool available() const override { return true; }
+        bool ReadyToShow() const override { return ready; }
+        void Prepare(uint32_t) override { ++prepares; }
+        void CancelPreparation(uint32_t) override { ++cancels; }
+        void Tick(uint32_t now) override { ++ticks; last_tick = now; }
+        void OnShow(uint32_t) override { ++shows; }
+        void OnHide(uint32_t) override { ++hides; }
+        void Render(display::Display &display) const override {
+          display.fill(Color(0, 40, 90));
+        }
+      } base;
+      base.set_id("base");
+      pixoo64::content::ContentController controller;
+      controller.add_dashboard(&base);
+      controller.set_default_dashboard("base");
+      pixoo::FrameView frame;
+      const auto render = [&](uint32_t now, pixoo::TimingSnapshot timing,
+                              const pixoo::Overlay *overlay = nullptr,
+                              uint32_t elapsed = 0, bool draw_base = true) {
+        return controller.RenderContent(now, "base", timing, overlay, elapsed,
+            true, overlay != nullptr && overlay->tag == pixoo::OverlayTag::kReaction,
+            draw_base, overlay != nullptr, &frame) && frame.valid();
+      };
+      const auto pixels = [&]() {
+        return std::vector<uint8_t>(frame.data, frame.data + frame.size);
+      };
+      bool valid = render(1, {});
+      const auto clean_base = pixels();
+      pixoo::TimingSnapshot timing{pixoo::TimingKind::kStopwatch,
+          pixoo::TimingPhase::kRunning, 123450, 0};
+      valid &= render(2, timing);
+      const auto clean_timing = pixels();
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= render(3, timing) && pixels() != clean_timing;
+      timing.kind = pixoo::TimingKind::kTimer;
+      timing.phase = pixoo::TimingPhase::kRunning;
+      valid &= render(4, timing);
+      const auto running_timer = pixels();
+      timing.phase = pixoo::TimingPhase::kFinished;
+      valid &= render(5, timing) && pixels() != running_timer;
+      pixoo::Overlay notification{};
+      notification.tag = pixoo::OverlayTag::kNotification;
+      notification.notification.text = "TIMING";
+      valid &= render(6, timing);
+      const auto clean_finished = pixels();
+      valid &= render(7, timing, &notification);
+      controller.filled_rectangle(0, 0, 64, 20, Color(90, 20, 180));
+      pixoo::Overlay reaction{};
+      reaction.tag = pixoo::OverlayTag::kReaction;
+      reaction.reaction = pixoo::Reaction::kCelebrate;
+      valid &= render(8, timing, &reaction, 0);
+      valid &= render(9, timing, &reaction, 250, false);
+      const auto reaction_pixels = pixels();
+      controller.ReleaseOverlayResources();
+      valid &= render(10, timing);
+      valid &= pixels() == clean_finished;
+      valid &= render(11, timing, &reaction, 0);
+      valid &= render(12, timing, &reaction, 250, false);
+      valid &= pixels() == reaction_pixels;
+      valid &= base.shows == 1 && base.hides == 0 &&
+               base.prepares == 1 && base.ticks == 1;
+      timing.phase = pixoo::TimingPhase::kIdle;
+      valid &= render(1000, timing) && pixels() == clean_base;
+      valid &= base.shows == 1 && base.hides == 0 &&
+               base.prepares == 1 && base.ticks == 2 && base.last_tick == 1000;
+      controller.HideBaseContent(1001);
+      valid &= base.hides == 1;
+
+      CoveredDashboard pending;
+      pending.ready = false;
+      pending.set_id("pending");
+      pixoo64::content::ContentController preparing;
+      preparing.add_dashboard(&pending);
+      preparing.set_default_dashboard("pending");
+      valid &= preparing.RenderContent(2000, "pending", {}, nullptr, 0,
+          true, false, true, false, &frame);
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= preparing.RenderContent(2010, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      pending.ready = true;
+      valid &= preparing.RenderContent(2020, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      valid &= pending.prepares == 1 && pending.cancels == 0 &&
+               pending.shows == 0 && pending.hides == 0 && pending.ticks == 0;
+      timing.phase = pixoo::TimingPhase::kIdle;
+      valid &= preparing.RenderContent(2030, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      valid &= pending.prepares == 2 && pending.cancels == 0 &&
+               pending.shows == 1 && pending.hides == 0 && pending.ticks == 1;
+      if (!valid) {
+        std::printf("render test: FAILED timing cover, phases, or clean reaction restore\n");
+        ++failures;
+      }
+    }
+
 #ifdef USE_PIXOO64_NOW_PLAYING
     failures += RunNowPlayingAdapterTests();
 #endif
@@ -2101,7 +2196,7 @@ bool RenderTestDisplay::render_frame_(
     uint32_t now_ms, const std::string &dashboard_id,
     const pixoo::Notification *notification,
     uint32_t notification_visible_elapsed_ms, bool base_visible,
-    pixoo::StopwatchSnapshot stopwatch, pixoo::TimerSnapshot timer) {
+    pixoo::TimingSnapshot timing) {
   if (this->content_controller_ == nullptr)
     return false;
   StaticWeatherSource::SetCurrentRenderTime(now_ms);
@@ -2115,7 +2210,7 @@ bool RenderTestDisplay::render_frame_(
   }
   pixoo::FrameView frame;
   if (!this->content_controller_->RenderContent(
-          now_ms, dashboard_id, stopwatch, timer, overlay_ptr,
+          now_ms, dashboard_id, timing, overlay_ptr,
           notification_visible_elapsed_ms, base_visible, false, true,
           notification != nullptr, &frame) ||
       !frame.valid() || frame.size != this->framebuffer_.size())
@@ -2137,20 +2232,16 @@ void RenderTestDisplay::add_animation_frame(std::string dashboard_id,
                                             uint32_t now_ms,
                                             std::string snapshot_id,
                                             bool base_visible,
-                                            uint32_t stopwatch_elapsed_ms,
-                                            bool stopwatch_running,
-                                            uint32_t timer_remaining_ms,
-                                            bool timer_running) {
+                                            pixoo::TimingSnapshot timing) {
   this->animation_frames_.push_back(AnimationFrame{
       std::move(dashboard_id), now_ms, std::move(snapshot_id), base_visible,
-      pixoo::StopwatchSnapshot{stopwatch_elapsed_ms, stopwatch_running},
-      pixoo::TimerSnapshot{timer_remaining_ms, timer_running}});
+      timing});
 }
 
 bool RenderTestDisplay::has_animation_frames_(
     const std::string &dashboard_id) const {
   for (const AnimationFrame &frame : this->animation_frames_) {
-    if (frame.dashboard_id == dashboard_id)
+    if (!frame.dashboard_id.empty() && frame.dashboard_id == dashboard_id)
       return true;
   }
   return false;

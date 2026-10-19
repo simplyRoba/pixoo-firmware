@@ -14,19 +14,24 @@ struct LightState {
 
 constexpr uint32_t kStopwatchMaximumElapsedMs = 60u * 60u * 1000u;
 
-// Application-owned stopwatch state passed by value to its renderer.
-struct StopwatchSnapshot {
-  uint32_t elapsed_ms{0};
-  bool running{false};
-};
-
 constexpr uint32_t kTimerMaximumDurationMs = 100u * 60u * 1000u - 1u;
 
-// Application-owned countdown state passed by value to its renderer.
-struct TimerSnapshot {
-  uint32_t remaining_ms{0};
-  bool running{false};
+enum class TimingKind { kNone, kStopwatch, kTimer };
+enum class TimingPhase { kIdle, kRunning, kPaused, kFinished };
+
+struct TimingSnapshot {
+  TimingKind kind{TimingKind::kNone};
+  TimingPhase phase{TimingPhase::kIdle};
+  uint32_t value_ms{0};
+  uint32_t duration_ms{0};
+  bool active() const {
+    return kind != TimingKind::kNone && phase != TimingPhase::kIdle;
+  }
+  bool running() const { return phase == TimingPhase::kRunning; }
 };
+
+const char *TimingKindName(TimingKind kind);
+const char *TimingPhaseName(TimingPhase phase);
 
 constexpr size_t kMaximumNotificationTextBytes = 256;
 

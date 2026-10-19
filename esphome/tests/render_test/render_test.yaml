@@ -10,6 +10,7 @@ esphome:
   name: pixoo64-render-test
   includes:
     - ../../components/pixoo64_content/dashboard
+    - ../../components/pixoo64_content/timing
     - ../../components/pixoo64_content/notification
     - ../../components/pixoo64_content/reaction
     - ../../../pixoo_protocol/include/pixoo_cmd.h
@@ -1071,16 +1072,6 @@ pixoo64_content:
       face: analog
       fixed_time: 1616371200
 
-    - platform: timing
-      id: stopwatch_dashboard
-      dashboard_id: stopwatch
-      face: stopwatch
-
-    - platform: timing
-      id: timer_dashboard
-      dashboard_id: timer
-      face: timer
-
     # Midday: sun near the top of its arc over Berlin.
     - platform: weather
       id: weather_landscape_day
@@ -1679,38 +1670,26 @@ display:
       - dashboard: clock_analog_unset
         now_ms: 0
         snapshot: clock_analog_unset
-      # Stopwatch snapshots inject application-owned elapsed state.
-      - dashboard: stopwatch
+      - timing: {mode: stopwatch, state: running, value_ms: 0}
         now_ms: 0
-        stopwatch_elapsed_ms: 0
         snapshot: stopwatch_zero
-      - dashboard: stopwatch
+      - timing: {mode: stopwatch, state: running, value_ms: 1139270}
         now_ms: 500
-        stopwatch_elapsed_ms: 1139270
-        stopwatch_running: true
         snapshot: stopwatch_running
-      - dashboard: stopwatch
+      - timing: {mode: stopwatch, state: paused, value_ms: 1925430}
         now_ms: 600
-        stopwatch_elapsed_ms: 1925430
         snapshot: stopwatch_stopped
-      - dashboard: stopwatch
+      - timing: {mode: stopwatch, state: paused, value_ms: 3600000}
         now_ms: 700
-        stopwatch_elapsed_ms: 3600000
         snapshot: stopwatch_cap
-      # Countdown values round upward to the next displayed hundredth, so the
-      # face never reaches zero before the application timer does.
-      - dashboard: timer
+      - timing: {mode: timer, state: running, value_ms: 59991, duration_ms: 60000}
         now_ms: 0
-        timer_remaining_ms: 59991
-        timer_running: true
         snapshot: timer_running
-      - dashboard: timer
+      - timing: {mode: timer, state: paused, value_ms: 5999999, duration_ms: 5999999}
         now_ms: 0
-        timer_remaining_ms: 5999999
         snapshot: timer_stopped_max
-      - dashboard: timer
+      - timing: {mode: timer, state: finished, value_ms: 0, duration_ms: 60000}
         now_ms: 0
-        timer_remaining_ms: 0
         snapshot: timer_zero
       # The hero icon loops: rain falls through its band and every loop is a
       # pure function of the animation time, so a later frame in the loop

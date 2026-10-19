@@ -69,6 +69,77 @@ class EspHomeConfigTest(unittest.TestCase):
         result = self.run_config(self.fixture)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_dashboard_legacy_options_are_explicit(self):
+        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
+        mapping = re.search(r"    legacy_options: (\[.*?\])", production, re.DOTALL)
+        self.assertIsNotNone(mapping)
+        self.assertEqual(yaml.safe_load(mapping[1]), [
+            "text", "now_playing", "weather_forecast", "weather_landscape",
+            "equalizer_bars", "equalizer_waveform", "game_of_life", "clock_split_flap",
+            "clock_analog", "clock_binary", "clock_digital", "stopwatch", "timer",
+            "ddp", "clock_shadow",
+        ])
+        script = """
+from pathlib import Path
+from esphome.core import CORE
+from esphome.config import read_config
+CORE.config_path = Path('esphome/pixoo64.yaml').resolve()
+assert read_config({}) is not None
+from esphome.components.pixoo64.select import DASHBOARD_SCHEMA
+import esphome.config_validation as cv
+base = dict(name='No migration', options=['text', 'ddp'], initial_option='text')
+assert 'legacy_options' not in DASHBOARD_SCHEMA(base)
+assert DASHBOARD_SCHEMA(dict(base, name='Explicit migration', legacy_options=['ddp', 'text', 'removed']))['legacy_options'] == ['ddp', 'text', 'removed']
+for index, changes in enumerate((dict(legacy_options=['ddp', 'ddp']), dict(options=['text', 'text']), dict(initial_option='missing'))):
+    try:
+        DASHBOARD_SCHEMA(dict(base, **changes, name=f'Invalid {index}'))
+    except cv.Invalid:
+        pass
+    else:
+        raise AssertionError(changes)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=self.fixture,
+            text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+        self.assertRegex(generated, r'panel_dashboard->set_legacy_options\(\{.*?"stopwatch".*?"timer".*?"ddp".*?\}\);')
+
+    def test_dashboard_ids_use_utf8_byte_limits(self):
+        script = """
+from pathlib import Path
+from esphome.core import CORE
+from esphome.config import read_config
+CORE.config_path = Path('esphome/pixoo64.yaml').resolve()
+assert read_config({}) is not None
+from esphome.components.pixoo64.select import DASHBOARD_SCHEMA
+import esphome.config_validation as cv
+for field in ('options', 'legacy_options'):
+    for value, valid in [('é' * 15, True), ('é' * 16, False), ('x' * 31, True), ('x' * 32, False)]:
+        config = dict(name=f'{field} {len(value)} {value[0]}', options=['text'], initial_option='text')
+        config[field] = [value]
+        if field == 'options':
+            config['initial_option'] = value
+        try:
+            validated = DASHBOARD_SCHEMA(config)
+        except cv.Invalid:
+            assert not valid, (field, value)
+        else:
+            assert valid, (field, value)
+            assert validated[field] == [value]
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=self.fixture,
+            text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_ddp_catalog_and_codegen(self):
         production = (self.fixture / "esphome/pixoo64.yaml").read_text()
         self.assertEqual(production.count("    - platform: ddp\n"), 1)
@@ -385,12 +456,75 @@ class EspHomeConfigTest(unittest.TestCase):
         self.assertIn("  verify_ssl: false\n", text)
         self.assertIn("    http_request: NONE\n", text)
 
-    def test_production_config_has_both_timing_faces(self):
-        text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
-        self.assertEqual(text.count("    - platform: timing\n"), 2)
-        for face in ("stopwatch", "timer"):
-            self.assertEqual(text.count(f"      dashboard_id: {face}\n"), 1)
-            self.assertEqual(text.count(f"      face: {face}\n"), 1)
+    def test_timing_controls_and_codegen(self):
+        text = (self.fixture / "esphome/pixoo64.yaml").read_text()
+        self.assertNotIn("platform: timing", text)
+        self.assertIn("components/pixoo64_content/timing\n", text)
+        self.assertIn("  reboot_timeout: 0s\n", text)
+        self.assertIn("    timer_duration: timing_timer_duration\n", text)
+        self.assertIn("    initial_value: 300\n", text)
+        self.assertIn("    min_value: 1\n    max_value: 5999\n    step: 1\n    mode: box\n", text)
+        self.assertIn("        duration_seconds: int\n      supports_response: status\n", text)
+        self.assertEqual(text.count("TimerStart(duration_seconds)"), 1)
+        self.assertIn("                  success: false\n", text)
+        actions = [f"{kind}_{verb}" for kind in ("stopwatch", "timer")
+                   for verb in ("start", "pause", "resume", "stop")]
+        for action in actions:
+            self.assertEqual(text.count(f"    - action: {action}\n"), 1)
+            self.assertIn(f"    {action}:\n", text)
+        for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start"):
+            self.assertNotIn(old, text)
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+        for statement in (
+            "pixoo64::DashboardSelect();", "pixoo64::StopwatchPauseAction<>",
+            "pixoo_firmware->set_timer_duration(timing_timer_duration);",
+            "pixoo_firmware->set_timing_mode(", "pixoo_firmware->set_timing_state(",
+            "pixoo_firmware->set_stopwatch_elapsed(", "pixoo_firmware->set_timer_remaining(",
+        ):
+            self.assertIn(statement, generated)
+        self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 8)
+        self.assertNotIn("SelectDashboard(x)", generated)
+
+    def test_timing_action_validation(self):
+        cases = [
+            (f"        - pixoo64.{old}: pixoo_firmware\n", "Unable to find action")
+            for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start")
+        ]
+        cases += [
+            ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n", "'duration_seconds' is a required option"),
+            ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_ms: 1000\n", "duration_ms"),
+            ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 0\n", "at least 1"),
+            ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 6000\n", "at most 5999"),
+        ]
+        for replacement, message in cases:
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as tempdir:
+                repo = Path(tempdir) / "repo"
+                shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
+                path = repo / "esphome/pixoo64.yaml"
+                path.write_text(path.read_text().replace(
+                    "        - pixoo64.timer_pause: pixoo_firmware\n", replacement, 1))
+                result = self.run_config(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout + result.stderr)
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
+            path = repo / "esphome/pixoo64.yaml"
+            path.write_text(path.read_text().replace(
+                "        - pixoo64.timer_pause: pixoo_firmware\n",
+                "        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 300\n", 1))
+            result = subprocess.run(
+                [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+                cwd=repo, text=True, capture_output=True, timeout=60, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            generated = (repo / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+            self.assertRegex(generated, r"->set_duration_seconds\(\[\]\(\) -> int32_t \{\s*return 300;")
 
     def test_production_config_has_all_clock_faces(self):
         text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
@@ -409,7 +543,7 @@ class EspHomeConfigTest(unittest.TestCase):
             "text", "now_playing", "weather_forecast", "weather_landscape",
             "equalizer_bars", "equalizer_waveform", "game_of_life",
             "clock_split_flap", "clock_analog", "clock_binary", "clock_digital",
-            "stopwatch", "timer", "ddp", "clock_shadow",
+            "ddp", "clock_shadow",
         ])
         self.assertIn("  default_dashboard: clock_analog\n", production)
         self.assertIn("    initial_option: clock_analog\n", production)
@@ -658,78 +792,18 @@ class EspHomeConfigTest(unittest.TestCase):
                 "dashboard select initial_option must match the renderer default_dashboard",
             ),
             (
-                "stopwatch timing dashboard ID",
+                "removed timing dashboard schema",
                 "esphome/pixoo64.yaml",
-                "      dashboard_id: stopwatch\n      frame_interval: 33ms\n      face: stopwatch\n",
-                "      dashboard_id: stopwatch_other\n      frame_interval: 33ms\n      face: stopwatch\n",
-                "the stopwatch timing dashboard_id must be stopwatch",
+                "    - platform: ddp\n",
+                "    - platform: timing\n",
+                "Unknown value 'timing'",
             ),
             (
-                "timer timing dashboard ID",
+                "timer duration input required",
                 "esphome/pixoo64.yaml",
-                "      dashboard_id: timer\n      frame_interval: 33ms\n      face: timer\n",
-                "      dashboard_id: timer_other\n      frame_interval: 33ms\n      face: timer\n",
-                "the timer timing dashboard_id must be timer",
-            ),
-            (
-                "duplicate stopwatch timing face",
-                "esphome/pixoo64.yaml",
-                """    - platform: timing
-      id: stopwatch_dashboard
-      dashboard_id: stopwatch
-      frame_interval: 33ms
-      face: stopwatch
-""",
-                """    - platform: timing
-      id: stopwatch_dashboard
-      dashboard_id: stopwatch
-      frame_interval: 33ms
-      face: stopwatch
-
-    - platform: timing
-      id: stopwatch_dashboard_other
-      dashboard_id: stopwatch_other
-      frame_interval: 33ms
-      face: stopwatch
-""",
-                "at most one stopwatch timing dashboard may be configured",
-            ),
-            (
-                "duplicate timer timing face",
-                "esphome/pixoo64.yaml",
-                """    - platform: timing
-      id: timer_dashboard
-      dashboard_id: timer
-      frame_interval: 33ms
-      face: timer
-""",
-                """    - platform: timing
-      id: timer_dashboard
-      dashboard_id: timer
-      frame_interval: 33ms
-      face: timer
-
-    - platform: timing
-      id: timer_dashboard_other
-      dashboard_id: timer_other
-      frame_interval: 33ms
-      face: timer
-""",
-                "at most one timer timing dashboard may be configured",
-            ),
-            (
-                "missing timing face",
-                "esphome/pixoo64.yaml",
-                "      face: timer\n",
+                "    timer_duration: timing_timer_duration\n",
                 "",
-                "'face' is a required option",
-            ),
-            (
-                "invalid timing face",
-                "esphome/pixoo64.yaml",
-                "      face: timer\n",
-                "      face: countdown\n",
-                "Unknown value 'countdown'",
+                "'timer_duration' is a required option",
             ),
             (
                 "invalid clock face",

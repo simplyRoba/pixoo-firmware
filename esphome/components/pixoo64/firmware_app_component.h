@@ -3,6 +3,8 @@
 #include <optional>
 #include <string>
 
+#include "esphome/components/button/button.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/light/light_state.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/select/select.h"
@@ -17,6 +19,11 @@
 #include "light_state_publication_guard.h"
 
 namespace esphome::pixoo64 {
+
+class TimingButton final : public button::Button {
+ protected:
+  void press_action() override {}
+};
 
 class FirmwareAppComponent final : public PollingComponent,
                                    public light::LightRemoteValuesListener,
@@ -93,12 +100,19 @@ class FirmwareAppComponent final : public PollingComponent,
   void ClearOverlayQueue();
   void BeginFirmwareUpdate();
   void StopwatchStart();
+  void StopwatchPause();
+  void StopwatchResume();
   void StopwatchStop();
-  void StopwatchReset();
-  void TimerSet(int32_t duration_ms);
-  void TimerStart();
+  bool TimerStart(int32_t duration_seconds);
+  void TimerPause();
+  void TimerResume();
   void TimerStop();
-  void TimerReset();
+  void set_timer_duration(number::Number *value) { timer_duration_ = value; }
+  void set_timing_mode(text_sensor::TextSensor *value) { timing_mode_ = value; }
+  void set_timing_state(text_sensor::TextSensor *value) { timing_state_ = value; }
+  void set_stopwatch_elapsed(sensor::Sensor *value) { stopwatch_elapsed_ = value; }
+  void set_timer_remaining(sensor::Sensor *value) { timer_remaining_ = value; }
+  void set_timing_button(uint8_t index, button::Button *value) { timing_buttons_[index] = value; }
   void RequestReboot();
 
   void Publish(pixoo::LightState state, bool persistent) override;
@@ -109,6 +123,16 @@ class FirmwareAppComponent final : public PollingComponent,
   void EndRegularFrame() override;
 
  protected:
+  void PublishTiming_(uint32_t now_ms, bool force = false);
+  number::Number *timer_duration_{nullptr};
+  text_sensor::TextSensor *timing_mode_{nullptr};
+  text_sensor::TextSensor *timing_state_{nullptr};
+  sensor::Sensor *stopwatch_elapsed_{nullptr};
+  sensor::Sensor *timer_remaining_{nullptr};
+  button::Button *timing_buttons_[8]{};
+  pixoo::TimingSnapshot published_timing_{};
+  uint32_t timing_published_ms_{0};
+  bool timing_published_{false};
   static bool ParseSound_(const std::string &name, pixoo::Sound *sound);
   pixoo::LightState ReadLight_() const;
   pixoo::SolarBrightnessConfig ReadSolarBrightness_() const;
@@ -211,43 +235,26 @@ class StopwatchStopAction : public Action<Ts...> {
   FirmwareAppComponent *parent_;
 };
 
-template<typename... Ts>
-class StopwatchResetAction : public Action<Ts...> {
- public:
-  explicit StopwatchResetAction(FirmwareAppComponent *parent)
-      : parent_(parent) {}
-
-  void play(const Ts &...x) override {
-    (void) sizeof...(x);
-    this->parent_->StopwatchReset();
-  }
-
- protected:
-  FirmwareAppComponent *parent_;
-};
-
-template<typename... Ts>
-class TimerSetAction : public Action<Ts...> {
- public:
-  explicit TimerSetAction(FirmwareAppComponent *parent) : parent_(parent) {}
-
-  TEMPLATABLE_VALUE(int32_t, duration_ms)
-
-  void play(const Ts &...x) override {
-    this->parent_->TimerSet(this->duration_ms_.value(x...));
-  }
-
- protected:
-  FirmwareAppComponent *parent_;
-};
+#define PIXOO_TIMING_ACTION(Name) \
+  template<typename... Ts> class Name##Action : public Action<Ts...> { \
+   public: \
+    explicit Name##Action(FirmwareAppComponent *parent) : parent_(parent) {} \
+    void play(const Ts &...x) override { (void) sizeof...(x); parent_->Name(); } \
+   protected: FirmwareAppComponent *parent_; \
+  };
+PIXOO_TIMING_ACTION(StopwatchPause)
+PIXOO_TIMING_ACTION(StopwatchResume)
+PIXOO_TIMING_ACTION(TimerPause)
+PIXOO_TIMING_ACTION(TimerResume)
+#undef PIXOO_TIMING_ACTION
 
 template<typename... Ts>
 class TimerStartAction : public Action<Ts...> {
  public:
   explicit TimerStartAction(FirmwareAppComponent *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(int32_t, duration_seconds)
   void play(const Ts &...x) override {
-    (void) sizeof...(x);
-    this->parent_->TimerStart();
+    this->parent_->TimerStart(this->duration_seconds_.value(x...));
   }
  protected:
   FirmwareAppComponent *parent_;
@@ -260,18 +267,6 @@ class TimerStopAction : public Action<Ts...> {
   void play(const Ts &...x) override {
     (void) sizeof...(x);
     this->parent_->TimerStop();
-  }
- protected:
-  FirmwareAppComponent *parent_;
-};
-
-template<typename... Ts>
-class TimerResetAction : public Action<Ts...> {
- public:
-  explicit TimerResetAction(FirmwareAppComponent *parent) : parent_(parent) {}
-  void play(const Ts &...x) override {
-    (void) sizeof...(x);
-    this->parent_->TimerReset();
   }
  protected:
   FirmwareAppComponent *parent_;

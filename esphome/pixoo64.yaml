@@ -19,6 +19,7 @@ esphome:
     - components/pixoo64_content/dashboard
     - components/pixoo64_content/notification
     - components/pixoo64_content/reaction
+    - components/pixoo64_content/timing
     # pixoo_protocol
     - ../pixoo_protocol/include/pixoo_cmd.h
     - ../pixoo_protocol/include/pixoo_frame.h
@@ -29,6 +30,7 @@ esphome:
     - ../pixoo_protocol/src/pixoo_uart.cpp
     # pixoo_app
     - ../pixoo_app/include/app_state.h
+    - ../pixoo_app/include/dashboard_restore.h
     - ../pixoo_app/src/app_state.cpp
     - ../pixoo_app/include/light_state_publication_guard.h
     - ../pixoo_app/include/frame_metrics.h
@@ -143,6 +145,7 @@ captive_portal:
 
 api:
   id: panel_api
+  reboot_timeout: 0s
   homeassistant_states: true
   encryption:
     key: !secret api_encryption_key
@@ -185,28 +188,39 @@ api:
     - action: stopwatch_start
       then:
         - pixoo64.stopwatch_start: pixoo_firmware
+    - action: stopwatch_pause
+      then:
+        - pixoo64.stopwatch_pause: pixoo_firmware
+    - action: stopwatch_resume
+      then:
+        - pixoo64.stopwatch_resume: pixoo_firmware
     - action: stopwatch_stop
       then:
         - pixoo64.stopwatch_stop: pixoo_firmware
-    - action: stopwatch_reset
-      then:
-        - pixoo64.stopwatch_reset: pixoo_firmware
-    - action: timer_set
-      variables:
-        duration_ms: int
-      then:
-        - pixoo64.timer_set:
-            id: pixoo_firmware
-            duration_ms: !lambda return duration_ms;
     - action: timer_start
+      variables:
+        duration_seconds: int
+      supports_response: status
       then:
-        - pixoo64.timer_start: pixoo_firmware
+        - if:
+            condition:
+              lambda: return id(pixoo_firmware).TimerStart(duration_seconds);
+            then:
+              - api.respond:
+                  success: true
+            else:
+              - api.respond:
+                  success: false
+                  error_message: Duration must be between 1 and 5999 seconds
+    - action: timer_pause
+      then:
+        - pixoo64.timer_pause: pixoo_firmware
+    - action: timer_resume
+      then:
+        - pixoo64.timer_resume: pixoo_firmware
     - action: timer_stop
       then:
         - pixoo64.timer_stop: pixoo_firmware
-    - action: timer_reset
-      then:
-        - pixoo64.timer_reset: pixoo_firmware
     - action: now_playing_configure
       variables:
         entity_id: string
@@ -309,6 +323,32 @@ pixoo64:
     enable_switch: mic_enable
   light: panel_light
   dashboard_select: panel_dashboard
+  timing:
+    timer_duration: timing_timer_duration
+    stopwatch_start:
+      name: Stopwatch Start
+    stopwatch_pause:
+      name: Stopwatch Pause
+    stopwatch_resume:
+      name: Stopwatch Resume
+    stopwatch_stop:
+      name: Stopwatch Stop
+    timer_start:
+      name: Timer Start
+    timer_pause:
+      name: Timer Pause
+    timer_resume:
+      name: Timer Resume
+    timer_stop:
+      name: Timer Stop
+    mode:
+      name: Timing Mode
+    state:
+      name: Timing State
+    stopwatch_elapsed:
+      name: Stopwatch Elapsed
+    timer_remaining:
+      name: Timer Remaining
   solar_brightness:
     enable_switch: solar_brightness
     day_brightness: solar_day_brightness
@@ -415,19 +455,20 @@ pixoo64_content:
       face: shadow
       time_id: panel_time
 
-    - platform: timing
-      id: stopwatch_dashboard
-      dashboard_id: stopwatch
-      frame_interval: 33ms
-      face: stopwatch
-
-    - platform: timing
-      id: timer_dashboard
-      dashboard_id: timer
-      frame_interval: 33ms
-      face: timer
-
 # Home Assistant controls
+number:
+  - platform: template
+    id: timing_timer_duration
+    name: Timer Duration
+    unit_of_measurement: s
+    min_value: 1
+    max_value: 5999
+    step: 1
+    mode: box
+    initial_value: 300
+    restore_value: true
+    optimistic: true
+
 switch:
   - platform: template
     id: solar_brightness
@@ -445,7 +486,8 @@ select:
     name: Timezone
     time_id: panel_time
 
-  - platform: template
+  - platform: pixoo64
+    type: dashboard
     id: panel_dashboard
     name: Pixoo64 Dashboard
     options:
@@ -460,15 +502,13 @@ select:
       - clock_analog
       - clock_binary
       - clock_digital
-      - stopwatch
-      - timer
       - ddp
       - clock_shadow
     initial_option: clock_analog
-    optimistic: true
+    legacy_options: [text, now_playing, weather_forecast, weather_landscape,
+                     equalizer_bars, equalizer_waveform, game_of_life, clock_split_flap,
+                     clock_analog, clock_binary, clock_digital, stopwatch, timer, ddp, clock_shadow]
     restore_value: true
-    set_action:
-      - lambda: id(pixoo_firmware).SelectDashboard(x);
 
 output:
   # The light entity requires an output; FirmwareAppComponent receives user

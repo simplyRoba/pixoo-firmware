@@ -16,10 +16,8 @@ CONF_DASHBOARD = "dashboard"
 CONF_NOW_MS = "now_ms"
 CONF_SNAPSHOT = "snapshot"
 CONF_BASE_VISIBLE = "base_visible"
-CONF_STOPWATCH_ELAPSED_MS = "stopwatch_elapsed_ms"
-CONF_STOPWATCH_RUNNING = "stopwatch_running"
-CONF_TIMER_REMAINING_MS = "timer_remaining_ms"
-CONF_TIMER_RUNNING = "timer_running"
+CONF_TIMING = "timing"
+TimingSnapshot = cg.global_ns.namespace("pixoo").struct("TimingSnapshot")
 CONF_NOW_PLAYING_SOURCE = "now_playing_source"
 CONF_WEATHER_SOURCE = "weather_source"
 CONF_ADAPTER_CHECKS = "adapter_checks"
@@ -38,22 +36,21 @@ RenderTestDisplay = render_test_ns.class_("RenderTestDisplay", display.Display)
 
 # A dashboard listed here is rendered at these tick times, in order, instead of
 # once. Omitting `snapshot` advances the animation without comparing a frame.
-ANIMATION_FRAME_SCHEMA = cv.Schema(
+TIMING_SCHEMA = cv.Schema({
+    cv.Required("mode"): cv.one_of("stopwatch", "timer"),
+    cv.Required("state"): cv.one_of("running", "paused", "finished"),
+    cv.Required("value_ms"): cv.int_range(min=0, max=0xFFFFFFFF),
+    cv.Optional("duration_ms", default=0): cv.int_range(min=0, max=0xFFFFFFFF),
+})
+ANIMATION_FRAME_SCHEMA = cv.All(cv.Schema(
     {
-        cv.Required(CONF_DASHBOARD): cv.string_strict,
+        cv.Optional(CONF_DASHBOARD): cv.string_strict,
+        cv.Optional(CONF_TIMING): TIMING_SCHEMA,
         cv.Required(CONF_NOW_MS): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_SNAPSHOT): cv.string_strict,
         cv.Optional(CONF_BASE_VISIBLE, default=True): cv.boolean,
-        cv.Optional(CONF_STOPWATCH_ELAPSED_MS, default=0): cv.int_range(
-            min=0, max=3_600_000
-        ),
-        cv.Optional(CONF_STOPWATCH_RUNNING, default=False): cv.boolean,
-        cv.Optional(CONF_TIMER_REMAINING_MS, default=0): cv.int_range(
-            min=0, max=5_999_999
-        ),
-        cv.Optional(CONF_TIMER_RUNNING, default=False): cv.boolean,
     }
-)
+), cv.has_exactly_one_key(CONF_DASHBOARD, CONF_TIMING))
 
 CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
     {
@@ -121,16 +118,23 @@ async def to_code(config):
         )
     cg.add(var.set_animation_only(config[CONF_ANIMATION_ONLY]))
     for frame in config[CONF_ANIMATION_FRAMES]:
+        timing = frame.get(CONF_TIMING)
+        snapshot = cg.StructInitializer(TimingSnapshot)
+        if timing is not None:
+            snapshot = cg.StructInitializer(
+                TimingSnapshot,
+                ("kind", cg.RawExpression("pixoo::TimingKind::k" + timing["mode"].title())),
+                ("phase", cg.RawExpression("pixoo::TimingPhase::k" + timing["state"].title())),
+                ("value_ms", timing["value_ms"]),
+                ("duration_ms", timing["duration_ms"]),
+            )
         cg.add(
             var.add_animation_frame(
-                frame[CONF_DASHBOARD],
+                frame.get(CONF_DASHBOARD, ""),
                 frame[CONF_NOW_MS],
                 frame.get(CONF_SNAPSHOT, ""),
                 frame[CONF_BASE_VISIBLE],
-                frame[CONF_STOPWATCH_ELAPSED_MS],
-                frame[CONF_STOPWATCH_RUNNING],
-                frame[CONF_TIMER_REMAINING_MS],
-                frame[CONF_TIMER_RUNNING],
+                snapshot,
             )
         )
     cg.add(var.set_output_dir(config[CONF_OUTPUT_DIR]))

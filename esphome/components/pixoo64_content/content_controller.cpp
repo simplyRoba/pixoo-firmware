@@ -563,7 +563,7 @@ bool ContentController::CaptureReactionBackground_() {
 
 bool ContentController::RenderContent(
     uint32_t now_ms, const std::string &dashboard_id,
-    const pixoo::StopwatchSnapshot &stopwatch, const pixoo::TimerSnapshot &timer,
+    const pixoo::TimingSnapshot &timing,
     const pixoo::Overlay *overlay,
     uint32_t overlay_visible_elapsed_ms,
     bool base_visible, bool base_frozen, bool render_base, bool render_overlay,
@@ -582,7 +582,7 @@ bool ContentController::RenderContent(
     this->ReleaseReactionBackground_();
 
   Dashboard *requested = nullptr;
-  if (base_visible) {
+  if (base_visible && !timing.active()) {
     requested = this->find_(dashboard_id);
     if (requested == nullptr)
       requested = this->find_(this->default_dashboard_id_);
@@ -593,17 +593,15 @@ bool ContentController::RenderContent(
       this->pending_ = requested;
     if (this->pending_ != nullptr)
       this->pending_->Prepare(now_ms);
-  } else {
+  } else if (!base_visible) {
     this->CancelPending_(now_ms);
     this->HideVisible_(now_ms);
   }
 
-  if (base_visible && render_base) {
-    if (this->stopwatch_dashboard_ != nullptr)
-      this->stopwatch_dashboard_->set_stopwatch(stopwatch);
-    if (this->timer_dashboard_ != nullptr)
-      this->timer_dashboard_->set_timer(timer);
-
+  if (base_visible && render_base && timing.active()) {
+    this->framebuffer_.Clear();
+    this->timing_view_.Render(*this, timing, this->firmware_update_detail_font_);
+  } else if (base_visible && render_base) {
     if (this->visible_ != nullptr && !this->visible_->HasPresentation()) {
       Dashboard *lost = this->visible_;
       this->HideVisible_(now_ms);

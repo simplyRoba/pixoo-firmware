@@ -5,7 +5,8 @@ import esphome.codegen as cg
 from esphome.components import select
 from esphome.components import time as time_
 import esphome.config_validation as cv
-from esphome.const import CONF_RESTORE_VALUE, CONF_TIME_ID, ENTITY_CATEGORY_CONFIG
+from esphome.const import (CONF_RESTORE_VALUE, CONF_TIME_ID, ENTITY_CATEGORY_CONFIG,
+                           CONF_TYPE, CONF_OPTIONS, CONF_INITIAL_OPTION)
 from esphome.core.config import include_file
 
 from .. import pixoo64_ns
@@ -76,7 +77,7 @@ def timezone_array_cpp(entries, symbol):
         + f"\n}};\nstatic_assert(sizeof({symbol}) / sizeof({symbol}[0]) == 44, "
         '"Timezone indexes are persisted");'
     )
-CONFIG_SCHEMA = (
+TIMEZONE_SCHEMA = (
     select.select_schema(TimezoneSelect, entity_category=ENTITY_CATEGORY_CONFIG)
     .extend(
         {
@@ -88,7 +89,50 @@ CONFIG_SCHEMA = (
 )
 
 
+DashboardSelect = pixoo64_ns.class_("DashboardSelect", select.Select, cg.Component)
+CONF_LEGACY_OPTIONS = "legacy_options"
+
+
+def dashboard_id(value):
+    value = cv.string_strict(value)
+    if not 1 <= len(value.encode("utf-8")) <= 31 or "\0" in value:
+        raise cv.Invalid("dashboard IDs must contain 1 to 31 UTF-8 bytes and no NUL")
+    return value
+
+
+DASHBOARD_OPTIONS = cv.All(cv.ensure_list(dashboard_id), cv.Length(min=1), cv.Unique())
+
+
+def validate_dashboard(config):
+    if config[CONF_INITIAL_OPTION] not in config[CONF_OPTIONS]:
+        raise cv.Invalid("initial_option must be one of the configured options")
+    return config
+
+
+DASHBOARD_SCHEMA = cv.All(
+    select.select_schema(DashboardSelect).extend({
+        cv.Required(CONF_OPTIONS): DASHBOARD_OPTIONS,
+        cv.Optional(CONF_LEGACY_OPTIONS): DASHBOARD_OPTIONS,
+        cv.Required(CONF_INITIAL_OPTION): dashboard_id,
+        cv.Optional(CONF_RESTORE_VALUE, default=True): cv.boolean,
+    }).extend(cv.COMPONENT_SCHEMA),
+    validate_dashboard,
+)
+CONFIG_SCHEMA = cv.typed_schema({
+    "timezone": TIMEZONE_SCHEMA,
+    "dashboard": DASHBOARD_SCHEMA,
+}, default_type="timezone")
+
+
 async def to_code(config):
+    if config[CONF_TYPE] == "dashboard":
+        var = await select.new_select(config, options=config[CONF_OPTIONS])
+        await cg.register_component(var, config)
+        cg.add(var.set_initial_option(config[CONF_INITIAL_OPTION]))
+        if CONF_LEGACY_OPTIONS in config:
+            cg.add(var.set_legacy_options(config[CONF_LEGACY_OPTIONS]))
+        cg.add(var.set_restore_value(config[CONF_RESTORE_VALUE]))
+        return
     # Options are populated at runtime from the catalog in the component's
     # setup(); codegen only needs the entity registered with an empty list.
     entries, _ = parse_catalog(CATALOG_PATH.read_text(encoding="utf-8"))

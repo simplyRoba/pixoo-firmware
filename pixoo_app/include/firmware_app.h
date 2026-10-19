@@ -76,8 +76,7 @@ class RenderPort {
   // consumed synchronously by the caller. `now_ms` is the tick clock, the only
   // time base an animated dashboard has.
   virtual bool RenderContent(uint32_t now_ms, const std::string &dashboard_id,
-                             const StopwatchSnapshot &stopwatch,
-                             const TimerSnapshot &timer, const Overlay *overlay,
+                             const TimingSnapshot &timing, const Overlay *overlay,
                              uint32_t overlay_visible_elapsed_ms,
                              bool base_visible, bool base_frozen,
                              bool render_base, bool render_overlay,
@@ -167,12 +166,8 @@ constexpr uint32_t NotificationDurationMsFromSeconds(int32_t duration_seconds) {
   return saturated_seconds * kNotificationMillisecondsPerSecond;
 }
 
-constexpr uint32_t TimerDurationMsFromApi(int32_t duration_ms) {
-  if (duration_ms <= 0)
-    return 0;
-  const uint32_t duration = static_cast<uint32_t>(duration_ms);
-  return duration > kTimerMaximumDurationMs ? kTimerMaximumDurationMs
-                                             : duration;
+constexpr uint32_t TimerDurationMsFromSeconds(int32_t seconds) {
+  return seconds <= 0 || seconds > 5999 ? 0 : static_cast<uint32_t>(seconds) * 1000u;
 }
 
 struct FirmwareAppConfig {
@@ -234,14 +229,14 @@ class FirmwareApp {
 
   void SelectDashboard(const std::string &dashboard_id);
   void StopwatchStart(uint32_t now_ms);
+  void StopwatchPause(uint32_t now_ms);
+  void StopwatchResume(uint32_t now_ms);
   void StopwatchStop(uint32_t now_ms);
-  void StopwatchReset(uint32_t now_ms);
-  StopwatchSnapshot stopwatch() const { return this->stopwatch_; }
-  void TimerSet(uint32_t duration_ms, uint32_t now_ms);
-  void TimerStart(uint32_t now_ms);
+  bool TimerStart(int32_t duration_seconds, uint32_t now_ms);
+  void TimerPause(uint32_t now_ms);
+  void TimerResume(uint32_t now_ms);
   void TimerStop(uint32_t now_ms);
-  void TimerReset(uint32_t now_ms);
-  TimerSnapshot timer() const { return this->timer_; }
+  const TimingSnapshot &timing() const { return this->timing_; }
   // Renders and force-presents the update frame synchronously before OTA
   // proceeds. Returns false while the panel is not ready or presentation fails.
   bool BeginFirmwareUpdate(uint32_t now_ms);
@@ -276,8 +271,11 @@ class FirmwareApp {
   void SyncBrightnessBounce_(float brightness);
   static bool ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                               uint32_t duration_ms);
-  void AdvanceStopwatch_(uint32_t now_ms);
-  void AdvanceTimer_(uint32_t now_ms);
+  void AdvanceTiming_(uint32_t now_ms, bool announce_expiry = true);
+  void OpenTiming_(uint32_t now_ms);
+  void StopTiming_(TimingKind kind, uint32_t now_ms);
+  void PauseTiming_(TimingKind kind, uint32_t now_ms);
+  void ResumeTiming_(TimingKind kind, uint32_t now_ms);
   enum class SoundOwner { kNone, kBoot, kOverlay, kTimer };
   void PlaySound_(Sound sound, SoundOwner owner);
   void StopSound_();
@@ -351,11 +349,15 @@ class FirmwareApp {
   bool microphone_enabled_{false};
   SoundOwner sound_owner_{SoundOwner::kNone};
 
-  StopwatchSnapshot stopwatch_{};
-  uint32_t stopwatch_last_updated_ms_{0};
-  TimerSnapshot timer_{};
-  uint32_t timer_loaded_duration_ms_{0};
-  uint32_t timer_last_updated_ms_{0};
+  TimingSnapshot timing_{};
+  uint32_t timing_last_updated_ms_{0};
+  bool timing_wake_{false};
+  bool timer_alarm_active_{false};
+  uint32_t timer_alarm_started_ms_{0};
+  uint32_t timer_alarm_last_played_ms_{0};
+  uint32_t timing_generation_{0};
+  TimingKind brightness_button_timing_kind_{TimingKind::kNone};
+  uint32_t brightness_button_timing_generation_{0};
 
   // Current bounce point and direction, synchronized with external light
   // state. The endpoints reverse; middle steps head upward deterministically.

@@ -2,6 +2,23 @@
 
 namespace pixoo {
 
+const char *TimingKindName(TimingKind kind) {
+  switch (kind) {
+    case TimingKind::kStopwatch: return "stopwatch";
+    case TimingKind::kTimer: return "timer";
+    default: return "none";
+  }
+}
+
+const char *TimingPhaseName(TimingPhase phase) {
+  switch (phase) {
+    case TimingPhase::kRunning: return "running";
+    case TimingPhase::kPaused: return "paused";
+    case TimingPhase::kFinished: return "finished";
+    default: return "idle";
+  }
+}
+
 Severity ParseSeverity(const std::string &name) {
   if (name == "success")
     return Severity::kSuccess;

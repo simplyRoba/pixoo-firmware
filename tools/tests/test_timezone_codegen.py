@@ -102,10 +102,11 @@ class TimezoneCodegenTest(unittest.TestCase):
         copy_input = Mock()
         namespace = dict(_namespace, cg=cg, select=select, include_file=copy_input,
                          CATALOG_PATH=CATALOG, Path=Path,
-                         CONF_TIME_ID="time_id", CONF_RESTORE_VALUE="restore_value")
+                         CONF_TIME_ID="time_id", CONF_RESTORE_VALUE="restore_value",
+                         CONF_TYPE="type")
         exec(compile(ast.Module(body=[node], type_ignores=[]), "timezone_to_code", "exec"),
              namespace)
-        config = {"time_id": "clock", "restore_value": True}
+        config = {"type": "timezone", "time_id": "clock", "restore_value": True}
         asyncio.run(namespace["to_code"](config))
         copy_input.assert_called_once_with(CATALOG, Path("timezone_catalog.inc"))
         cg.add_define.assert_called_once_with("USE_TIME_TIMEZONE")

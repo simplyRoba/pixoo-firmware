@@ -2,6 +2,8 @@ import esphome.codegen as cg
 from esphome import automation, pins
 from esphome.components import (
     api,
+    button,
+    text_sensor,
     esp32,
     http_request,
     light,
@@ -77,7 +79,7 @@ CONF_TITLE = "title"
 CONF_REACTION = "reaction"
 CONF_SEVERITY = "severity"
 CONF_DURATION = "duration"
-CONF_DURATION_MS = "duration_ms"
+CONF_DURATION_SECONDS = "duration_seconds"
 CONF_SOUND = "sound"
 CONF_USE_APLL = "use_apll"
 CONF_FRAME_METRICS = "frame_metrics"
@@ -115,6 +117,9 @@ SOUNDS = [
 
 AUTO_LOAD = [
     "display",
+    "button",
+    "number",
+    "text_sensor",
     "light",
     "microphone",
     "rtttl",
@@ -176,13 +181,12 @@ StopwatchStartAction = pixoo64_ns.class_(
 StopwatchStopAction = pixoo64_ns.class_(
     "StopwatchStopAction", automation.Action
 )
-StopwatchResetAction = pixoo64_ns.class_(
-    "StopwatchResetAction", automation.Action
-)
-TimerSetAction = pixoo64_ns.class_("TimerSetAction", automation.Action)
+StopwatchPauseAction = pixoo64_ns.class_("StopwatchPauseAction", automation.Action)
+StopwatchResumeAction = pixoo64_ns.class_("StopwatchResumeAction", automation.Action)
+TimerPauseAction = pixoo64_ns.class_("TimerPauseAction", automation.Action)
+TimerResumeAction = pixoo64_ns.class_("TimerResumeAction", automation.Action)
 TimerStartAction = pixoo64_ns.class_("TimerStartAction", automation.Action)
 TimerStopAction = pixoo64_ns.class_("TimerStopAction", automation.Action)
-TimerResetAction = pixoo64_ns.class_("TimerResetAction", automation.Action)
 NowPlayingConfigureAction = adapters_ns.class_(
     "NowPlayingConfigureAction", automation.Action
 )
@@ -329,6 +333,20 @@ WEATHER_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
+TIMING_BUTTONS = (
+    "stopwatch_start", "stopwatch_pause", "stopwatch_resume", "stopwatch_stop",
+    "timer_start", "timer_pause", "timer_resume", "timer_stop",
+)
+TimingButton = pixoo64_ns.class_("TimingButton", button.Button)
+TIMING_SCHEMA = cv.Schema({
+    cv.Required("timer_duration"): cv.use_id(number.Number),
+    **{cv.Required(name): button.button_schema(TimingButton) for name in TIMING_BUTTONS},
+    cv.Required("mode"): text_sensor.text_sensor_schema(),
+    cv.Required("state"): text_sensor.text_sensor_schema(),
+    **{cv.Required(name): sensor.sensor_schema(unit_of_measurement="s", accuracy_decimals=2)
+       for name in ("stopwatch_elapsed", "timer_remaining")},
+})
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(FirmwareAppComponent),
@@ -343,6 +361,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_DASHBOARD_SELECT): cv.use_id(select.Select),
         cv.Optional(CONF_SOLAR_BRIGHTNESS): SOLAR_BRIGHTNESS_SCHEMA,
         cv.Optional(CONF_FRAME_METRICS): FRAME_METRICS_SCHEMA,
+        cv.Optional("timing"): TIMING_SCHEMA,
     }
 ).extend(cv.polling_component_schema("33ms"))
 
@@ -385,10 +404,10 @@ REBOOT_ACTION_SCHEMA = automation.maybe_simple_id(
 STOPWATCH_ACTION_SCHEMA = automation.maybe_simple_id(
     {cv.GenerateID(): cv.use_id(FirmwareAppComponent)}
 )
-TIMER_SET_ACTION_SCHEMA = cv.Schema(
+TIMER_START_ACTION_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.use_id(FirmwareAppComponent),
-        cv.Required(CONF_DURATION_MS): cv.templatable(cv.int_),
+        cv.Required(CONF_DURATION_SECONDS): cv.templatable(cv.int_range(min=1, max=5999)),
     }
 )
 TIMER_ACTION_SCHEMA = automation.maybe_simple_id(
@@ -465,6 +484,15 @@ async def stopwatch_start_to_code(config, action_id, template_arg, args):
 
 
 @automation.register_action(
+    "pixoo64.stopwatch_resume", StopwatchResumeAction, STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_resume_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
     "pixoo64.stopwatch_stop",
     StopwatchStopAction,
     STOPWATCH_ACTION_SCHEMA,
@@ -476,37 +504,37 @@ async def stopwatch_stop_to_code(config, action_id, template_arg, args):
 
 
 @automation.register_action(
-    "pixoo64.stopwatch_reset",
-    StopwatchResetAction,
+    "pixoo64.stopwatch_pause",
+    StopwatchPauseAction,
     STOPWATCH_ACTION_SCHEMA,
     synchronous=True,
 )
-async def stopwatch_reset_to_code(config, action_id, template_arg, args):
+async def stopwatch_pause_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 
 
 @automation.register_action(
-    "pixoo64.timer_set",
-    TimerSetAction,
-    TIMER_SET_ACTION_SCHEMA,
+    "pixoo64.timer_start",
+    TimerStartAction,
+    TIMER_START_ACTION_SCHEMA,
     synchronous=True,
 )
-async def timer_set_to_code(config, action_id, template_arg, args):
+async def timer_start_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, parent)
-    templ = await cg.templatable(config[CONF_DURATION_MS], args, cg.int32)
-    cg.add(var.set_duration_ms(templ))
+    templ = await cg.templatable(config[CONF_DURATION_SECONDS], args, cg.int32)
+    cg.add(var.set_duration_seconds(templ))
     return var
 
 
 @automation.register_action(
-    "pixoo64.timer_start",
-    TimerStartAction,
+    "pixoo64.timer_resume",
+    TimerResumeAction,
     TIMER_ACTION_SCHEMA,
     synchronous=True,
 )
-async def timer_start_to_code(config, action_id, template_arg, args):
+async def timer_resume_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 
@@ -523,12 +551,12 @@ async def timer_stop_to_code(config, action_id, template_arg, args):
 
 
 @automation.register_action(
-    "pixoo64.timer_reset",
-    TimerResetAction,
+    "pixoo64.timer_pause",
+    TimerPauseAction,
     TIMER_ACTION_SCHEMA,
     synchronous=True,
 )
-async def timer_reset_to_code(config, action_id, template_arg, args):
+async def timer_pause_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 
@@ -985,6 +1013,15 @@ async def to_code(config):
                 await sensor.new_sensor(frame_metrics[CONF_RENDERED_FPS])
             )
         )
+    if "timing" in config:
+        timing = config["timing"]
+        cg.add(app.set_timer_duration(await cg.get_variable(timing["timer_duration"])))
+        for index, name in enumerate(TIMING_BUTTONS):
+            cg.add(app.set_timing_button(index, await button.new_button(timing[name])))
+        cg.add(app.set_timing_mode(await text_sensor.new_text_sensor(timing["mode"])))
+        cg.add(app.set_timing_state(await text_sensor.new_text_sensor(timing["state"])))
+        cg.add(app.set_stopwatch_elapsed(await sensor.new_sensor(timing["stopwatch_elapsed"])))
+        cg.add(app.set_timer_remaining(await sensor.new_sensor(timing["timer_remaining"])))
     cg.add(app.set_light(await cg.get_variable(config[CONF_LIGHT])))
     cg.add(
         app.set_dashboard_select(

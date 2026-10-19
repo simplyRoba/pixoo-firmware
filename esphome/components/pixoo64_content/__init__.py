@@ -82,11 +82,7 @@ EQUALIZER_FACES = {
 }
 ClockDashboard = dashboard_ns.class_("ClockDashboard", Dashboard)
 GameOfLifeDashboard = dashboard_ns.class_("GameOfLifeDashboard", Dashboard)
-TimingDashboard = dashboard_ns.class_("TimingDashboard", Dashboard)
 NowPlayingDashboard = dashboard_ns.class_("NowPlayingDashboard", Dashboard)
-# Closed timing-face vocabulary; code generation binds each instance to one
-# application-owned timing snapshot.
-TIMING_FACES = ("stopwatch", "timer")
 # Closed watch-face vocabulary; each face is a ClockDashboard subclass bound to
 # that face.
 CLOCK_FACES = {
@@ -151,15 +147,6 @@ NOW_PLAYING_SCHEMA = cv.Schema(
         cv.Required(CONF_FONT): cv.use_id(font.Font),
     }
 )
-TIMING_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(TimingDashboard),
-        cv.Required(CONF_DASHBOARD_ID): cv.string_strict,
-        cv.Required(CONF_FACE): cv.one_of(*TIMING_FACES, lower=True),
-        cv.Optional(CONF_FRAME_INTERVAL, default="33ms"):
-            cv.positive_time_period_milliseconds,
-    }
-)
 GAME_OF_LIFE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(GameOfLifeDashboard),
@@ -188,7 +175,6 @@ ENTRY_SCHEMA = cv.typed_schema(
         "equalizer": EQUALIZER_SCHEMA,
         "clock": CLOCK_SCHEMA,
         "game_of_life": GAME_OF_LIFE_SCHEMA,
-        "timing": TIMING_SCHEMA,
         "now_playing": NOW_PLAYING_SCHEMA,
     },
     key=CONF_PLATFORM,
@@ -219,18 +205,6 @@ def validate_dashboard_config(config):
     ]
     if len(now_playing_entries) > 1:
         raise cv.Invalid("at most one now_playing dashboard may be configured")
-    for face in TIMING_FACES:
-        entries = [
-            entry
-            for entry in config[CONF_DASHBOARDS]
-            if entry[CONF_PLATFORM] == "timing" and entry[CONF_FACE] == face
-        ]
-        if len(entries) > 1:
-            raise cv.Invalid(
-                f"at most one {face} timing dashboard may be configured"
-            )
-        if entries and entries[0][CONF_DASHBOARD_ID] != face:
-            raise cv.Invalid(f"the {face} timing dashboard_id must be {face}")
     if config[CONF_DEFAULT_DASHBOARD] not in ids:
         raise cv.Invalid("default_dashboard must name a configured dashboard")
     return config
@@ -405,17 +379,6 @@ async def _build_now_playing(entry):
     return dashboard
 
 
-async def _build_timing(entry):
-    dashboard = cg.new_Pvariable(entry[CONF_ID])
-    cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
-    cg.add(
-        dashboard.set_frame_interval_ms(
-            entry[CONF_FRAME_INTERVAL].total_milliseconds
-        )
-    )
-    return dashboard
-
-
 async def _build_game_of_life(entry):
     dashboard = cg.new_Pvariable(entry[CONF_ID])
     cg.add(dashboard.set_id(entry[CONF_DASHBOARD_ID]))
@@ -444,7 +407,6 @@ DASHBOARD_BUILDERS = {
     "equalizer": _build_equalizer,
     "clock": _build_clock,
     "game_of_life": _build_game_of_life,
-    "timing": _build_timing,
     "now_playing": _build_now_playing,
 }
 
@@ -455,11 +417,6 @@ async def build_controller(config):
     for entry in config[CONF_DASHBOARDS]:
         dashboard = await DASHBOARD_BUILDERS[entry[CONF_PLATFORM]](entry)
         cg.add(controller.add_dashboard(dashboard))
-        if entry[CONF_PLATFORM] == "timing":
-            if entry[CONF_FACE] == "stopwatch":
-                cg.add(controller.set_stopwatch_dashboard(dashboard))
-            else:
-                cg.add(controller.set_timer_dashboard(dashboard))
     if CONF_NOTIFICATION_FONT in config:
         cg.add(
             controller.set_notification_font(

@@ -82,6 +82,32 @@ void FirmwareAppComponent::setup() {
     return;
   }
 
+  this->dashboard_select_->add_on_state_callback(
+      [this](size_t index) { this->SelectDashboard(this->dashboard_select_->option_at(index)); });
+  for (uint8_t i = 0; i < 8; ++i) {
+    if (this->timing_buttons_[i] == nullptr) continue;
+    this->timing_buttons_[i]->add_on_press_callback([this, i]() {
+      switch (i) {
+        case 0: StopwatchStart(); break;
+        case 1: StopwatchPause(); break;
+        case 2: StopwatchResume(); break;
+        case 3: StopwatchStop(); break;
+        case 4: {
+          const float seconds = timer_duration_ != nullptr ? timer_duration_->state : 300.0f;
+          if (std::isfinite(seconds) && seconds >= 1.0f && seconds <= 5999.0f &&
+              std::floor(seconds) == seconds)
+            this->TimerStart(static_cast<int32_t>(seconds));
+          else
+            ESP_LOGW(TAG, "Timer duration must be a whole number between 1 and 5999 seconds");
+          break;
+        }
+        case 5: TimerPause(); break;
+        case 6: TimerResume(); break;
+        case 7: TimerStop(); break;
+      }
+    });
+  }
+  this->PublishTiming_(millis(), true);
   this->light_->add_remote_values_listener(this);
   if (has_solar) {
     this->solar_brightness_switch_->add_on_state_callback(
@@ -104,6 +130,7 @@ void FirmwareAppComponent::update() {
   if (this->started_) {
     this->RefreshSolarElevation_(now_ms, false);
     this->app_->Tick(now_ms);
+    this->PublishTiming_(now_ms);
   }
   this->PublishFrameMetrics_(millis());
 }
@@ -170,8 +197,11 @@ void FirmwareAppComponent::BrightnessButtonPressed() {
 }
 
 void FirmwareAppComponent::BrightnessButtonReleased() {
-  if (this->started_)
-    this->app_->BrightnessButtonReleased(millis());
+  if (this->started_) {
+    const uint32_t now = millis();
+    this->app_->BrightnessButtonReleased(now);
+    this->PublishTiming_(now);
+  }
 }
 
 void FirmwareAppComponent::ShowNotification(const std::string &text,
@@ -219,39 +249,50 @@ void FirmwareAppComponent::BeginFirmwareUpdate() {
     ESP_LOGW(TAG, "firmware update screen could not be presented");
 }
 
-void FirmwareAppComponent::StopwatchStart() {
-  if (this->started_)
-    this->app_->StopwatchStart(millis());
+#define PIXOO_TIMING_COMMAND(Name) \
+  void FirmwareAppComponent::Name() { \
+    if (!started_) return; \
+    const uint32_t now = millis(); \
+    const auto before = app_->timing(); \
+    app_->Name(now); \
+    const auto &after = app_->timing(); \
+    PublishTiming_(now, before.kind != after.kind || before.phase != after.phase || \
+                       before.value_ms != after.value_ms || before.duration_ms != after.duration_ms); \
+  }
+PIXOO_TIMING_COMMAND(StopwatchStart)
+PIXOO_TIMING_COMMAND(StopwatchPause)
+PIXOO_TIMING_COMMAND(StopwatchResume)
+PIXOO_TIMING_COMMAND(StopwatchStop)
+PIXOO_TIMING_COMMAND(TimerPause)
+PIXOO_TIMING_COMMAND(TimerResume)
+PIXOO_TIMING_COMMAND(TimerStop)
+#undef PIXOO_TIMING_COMMAND
+
+bool FirmwareAppComponent::TimerStart(int32_t duration_seconds) {
+  if (!this->started_) return false;
+  const uint32_t now = millis();
+  const bool accepted = this->app_->TimerStart(duration_seconds, now);
+  if (accepted) this->PublishTiming_(now, true);
+  return accepted;
 }
 
-void FirmwareAppComponent::StopwatchStop() {
-  if (this->started_)
-    this->app_->StopwatchStop(millis());
-}
-
-void FirmwareAppComponent::StopwatchReset() {
-  if (this->started_)
-    this->app_->StopwatchReset(millis());
-}
-
-void FirmwareAppComponent::TimerSet(int32_t duration_ms) {
-  if (this->started_)
-    this->app_->TimerSet(pixoo::TimerDurationMsFromApi(duration_ms), millis());
-}
-
-void FirmwareAppComponent::TimerStart() {
-  if (this->started_)
-    this->app_->TimerStart(millis());
-}
-
-void FirmwareAppComponent::TimerStop() {
-  if (this->started_)
-    this->app_->TimerStop(millis());
-}
-
-void FirmwareAppComponent::TimerReset() {
-  if (this->started_)
-    this->app_->TimerReset(millis());
+void FirmwareAppComponent::PublishTiming_(uint32_t now_ms, bool force) {
+  const auto &snapshot = this->app_->timing();
+  const bool transition = !timing_published_ || snapshot.kind != published_timing_.kind ||
+                          snapshot.phase != published_timing_.phase;
+  if (transition) {
+    if (timing_mode_ != nullptr) timing_mode_->publish_state(pixoo::TimingKindName(snapshot.kind));
+    if (timing_state_ != nullptr) timing_state_->publish_state(pixoo::TimingPhaseName(snapshot.phase));
+  }
+  if (force || transition || (snapshot.running() && now_ms - timing_published_ms_ >= 1000)) {
+    if (stopwatch_elapsed_ != nullptr)
+      stopwatch_elapsed_->publish_state(snapshot.kind == pixoo::TimingKind::kStopwatch ? snapshot.value_ms / 1000.0f : 0.0f);
+    if (timer_remaining_ != nullptr)
+      timer_remaining_->publish_state(snapshot.kind == pixoo::TimingKind::kTimer ? snapshot.value_ms / 1000.0f : 0.0f);
+    timing_published_ms_ = now_ms;
+    published_timing_ = snapshot;
+    timing_published_ = true;
+  }
 }
 
 void FirmwareAppComponent::RequestReboot() {
