@@ -491,19 +491,22 @@ select:
     id: panel_dashboard
     name: Pixoo64 Dashboard
     options:
-      - text
+      - clock_analog
+      - clock_digital
+      - clock_split_flap
+      - clock_binary
+      - clock_shadow
+
       - now_playing
-      - weather_forecast
-      - weather_landscape
       - equalizer_bars
       - equalizer_waveform
+
+      - weather_forecast
+      - weather_landscape
+
+      - text
       - game_of_life
-      - clock_split_flap
-      - clock_analog
-      - clock_binary
-      - clock_digital
       - ddp
-      - clock_shadow
     initial_option: clock_analog
     legacy_options: [text, now_playing, weather_forecast, weather_landscape,
                      equalizer_bars, equalizer_waveform, game_of_life, clock_split_flap,

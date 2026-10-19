@@ -540,10 +540,9 @@ for field in ('options', 'legacy_options'):
             production, re.DOTALL,
         ).group(1)
         self.assertEqual(re.findall(r"      - (\w+)", options), [
-            "text", "now_playing", "weather_forecast", "weather_landscape",
-            "equalizer_bars", "equalizer_waveform", "game_of_life",
-            "clock_split_flap", "clock_analog", "clock_binary", "clock_digital",
-            "ddp", "clock_shadow",
+            "clock_analog", "clock_digital", "clock_split_flap", "clock_binary",
+            "clock_shadow", "now_playing", "equalizer_bars", "equalizer_waveform",
+            "weather_forecast", "weather_landscape", "text", "game_of_life", "ddp",
         ])
         self.assertIn("  default_dashboard: clock_analog\n", production)
         self.assertIn("    initial_option: clock_analog\n", production)
