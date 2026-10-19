@@ -9,6 +9,7 @@
 #include "dashboard/dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/time/real_time_clock.h"
+#include "shadow_face.h"
 #include "split_flap_face.h"
 #include "watch_face.h"
 
@@ -96,6 +97,14 @@ class DigitalClockDashboard : public ClockDashboard {
 
  protected:
   clockface::DigitalFace face_impl_;
+};
+
+class ShadowClockDashboard : public ClockDashboard {
+ public:
+  ShadowClockDashboard() { this->set_face(&this->face_impl_); }
+
+ protected:
+  clockface::ShadowFace face_impl_;
 };
 
 }  // namespace esphome::pixoo64::dashboard

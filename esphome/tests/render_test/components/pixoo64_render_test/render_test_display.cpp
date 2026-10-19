@@ -1,6 +1,7 @@
 #include "render_test_display.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,10 +15,13 @@
 
 #include "dashboard/ddp_dashboard.h"
 #include "dashboard/now_playing/now_playing_dashboard.h"
+#include "dashboard/clock/shadow_face.h"
 #include "dashboard/weather/weather_icon.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "esphome/core/wake.h"
 #include "png.h"
+#include "pixoo_frame.h"
+#include "pixoo_output.h"
 
 #ifdef USE_PIXOO64_NOW_PLAYING
 #include "now_playing_adapter_test.h"
@@ -36,6 +40,120 @@ bool WriteFile(const std::string &path, const std::vector<uint8_t> &data) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out.write(reinterpret_cast<const char *>(data.data()), data.size());
   return out.good();
+}
+
+// Probe only the foreground over black: the light field must not bridge gaps.
+bool CheckShadowSecondContinuity() {
+  constexpr float kRadians = 3.14159265358979323846f / 180.0f;
+  std::vector<uint8_t> raw(pixoo::kFramePayloadBytes);
+  std::vector<uint8_t> scaled(raw.size());
+  std::vector<uint8_t> wire(pixoo::kFullFrameWireBytes);
+  int along[pixoo::kPixelCount];
+  pixoo::FrameOutput output;
+  if (!output.ConfigureCapacity(raw.size())) {
+    std::printf("render test: FAILED shadow second output capacity\n");
+    return false;
+  }
+
+  for (int along = -4 * 256; along <= -128; along += 32) {
+    for (int across = -256; across <= 256; across += 32) {
+      if (pixoo64::clockface::detail::ShadowSecondCoverage(along, across) != 0) {
+        std::printf("render test: FAILED shadow second luminous counterweight\n");
+        return false;
+      }
+    }
+  }
+
+  auto connected = [](const std::vector<uint8_t> &rgb, int threshold,
+                      float degrees, int brightness) {
+    bool visited[pixoo::kPixelCount]{};
+    int queue[pixoo::kPixelCount];
+    int total = 0, first = -1;
+    for (int p = 0; p < pixoo::kPixelCount; ++p) {
+      if (rgb[p * 3] >= threshold) {
+        ++total;
+        first = p;
+      }
+    }
+    int head = 0, tail = 0;
+    if (first >= 0) {
+      queue[tail++] = first;
+      visited[first] = true;
+    }
+    while (head < tail) {
+      const int p = queue[head++];
+      const int x = p % 64, y = p / 64;
+      const int neighbors[] = {x > 0 ? p - 1 : -1,
+                               x < 63 ? p + 1 : -1,
+                               y > 0 ? p - 64 : -1,
+                               y < 63 ? p + 64 : -1};
+      for (int next : neighbors) {
+        if (next >= 0 && !visited[next] && rgb[next * 3] >= threshold) {
+          visited[next] = true;
+          queue[tail++] = next;
+        }
+      }
+    }
+    if (total == 0 || tail != total) {
+      std::printf("render test: FAILED shadow second angle=%.2f brightness=%d%% "
+                  "4-connectivity threshold=%d (reached %d/%d pixels)\n",
+                  degrees, brightness, threshold, tail, total);
+      return false;
+    }
+    return true;
+  };
+
+  for (int step = 0; step < 1440; ++step) {
+    const float degrees = step * 0.25f;
+    const int dx = static_cast<int>(std::lround(std::sin(degrees * kRadians) * 32768));
+    const int dy = static_cast<int>(std::lround(-std::cos(degrees * kRadians) * 32768));
+    for (int y = 0; y < 64; ++y) {
+      int a = -63 * dx + (2 * y - 63) * dy;
+      int s = 63 * dy + (2 * y - 63) * dx;
+      for (int x = 0; x < 64; ++x) {
+        const int p = y * 64 + x;
+        // Match the shader's Q16-to-Q8 division, including truncation at zero.
+        along[p] = a / 256;
+        const int coverage = pixoo64::clockface::detail::ShadowSecondCoverage(
+            along[p], s / 256);
+        const uint8_t gray = static_cast<uint8_t>(
+            (coverage * pixoo64::clockface::detail::kShadowSecondInk + 127) / 255);
+        raw[p * 3] = raw[p * 3 + 1] = raw[p * 3 + 2] = gray;
+        a += 2 * dx;
+        s -= 2 * dy;
+      }
+    }
+    if (!connected(raw, 32, degrees, 100))
+      return false;
+    for (int brightness : {20, 25}) {
+      if (!output.Prepare(raw.data(), raw.size(), brightness / 100.0f, 0, 0,
+                          scaled.data(), scaled.size(), true) ||
+          pixoo::EncodeFullFrameTo(scaled.data(), scaled.size(), wire.data(),
+                                   wire.size()) != wire.size() ||
+          !std::equal(scaled.begin(), scaled.end(), wire.begin() + 4)) {
+        std::printf("render test: FAILED shadow second angle=%.2f brightness=%d%% "
+                    "RGB888 output/encoding\n", degrees, brightness);
+        return false;
+      }
+      if (!connected(scaled, 8, degrees, brightness))
+        return false;
+      bool body_bins[28]{};
+      for (int p = 0; p < pixoo::kPixelCount; ++p) {
+        if (along[p] >= 0 && along[p] < 28 * 256 && scaled[p * 3] >= 8)
+          body_bins[along[p] / 256] = true;
+      }
+      for (int bin = 0; bin < 28; ++bin) {
+        if (!body_bins[bin]) {
+          std::printf("render test: FAILED shadow second angle=%.2f brightness=%d%% "
+                      "empty body bin=%d at threshold=8\n", degrees, brightness, bin);
+          return false;
+        }
+      }
+    }
+  }
+  std::printf("render test: ok shadow second foreground continuity "
+              "(1440 angles, raw/20%%/25%%, 4-connected)\n");
+  return true;
 }
 
 }  // namespace
@@ -307,6 +425,148 @@ void RenderTestDisplay::setup() {
               std::labs(lean) % 10, mini.allowed_lean);
           ++failures;
         }
+      }
+    }
+
+    {
+      if (!CheckShadowSecondContinuity())
+        ++failures;
+    }
+
+    {
+      pixoo64::clockface::ShadowFace face;
+      const pixoo64::clockface::ClockTime valid{10, 9, 30, true};
+      const pixoo64::clockface::ClockTime invalid{};
+      auto shadow_state = [&](const pixoo64::clockface::ClockTime &time,
+                              uint32_t now_ms, int min_peak, int max_peak) {
+        face.Tick(time, now_ms);
+        face.Render(*this);
+        const int peak = *std::max_element(this->framebuffer_.begin(),
+                                           this->framebuffer_.end());
+        bool grayscale = true;
+        for (size_t i = 0; i < this->framebuffer_.size(); i += 3) {
+          grayscale &= this->framebuffer_[i] == this->framebuffer_[i + 1] &&
+                       this->framebuffer_[i] == this->framebuffer_[i + 2];
+        }
+        if (peak < min_peak || peak > max_peak || !grayscale) {
+          std::printf("render test: FAILED shadow clock lifecycle at %ums\n", now_ms);
+          ++failures;
+        }
+      };
+      face.OnShow(5000);
+      shadow_state(invalid, 5000, 0, 0);
+      shadow_state(valid, 6000, 0, 0);
+      shadow_state(valid, 6450, 1, 128);
+      shadow_state(valid, 6900, 129, 255);
+      shadow_state(invalid, 7000, 0, 0);
+      shadow_state(valid, 8000, 0, 0);
+      shadow_state(valid, 8900, 129, 255);
+      // Separated hands illuminate the upper field and cast finite shadows.
+      int lit_upper = 0;
+      for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 64; ++x)
+          lit_upper += this->framebuffer_[(y * 64 + x) * 3] >= 16;
+      }
+      if (lit_upper < 1024) {
+        std::printf("render test: FAILED shadow clock light field\n");
+        ++failures;
+      }
+      face.OnShow(9000);
+      shadow_state(valid, 9000, 0, 0);
+      shadow_state(valid, 9900, 129, 255);
+      auto gray_at = [&](int x, int y) {
+        return this->framebuffer_[(y * 64 + x) * 3];
+      };
+      shadow_state({0, 0, 0, true}, 10000, 129, 255);
+      shadow_state({3, 15, 0, true}, 11000, 129, 255);
+      check("clock_shadow_overlap_exact");
+      if (gray_at(46, 26) < 16 || gray_at(46, 39) < 16) {
+        std::printf("render test: FAILED overlapping shadow clock emission\n");
+        ++failures;
+      }
+      shadow_state({23, 59, 59, true}, 12000, 129, 255);
+      shadow_state({23, 59, 59, true}, 12999, 129, 255);
+      const auto before_midnight = this->framebuffer_;
+      shadow_state({0, 0, 0, true}, 13000, 129, 255);
+      check("clock_shadow_midnight_exact");
+      if (gray_at(31, 32) != 0 || gray_at(32, 32) != 0 ||
+          gray_at(31, 31) < 64 || gray_at(32, 31) < 64) {
+        std::printf("render test: FAILED shadow clock matte joint/seconds attachment\n");
+        ++failures;
+      }
+      for (int y = 6; y <= 29; ++y) {
+        if (gray_at(30, y) < 128) {
+          std::printf("render test: FAILED shadow clock continuous minute edge at y=%d\n", y);
+          ++failures;
+        }
+      }
+      int midnight_delta = 0;
+      for (size_t i = 0; i < before_midnight.size(); ++i) {
+        midnight_delta = std::max(midnight_delta,
+            std::abs(static_cast<int>(this->framebuffer_[i]) - before_midnight[i]));
+      }
+      if (midnight_delta > 2) {
+        std::printf("render test: FAILED shadow clock midnight continuity\n");
+        ++failures;
+      }
+      const auto midnight_frame = this->framebuffer_;
+      shadow_state({12, 0, 0, true}, 14000, 129, 255);
+      if (this->framebuffer_ != midnight_frame) {
+        std::printf("render test: FAILED shadow clock 12-hour periodicity\n");
+        ++failures;
+      }
+      // Crossing the minute emitter changes the illuminated background,
+      // away from the moving white line itself.
+      shadow_state({10, 9, 8, true}, 19000, 129, 255);
+      const auto before_second = this->framebuffer_;
+      shadow_state({10, 9, 9, true}, 20000, 129, 255);
+      // Mask both seconds-line positions and the hour/minute hand edges.
+      // The remaining background must change substantially: moving an overlaid
+      // seconds line alone cannot satisfy this light-occlusion assertion.
+      auto near_line = [](int x, int y, double degrees, double band) {
+        constexpr double kRadians = 3.14159265358979323846 / 180.0;
+        const double angle = degrees * kRadians;
+        return std::abs((x - 31.5) * std::cos(angle) +
+                        (y - 31.5) * std::sin(angle)) <= band;
+      };
+      int changed_background = 0;
+      for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+          if (near_line(x, y, 8 * 6.0, 1.5) ||
+              near_line(x, y, 9 * 6.0, 1.5) ||
+              near_line(x, y, 304.5 + 8 / 120.0, 3.5) ||
+              near_line(x, y, 304.5 + 9 / 120.0, 3.5) ||
+              near_line(x, y, 54.0 + 8 / 10.0, 3.5) ||
+              near_line(x, y, 54.0 + 9 / 10.0, 3.5))
+            continue;
+          const size_t i = (y * 64 + x) * 3;
+          changed_background +=
+              std::abs(static_cast<int>(this->framebuffer_[i]) -
+                       before_second[i]) >= 16;
+        }
+      }
+      if (changed_background < 128) {
+        std::printf("render test: FAILED shadow clock seconds occlusion "
+                    "(%d background pixels changed)\n", changed_background);
+        ++failures;
+      }
+      shadow_state({7, 38, 10, true}, 21000, 129, 255);
+      shadow_state({7, 38, 10, true}, 21908, 129, 255);
+      auto alignment_frame = this->framebuffer_;
+      for (uint32_t now_ms = 21909; now_ms <= 21910; ++now_ms) {
+        shadow_state({7, 38, 10, true}, now_ms, 129, 255);
+        if (now_ms == 21909)
+          check("clock_shadow_aligned_exact");
+        int delta = 0;
+        for (size_t i = 0; i < alignment_frame.size(); ++i)
+          delta = std::max(delta, std::abs(
+              static_cast<int>(this->framebuffer_[i]) - alignment_frame[i]));
+        if (delta > 3) {
+          std::printf("render test: FAILED shadow clock alignment continuity at %ums "
+                      "(max delta %d)\n", now_ms, delta);
+          ++failures;
+        }
+        alignment_frame = this->framebuffer_;
       }
     }
 

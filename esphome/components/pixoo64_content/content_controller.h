@@ -66,6 +66,7 @@ class ContentController : public display::Display,
   display::DisplayType get_display_type() override {
     return display::DISPLAY_TYPE_COLOR;
   }
+  void fill(Color color) override;
   void draw_pixel_at(int x, int y, Color color) override;
   void BlendPixel(int x, int y, Color color, float alpha) override;
 

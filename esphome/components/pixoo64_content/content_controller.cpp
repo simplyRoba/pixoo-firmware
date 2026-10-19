@@ -685,6 +685,14 @@ bool ContentController::RenderContent(
   return true;
 }
 
+void ContentController::fill(Color color) {
+  if (this->is_clipping()) {
+    display::Display::fill(color);
+    return;
+  }
+  this->framebuffer_.Fill(pixoo::Rgb{color.r, color.g, color.b});
+}
+
 // A face composites thousands of pixels per frame, so both pixel paths resolve
 // the target byte once and write it in place. They do not call Display::clip(),
 // whose bounds test runs through virtual get_width()/get_height() on a geometry

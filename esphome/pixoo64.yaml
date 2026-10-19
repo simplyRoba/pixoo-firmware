@@ -61,6 +61,8 @@ esphome:
     - ../pixoo_content/src/dashboard/clock/binary_clock.cpp
     - ../pixoo_content/include/dashboard/clock/digital_clock.h
     - ../pixoo_content/src/dashboard/clock/digital_clock.cpp
+    - ../pixoo_content/include/dashboard/clock/shadow_clock.h
+    - ../pixoo_content/src/dashboard/clock/shadow_clock.cpp
     - ../pixoo_content/include/dashboard/ddp/ddp_frame.h
     - ../pixoo_content/src/dashboard/ddp/ddp_frame.cpp
     - ../pixoo_content/include/dashboard/game_of_life/game_of_life.h
@@ -406,6 +408,13 @@ pixoo64_content:
       face: digital
       time_id: panel_time
 
+    - platform: clock
+      id: clock_shadow_dashboard
+      dashboard_id: clock_shadow
+      frame_interval: 33ms
+      face: shadow
+      time_id: panel_time
+
     - platform: timing
       id: stopwatch_dashboard
       dashboard_id: stopwatch
@@ -454,6 +463,7 @@ select:
       - stopwatch
       - timer
       - ddp
+      - clock_shadow
     initial_option: clock_analog
     optimistic: true
     restore_value: true

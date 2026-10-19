@@ -394,10 +394,49 @@ class EspHomeConfigTest(unittest.TestCase):
 
     def test_production_config_has_all_clock_faces(self):
         text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
-        self.assertEqual(text.count("    - platform: clock\n"), 4)
-        for face in ("split_flap", "analog", "binary", "digital"):
+        self.assertEqual(text.count("    - platform: clock\n"), 5)
+        for face in ("split_flap", "analog", "binary", "digital", "shadow"):
             self.assertEqual(text.count(f"      dashboard_id: clock_{face}\n"), 1)
             self.assertEqual(text.count(f"      face: {face}\n"), 1)
+
+    def test_shadow_clock_catalog_fixtures_and_codegen(self):
+        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
+        options = re.search(
+            r"    id: panel_dashboard\n.*?    options:\n(.*?)    initial_option:",
+            production, re.DOTALL,
+        ).group(1)
+        self.assertEqual(re.findall(r"      - (\w+)", options), [
+            "text", "now_playing", "weather_forecast", "weather_landscape",
+            "equalizer_bars", "equalizer_waveform", "game_of_life",
+            "clock_split_flap", "clock_analog", "clock_binary", "clock_digital",
+            "stopwatch", "timer", "ddp", "clock_shadow",
+        ])
+        self.assertIn("  default_dashboard: clock_analog\n", production)
+        self.assertIn("    initial_option: clock_analog\n", production)
+        self.assertIn(
+            "      dashboard_id: clock_shadow\n      frame_interval: 33ms\n"
+            "      face: shadow\n      time_id: panel_time\n", production,
+        )
+        render = (self.fixture / "esphome/tests/render_test/render_test.yaml").read_text()
+        for source in ("shadow_clock.h", "shadow_clock.cpp"):
+            self.assertIn(f"/dashboard/clock/{source}", production)
+            self.assertIn(f"/dashboard/clock/{source}", render)
+        for fixture in ("clock_shadow", "clock_shadow_opposed"):
+            self.assertIn(f"      dashboard_id: {fixture}\n      face: shadow\n", render)
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+        for statement in (
+            "new(clock_shadow_dashboard) pixoo64::dashboard::ShadowClockDashboard();",
+            'clock_shadow_dashboard->set_id("clock_shadow");',
+            "clock_shadow_dashboard->set_frame_interval_ms(33);",
+            "clock_shadow_dashboard->set_time(panel_time);",
+            "panel_content_controller->add_dashboard(clock_shadow_dashboard);",
+        ):
+            self.assertIn(statement, generated)
 
     def test_production_solar_brightness_uses_runtime_location_and_clock(self):
         production = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
@@ -695,9 +734,30 @@ class EspHomeConfigTest(unittest.TestCase):
             (
                 "invalid clock face",
                 "esphome/pixoo64.yaml",
-                "      face: digital\n",
+                "      face: shadow\n",
                 "      face: led\n",
                 "Unknown value 'led'",
+            ),
+            (
+                "shadow clock missing face",
+                "esphome/pixoo64.yaml",
+                "      face: shadow\n",
+                "",
+                "'face' is a required option",
+            ),
+            (
+                "shadow clock select catalog",
+                "esphome/pixoo64.yaml",
+                "      - clock_shadow\n",
+                "",
+                "dashboard select options must exactly match the selected renderer dashboard IDs",
+            ),
+            (
+                "shadow clock time source type",
+                "esphome/pixoo64.yaml",
+                "      face: shadow\n      time_id: panel_time\n",
+                "      face: shadow\n      time_id: panel_content_controller\n",
+                "doesn't inherit from time::RealTimeClock",
             ),
             (
                 "microphone stream format",

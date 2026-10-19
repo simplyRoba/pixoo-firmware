@@ -220,7 +220,7 @@ This layer contains models that can be compiled and tested without ESPHome:
 - now-playing snapshots, metadata publication policy, playback progress,
   media/artwork identities, text timing, and deterministic fallback artwork;
 - microphone spectrum analysis and equalizer level processing;
-- split-flap, analog, binary, and digital clock animation state; and
+- split-flap, analog, binary, digital, and shadow clock animation state; and
 - the bounded 64×64 Game of Life board.
 
 These models do not draw through ESPHome. The concrete dashboard classes under

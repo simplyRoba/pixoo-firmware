@@ -34,6 +34,8 @@ esphome:
     - ../../../pixoo_content/src/dashboard/clock/binary_clock.cpp
     - ../../../pixoo_content/include/dashboard/clock/digital_clock.h
     - ../../../pixoo_content/src/dashboard/clock/digital_clock.cpp
+    - ../../../pixoo_content/include/dashboard/clock/shadow_clock.h
+    - ../../../pixoo_content/src/dashboard/clock/shadow_clock.cpp
     - ../../../pixoo_content/include/dashboard/ddp/ddp_frame.h
     - ../../../pixoo_content/src/dashboard/ddp/ddp_frame.cpp
     - ../../../pixoo_content/include/dashboard/game_of_life/game_of_life.h
@@ -64,6 +66,8 @@ esphome:
     - ../../../pixoo_app/include/app_state.h
     - ../../../pixoo_app/src/app_state.cpp
     - ../../../pixoo_app/include/frame_metrics.h
+    - ../../../pixoo_app/include/pixoo_output.h
+    - ../../../pixoo_app/src/pixoo_output.cpp
     - ../../../pixoo_app/include/firmware_app.h
     - ../../../pixoo_app/src/firmware_app.cpp
     - ../../../pixoo_app/include/pixoo_sound.h
@@ -1384,6 +1388,19 @@ pixoo64_content:
       face: digital
       fixed_time: 1616421938
 
+    # Shadow V-shape and opposed hands.
+    - platform: clock
+      id: clock_shadow
+      dashboard_id: clock_shadow
+      face: shadow
+      fixed_time: 1616407770
+
+    - platform: clock
+      id: clock_shadow_opposed
+      dashboard_id: clock_shadow_opposed
+      face: shadow
+      fixed_time: 1616436045
+
     # Together with 14:05, these exercise every numeral and the track seam.
     - platform: clock
       id: clock_digital_round
@@ -1774,6 +1791,20 @@ display:
       - dashboard: clock_digital_curves
         now_ms: 1600
         snapshot: clock_digital_curves
+      # Shadow entry fade and opposed-hand geometry.
+      - dashboard: clock_shadow
+        now_ms: 0
+      - dashboard: clock_shadow
+        now_ms: 450
+        snapshot: clock_shadow_load
+      - dashboard: clock_shadow
+        now_ms: 900
+        snapshot: clock_shadow
+      - dashboard: clock_shadow_opposed
+        now_ms: 0
+      - dashboard: clock_shadow_opposed
+        now_ms: 900
+        snapshot: clock_shadow_opposed
       # With no previous dashboard, the controller owns the loading frame until
       # the first source condition initializes the weather face.
       - dashboard: weather_landscape_loading

@@ -15,6 +15,7 @@
 #include "refresh_policy.h"
 #include "sky_astronomy.h"
 #include "split_flap.h"
+#include "shadow_clock.h"
 #include "weather_data.h"
 #include "weather_effects.h"
 #include "wmo.h"
@@ -2839,8 +2840,179 @@ static void test_now_playing_placeholder_is_deterministic() {
       1, first.data(), 4095));
 }
 
+static void assert_shadow_angles(const clock::ShadowClockModel &model,
+                                 float hour, float minute, float second) {
+  const auto angles = model.Angles();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, hour, angles.hour);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, minute, angles.minute);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, second, angles.second);
+  TEST_ASSERT_TRUE(angles.hour >= 0.0f && angles.hour < 360.0f);
+  TEST_ASSERT_TRUE(angles.minute >= 0.0f && angles.minute < 360.0f);
+  TEST_ASSERT_TRUE(angles.second >= 0.0f && angles.second < 360.0f);
+}
+
+static void test_shadow_direct_update_and_fractional_hands() {
+  clock::ShadowClockModel model;
+  TEST_ASSERT_FALSE(model.HasTime());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 100);
+  TEST_ASSERT_TRUE(model.HasTime());
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  model.Update(10, 9, 30, 350);
+  assert_shadow_angles(model, 304.752083f, 57.025f, 181.5f);
+  model.Update(10, 9, 30, 850);
+  assert_shadow_angles(model, 304.75625f, 57.075f, 184.5f);
+  // Every part of the hour fraction includes seconds, not just minutes.
+  model.Update(1, 30, 30, 900);
+  assert_shadow_angles(model, 45.25f, 183.0f, 180.0f);
+  model.Update(1, 30, 30, 1400);
+  assert_shadow_angles(model, 45.254167f, 183.05f, 183.0f);
+}
+
+static void test_shadow_repeated_timestamp_and_delayed_ticks_freeze() {
+  clock::ShadowClockModel model;
+  model.Update(10, 9, 30, 100);
+  model.Update(10, 9, 30, 100);
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  model.Update(10, 9, 30, 1100);
+  assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
+  model.Update(10, 9, 30, 5000);
+  assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
+  model.Update(10, 9, 35, 6000);
+  assert_shadow_angles(model, 304.791667f, 57.5f, 210.0f);
+  model.Update(10, 9, 35, 6250);
+  assert_shadow_angles(model, 304.79375f, 57.525f, 211.5f);
+}
+
+static void test_shadow_rollovers_are_normalized_and_continuous() {
+  for (const int hour : {11, 23}) {
+    clock::ShadowClockModel model;
+    model.Update(hour, 59, 59, 0);
+    assert_shadow_angles(model, 359.991667f, 359.9f, 354.0f);
+    model.Update(hour, 59, 59, 500);
+    assert_shadow_angles(model, 359.995833f, 359.95f, 357.0f);
+    const auto before = model.Angles();
+    model.Update(hour, 59, 59, 1000);
+    assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+    model.Update((hour + 1) % 24, 0, 0, 1000);
+    assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+    // Compare forward distance around the dial, not signed wrapped angles.
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 3.0f,
+                            model.Angles().second + 360.0f - before.second);
+    model.Update((hour + 1) % 24, 0, 0, 1250);
+    assert_shadow_angles(model, 0.002083f, 0.025f, 1.5f);
+  }
+}
+
+static void test_shadow_clock_corrections_reset_full_timestamp_anchor() {
+  clock::ShadowClockModel model;
+  model.Update(10, 9, 30, 100);
+  model.Update(10, 9, 30, 600);
+  model.Update(11, 9, 30, 700);
+  assert_shadow_angles(model, 334.75f, 57.0f, 180.0f);
+  model.Update(11, 8, 30, 800);
+  assert_shadow_angles(model, 334.25f, 51.0f, 180.0f);
+  model.Update(11, 8, 29, 900);
+  assert_shadow_angles(model, 334.241667f, 50.9f, 174.0f);
+  model.Update(11, 8, 29, 1150);
+  assert_shadow_angles(model, 334.24375f, 50.925f, 175.5f);
+}
+
+static void test_shadow_global_fade_keeps_time_live_without_winding() {
+  clock::ShadowClockModel model;
+  model.StartLoad(100);
+  TEST_ASSERT_FALSE(model.HasTime());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  model.Update(10, 9, 30, 100);
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  model.Update(10, 9, 30, 325);
+  TEST_ASSERT_EQUAL_FLOAT(0.15625f, model.Level());
+  model.Update(10, 9, 31, 550);
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
+  assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
+  model.Update(10, 9, 31, 775);
+  TEST_ASSERT_EQUAL_FLOAT(0.84375f, model.Level());
+  assert_shadow_angles(model, 304.760208f, 57.1225f, 187.35f);
+  model.Update(10, 9, 31, 1000);
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  model.Update(10, 9, 32, 2000);
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+}
+
+static void test_shadow_entry_delay_clear_and_reentry() {
+  clock::ShadowClockModel model;
+  model.StartLoad(100);
+  model.Update(10, 9, 30, 550);
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
+  // Entry delay advances opacity, but the first observation anchors the hands.
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  model.Clear();
+  TEST_ASSERT_FALSE(model.HasTime());
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 600);
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  model.StartLoad(1000);
+  TEST_ASSERT_FALSE(model.HasTime());
+  assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 1000);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  model.StartLoad(2000);
+  model.Update(10, 9, 30, 4000);
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+}
+
+static void test_shadow_invalid_fields_clear_and_recover() {
+  const int invalid[][3] = {
+      {-1, 0, 0}, {24, 0, 0}, {0, -1, 0},
+      {0, 60, 0}, {0, 0, -1}, {0, 0, 60}};
+  for (const auto &fields : invalid) {
+    clock::ShadowClockModel model;
+    model.StartLoad(0);
+    model.Update(10, 9, 30, 450);
+    model.Update(fields[0], fields[1], fields[2], 500);
+    TEST_ASSERT_FALSE(model.HasTime());
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+    assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+    model.Update(10, 9, 30, 600);
+    TEST_ASSERT_TRUE(model.HasTime());
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+    assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
+  }
+}
+
+static void test_shadow_timers_survive_millis_wraparound() {
+  clock::ShadowClockModel model;
+  const uint32_t start = UINT32_MAX - 300;
+  model.StartLoad(start);
+  model.Update(10, 9, 30, start);
+  model.Update(10, 9, 30, start + 450);
+  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
+  assert_shadow_angles(model, 304.75375f, 57.045f, 182.7f);
+  model.Update(10, 9, 30, start + 900);
+  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_angles(model, 304.7575f, 57.09f, 185.4f);
+  model.Update(10, 9, 30, start + 5000);
+  assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
+  model.Update(10, 9, 31, start + 5100);
+  assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_shadow_direct_update_and_fractional_hands);
+  RUN_TEST(test_shadow_repeated_timestamp_and_delayed_ticks_freeze);
+  RUN_TEST(test_shadow_rollovers_are_normalized_and_continuous);
+  RUN_TEST(test_shadow_clock_corrections_reset_full_timestamp_anchor);
+  RUN_TEST(test_shadow_global_fade_keeps_time_live_without_winding);
+  RUN_TEST(test_shadow_entry_delay_clear_and_reentry);
+  RUN_TEST(test_shadow_invalid_fields_clear_and_recover);
+  RUN_TEST(test_shadow_timers_survive_millis_wraparound);
   RUN_TEST(test_analog_hands_point_at_the_time);
   RUN_TEST(test_analog_hands_wrap_out_of_range_fields);
   RUN_TEST(test_analog_second_hand_ticks_not_sweeps);

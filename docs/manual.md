@@ -156,8 +156,8 @@ resulting provisioning and settings state after reset.
 
 Available dashboards are text, now-playing, forecast weather, landscape weather,
 equalizer bars, equalizer waveform, Game of Life, split-flap clock, analog clock,
-binary clock, digital clock, stopwatch, timer, and DDP. Weather needs configured
-location and network access; equalizer views use the panel microphone.
+binary clock, digital clock, shadow clock, stopwatch, timer, and DDP. Weather needs
+configured location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
 
 Select `ddp` to display images from a DDP sender. Configure the sender with the
@@ -183,17 +183,6 @@ device log with:
 ```bash
 .venv/bin/esphome run esphome/pixoo64.yaml --device pixoo64.local
 ```
-
-With ESPHome 2026.9.1, the configured native-API key automatically offers OTA
-encryption once that firmware is running. The CLI prefers encryption using
-`api_encryption_key` when the target supports it. The YAML retains
-`password: !secret ota_password`, so legacy password-authenticated plaintext
-uploads remain accepted; encryption is not required. An upgrade from ESPHome
-2026.7 firmware needs the existing `ota_password` for the first upload, which
-is plaintext. Keep the existing key and password unchanged for that upload.
-Encrypted OTA behavior has not been verified on this hardware. See the
-[ESPHome OTA reference](https://esphome.io/components/ota/esphome/#encryption)
-for protocol details.
 
 If mDNS does not resolve `pixoo64.local`, replace it with the device's IPv4
 address. Confirm that the
