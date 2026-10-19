@@ -1498,21 +1498,29 @@ static void test_digital_delayed_ticks_and_seconds_retarget() {
   TEST_ASSERT_FLOAT_WITHIN(0.00001f, 1.0f / 60, m.PerimeterPhase());
 }
 
-static void test_digital_track_has_rounded_head_and_morphing_tail() {
+static void test_digital_track_has_full_lap_fade_and_rounded_head() {
   clock::DigitalClockModel m;
-  m.StartLoad(0);
-  m.Update(12, 0, 30, 0);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 1.0f, m.TrackLevel(0.5f));
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.675f, m.TrackLevel(0.375f));
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.675f, m.TrackLevel(0.506f));
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.35f, m.TrackLevel(0.512f));
-  m.Update(12, 0, 30, 800);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.675f,
-                           m.TrackLevel(m.PerimeterPhase() - 0.185f / 2));
-  m.Update(12, 0, 30, 1600);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.675f, m.TrackLevel(0.44f));
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.35f, m.TrackLevel(0.375f));
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, m.TrackLevel(0.5f), m.TrackLevel(1.5f));
+  for (int second = 0; second < 60; ++second) {
+    m.StartLoad(0);
+    for (uint32_t t : {0u, 400u, 800u, m.LoadMs()}) {
+      m.Update(12, 0, second, t);
+      const float head = m.PerimeterPhase();
+      TEST_ASSERT_FLOAT_WITHIN(0.00001f, 1.0f, m.TrackLevel(head));
+      float previous = 1.0f;
+      for (int step = 1; step <= 98; ++step) {
+        const float age = step / 100.0f;
+        const float level = m.TrackLevel(head - age);
+        TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.35f + 0.65f * (1.0f - age / 0.988f), level);
+        TEST_ASSERT_TRUE(level < previous);
+        previous = level;
+      }
+      TEST_ASSERT_TRUE(m.TrackLevel(head - 0.75f) > 0.5f);
+      TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.675f, m.TrackLevel(head + 0.006f));
+      TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.35f, m.TrackLevel(head + 0.012f));
+      TEST_ASSERT_FLOAT_WITHIN(0.00001f, m.TrackLevel(head - 0.75f),
+                               m.TrackLevel(head - 0.75f + 1.0f));
+    }
+  }
   m.StartLoad(2000);
   // Every mark stays visible during entry, handoff, and live seconds.
   for (uint32_t elapsed = 0; elapsed <= 3000; elapsed += 20) {
@@ -1520,6 +1528,26 @@ static void test_digital_track_has_rounded_head_and_morphing_tail() {
     for (int tick = 0; tick < 60; ++tick) {
       const float level = m.TrackLevel(tick / 60.0f);
       TEST_ASSERT_TRUE(level >= 0.35f && level <= 1.0f);
+    }
+  }
+}
+
+static void test_digital_full_lap_fade_is_continuous_at_the_head() {
+  for (int second = 0; second < 60; ++second) {
+    clock::DigitalClockModel m;
+    m.Update(12, 0, second, 0);
+    const int next = (second + 1) % 60;
+    m.Update(12, 0, next, 1000);
+    float previous[60];
+    for (int tick = 0; tick < 60; ++tick)
+      previous[tick] = m.TrackLevel(tick / 60.0f);
+    for (uint32_t t = 1001; t <= 1240; ++t) {
+      m.Update(12, 0, next, t);
+      for (int tick = 0; tick < 60; ++tick) {
+        const float level = m.TrackLevel(tick / 60.0f);
+        TEST_ASSERT_TRUE(std::fabs(level - previous[tick]) < 0.01f);
+        previous[tick] = level;
+      }
     }
   }
 }
@@ -3043,7 +3071,8 @@ int main(int, char**) {
   RUN_TEST(test_digital_live_seconds_move_clockwise_across_wrap);
   RUN_TEST(test_digital_handoff_is_continuous_with_live_seconds);
   RUN_TEST(test_digital_delayed_ticks_and_seconds_retarget);
-  RUN_TEST(test_digital_track_has_rounded_head_and_morphing_tail);
+  RUN_TEST(test_digital_track_has_full_lap_fade_and_rounded_head);
+  RUN_TEST(test_digital_full_lap_fade_is_continuous_at_the_head);
   RUN_TEST(test_digital_clear_invalid_getters_and_reentry);
   RUN_TEST(test_digital_survives_millis_wraparound);
   RUN_TEST(test_binary_digits_split_the_time_per_column);

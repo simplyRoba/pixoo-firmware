@@ -137,11 +137,12 @@ float DigitalClockModel::TrackLevel(float phase) const {
   constexpr float kBaseline = 0.35f;
   if (!this->has_time_ || !std::isfinite(phase))
     return kBaseline;
-  const float behind = static_cast<float>(
-      Wrap(this->PerimeterPhase() - phase + 0.5) - 0.5);
-  const float tail = 0.25f + (0.12f - 0.25f) * this->intro_mix_;
-  const float wave = behind >= 0.0f ? 1.0f - Smoothstep(behind / tail)
-                                    : 1.0f - Smoothstep(-behind / 0.012f);
+  constexpr float kHeadWidth = 0.012f;
+  constexpr float kFadeLength = 1.0f - kHeadWidth;
+  const float behind = static_cast<float>(Wrap(this->PerimeterPhase() - phase));
+  const float wave = behind <= kFadeLength
+                         ? 1.0f - behind / kFadeLength
+                         : 1.0f - Smoothstep((1.0f - behind) / kHeadWidth);
   return kBaseline + (1.0f - kBaseline) * wave;
 }
 
