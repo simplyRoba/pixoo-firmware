@@ -356,6 +356,7 @@ void ContentController::HideVisible_(uint32_t now_ms) {
   if (this->visible_ == nullptr)
     return;
   this->visible_->OnHide(now_ms);
+  this->visible_->ReleaseRenderResources();
   this->visible_ = nullptr;
 }
 
@@ -676,6 +677,8 @@ bool ContentController::RenderContent(
   }
 
   PopActiveBlendCanvas();
+  if (this->visible_ != nullptr && (timing.active() || base_frozen))
+    this->visible_->ReleaseRenderResources();
   if (this->render_budget_us_ != 0)
     this->RecordRender_(micros() - started_us);
   const auto &payload = this->framebuffer_.payload();

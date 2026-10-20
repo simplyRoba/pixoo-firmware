@@ -22,6 +22,7 @@ class ShadowFace : public WatchFace {
 
   void Tick(const ClockTime &time, uint32_t now_ms) override;
   void OnShow(uint32_t now_ms) override;
+  void ReleaseRenderResources() override;
   void Render(display::Display &display) const override;
 
  protected:

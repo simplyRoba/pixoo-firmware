@@ -43,6 +43,11 @@ class ClockDashboard : public Dashboard {
       this->face_->OnShow(now_ms);
   }
 
+  void ReleaseRenderResources() override {
+    if (this->face_ != nullptr)
+      this->face_->ReleaseRenderResources();
+  }
+
   void Render(display::Display &display) const override {
     this->face_->Render(display);
   }

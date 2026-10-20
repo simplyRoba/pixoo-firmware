@@ -473,6 +473,14 @@ void RenderTestDisplay::setup() {
       face.OnShow(9000);
       shadow_state(valid, 9000, 0, 0);
       shadow_state(valid, 9900, 129, 255);
+      const auto before_release = this->framebuffer_;
+      face.ReleaseRenderResources();
+      face.ReleaseRenderResources();
+      face.Render(*this);
+      if (this->framebuffer_ != before_release) {
+        std::printf("render test: FAILED shadow resource release changed presentation\n");
+        ++failures;
+      }
       auto gray_at = [&](int x, int y) {
         return this->framebuffer_[(y * 64 + x) * 3];
       };
@@ -1245,6 +1253,23 @@ void RenderTestDisplay::setup() {
       ++failures;
     }
 
+    {
+      struct ResourceFace final : pixoo64::clockface::WatchFace {
+        int releases{0};
+        void Tick(const pixoo64::clockface::ClockTime &, uint32_t) override {}
+        void Render(display::Display &) const override {}
+        void ReleaseRenderResources() override { ++releases; }
+      } face;
+      pixoo64::dashboard::ClockDashboard clock;
+      clock.set_face(&face);
+      pixoo64::dashboard::Dashboard &dashboard = clock;
+      dashboard.ReleaseRenderResources();
+      if (face.releases != 1) {
+        std::printf("render test: FAILED clock render-resource forwarding\n");
+        ++failures;
+      }
+    }
+
     // Visibility hooks are a lifecycle contract rather than a pixel snapshot.
     // Exercise replacement, repeated hidden frames, and explicit clearing with
     // the same deterministic tick passed to RenderContent().
@@ -1259,8 +1284,10 @@ void RenderTestDisplay::setup() {
         ++hide_count;
         last_hide_ms = now_ms;
       }
+      void ReleaseRenderResources() override { ++release_count; }
       int show_count{0};
       int hide_count{0};
+      int release_count{0};
       uint32_t last_show_ms{0};
       uint32_t last_hide_ms{0};
     } first, second;
@@ -1279,18 +1306,19 @@ void RenderTestDisplay::setup() {
     bool lifecycle_valid =
         render_lifecycle(1000, "__lifecycle_first", true) &&
         render_lifecycle(1001, "__lifecycle_first", true) &&
-        first.show_count == 1 && first.hide_count == 0 &&
+        first.show_count == 1 && first.hide_count == 0 && first.release_count == 0 &&
         render_lifecycle(1002, "__lifecycle_second", true) &&
-        first.hide_count == 1 && first.last_hide_ms == 1002 &&
+        first.hide_count == 1 && first.last_hide_ms == 1002 && first.release_count == 1 &&
         second.show_count == 1 && second.last_show_ms == 1002 &&
         render_lifecycle(1003, "__lifecycle_second", false) &&
         render_lifecycle(1004, "__lifecycle_second", false) &&
-        second.hide_count == 1 && second.last_hide_ms == 1003 &&
+        second.hide_count == 1 && second.last_hide_ms == 1003 && second.release_count == 1 &&
         render_lifecycle(1005, "__lifecycle_first", true) &&
         first.show_count == 2 && first.last_show_ms == 1005;
     this->content_controller_->HideBaseContent(1006);
     this->content_controller_->HideBaseContent(1007);
-    lifecycle_valid &= first.hide_count == 2 && first.last_hide_ms == 1006;
+    lifecycle_valid &= first.hide_count == 2 && first.last_hide_ms == 1006 &&
+                       first.release_count == 2;
     if (!lifecycle_valid) {
       std::printf("render test: FAILED dashboard visibility lifecycle\n");
       ++failures;
@@ -2108,7 +2136,9 @@ void RenderTestDisplay::setup() {
 
     {
       struct CoveredDashboard final : pixoo64::dashboard::Dashboard {
-        int shows{0}, hides{0}, prepares{0}, ticks{0}, cancels{0};
+        int shows{0}, hides{0}, prepares{0}, ticks{0}, cancels{0}, releases{0};
+        mutable int allocations{0};
+        mutable bool resources{false};
         uint32_t last_tick{0};
         bool ready{true};
         bool available() const override { return true; }
@@ -2118,7 +2148,17 @@ void RenderTestDisplay::setup() {
         void Tick(uint32_t now) override { ++ticks; last_tick = now; }
         void OnShow(uint32_t) override { ++shows; }
         void OnHide(uint32_t) override { ++hides; }
+        void ReleaseRenderResources() override {
+          if (resources) {
+            resources = false;
+            ++releases;
+          }
+        }
         void Render(display::Display &display) const override {
+          if (!resources) {
+            resources = true;
+            ++allocations;
+          }
           display.fill(Color(0, 40, 90));
         }
       } base;
@@ -2137,7 +2177,8 @@ void RenderTestDisplay::setup() {
       const auto pixels = [&]() {
         return std::vector<uint8_t>(frame.data, frame.data + frame.size);
       };
-      bool valid = render(1, {});
+      bool valid = render(1, {}) && base.resources && base.allocations == 1 &&
+                   base.releases == 0;
       const auto clean_base = pixels();
       pixoo::TimingSnapshot timing{pixoo::TimingKind::kStopwatch,
           pixoo::TimingPhase::kRunning, 123450, 0};
@@ -2171,13 +2212,26 @@ void RenderTestDisplay::setup() {
       valid &= render(12, timing, &reaction, 250, false);
       valid &= pixels() == reaction_pixels;
       valid &= base.shows == 1 && base.hides == 0 &&
-               base.prepares == 1 && base.ticks == 1;
+               base.prepares == 1 && base.ticks == 1 &&
+               !base.resources && base.allocations == 1 && base.releases == 1;
       timing.phase = pixoo::TimingPhase::kIdle;
       valid &= render(1000, timing) && pixels() == clean_base;
       valid &= base.shows == 1 && base.hides == 0 &&
-               base.prepares == 1 && base.ticks == 2 && base.last_tick == 1000;
-      controller.HideBaseContent(1001);
-      valid &= base.hides == 1;
+               base.prepares == 1 && base.ticks == 2 && base.last_tick == 1000 &&
+               base.resources && base.allocations == 2 && base.releases == 1;
+      valid &= render(1001, timing, &notification, 1, false) && base.resources &&
+               base.allocations == 2 && base.releases == 1 && base.ticks == 2;
+      valid &= render(1002, timing, &reaction, 0) && !base.resources &&
+               base.allocations == 2 && base.releases == 2 && base.ticks == 3;
+      valid &= render(1003, timing, &reaction, 250, false) && !base.resources &&
+               base.allocations == 2 && base.releases == 2 && base.ticks == 3;
+      controller.ReleaseOverlayResources();
+      valid &= render(1004, timing) && pixels() == clean_base && base.resources &&
+               base.allocations == 3 && base.releases == 2 && base.shows == 1 &&
+               base.hides == 0 && base.prepares == 1 && base.ticks == 4;
+      controller.HideBaseContent(1005);
+      controller.HideBaseContent(1006);
+      valid &= base.hides == 1 && !base.resources && base.releases == 3;
 
       CoveredDashboard pending;
       pending.ready = false;

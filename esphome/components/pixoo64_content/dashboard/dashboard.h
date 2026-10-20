@@ -42,6 +42,9 @@ class Dashboard {
   // this to cancel visibility-scoped background work without affecting data
   // subscriptions that remain active for the application lifetime.
   virtual void OnHide(uint32_t now_ms) { (void) now_ms; }
+  // Idempotently release inactive rendering scratch, preserving presentation
+  // state. Render() may recreate it without another OnShow().
+  virtual void ReleaseRenderResources() {}
 
  protected:
   std::string id_;

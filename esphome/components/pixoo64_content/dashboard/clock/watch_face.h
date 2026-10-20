@@ -23,6 +23,8 @@ class WatchFace {
   virtual void Tick(const ClockTime &time, uint32_t now_ms) = 0;
   // Called when the clock dashboard becomes visible, before the next Tick().
   virtual void OnShow(uint32_t now_ms) { (void) now_ms; }
+  // Preserve animation state while releasing scratch that Render() can recreate.
+  virtual void ReleaseRenderResources() {}
   virtual void Render(display::Display &display) const = 0;
 };
 

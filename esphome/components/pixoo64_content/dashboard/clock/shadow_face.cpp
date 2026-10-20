@@ -597,6 +597,11 @@ struct ShadowFace::RenderState {
 ShadowFace::ShadowFace() = default;
 ShadowFace::~ShadowFace() = default;
 
+void ShadowFace::ReleaseRenderResources() {
+  this->render_state_.reset();
+  this->render_state_attempted_ = false;
+}
+
 void ShadowFace::RenderStateDeleter::operator()(RenderState *state) const {
 #ifdef SHADOW_PARALLEL
   if (state != nullptr) {
