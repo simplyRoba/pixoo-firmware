@@ -26,10 +26,10 @@
 #define SHADOW_DATA
 #endif
 
-// The pixel shader favors execution speed over flash size.
+// Balance shader execution speed with its internal instruction-RAM footprint.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
-#pragma GCC optimize("O3")
+#pragma GCC optimize("O2")
 #endif
 
 namespace esphome::pixoo64::clockface {
