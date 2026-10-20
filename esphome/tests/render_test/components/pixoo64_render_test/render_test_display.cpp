@@ -484,6 +484,21 @@ void RenderTestDisplay::setup() {
       auto gray_at = [&](int x, int y) {
         return this->framebuffer_[(y * 64 + x) * 3];
       };
+      // At 10:09:30 the right and bottom markers receive no light.
+      const int cardinal_points[][4] = {
+          {31, 2, 1, 48}, {60, 31, 0, 0}, {31, 60, 0, 0}, {2, 31, 1, 24}};
+      for (const auto &point : cardinal_points) {
+        for (int dy = 0; dy < 2; ++dy) {
+          for (int dx = 0; dx < 2; ++dx) {
+            const int value = gray_at(point[0] + dx, point[1] + dy);
+            if (value < point[2] || value > point[3]) {
+              std::printf("render test: FAILED shadow clock cardinal point at (%d,%d)\n",
+                          point[0] + dx, point[1] + dy);
+              ++failures;
+            }
+          }
+        }
+      }
       shadow_state({0, 0, 0, true}, 10000, 129, 255);
       shadow_state({11, 0, 0, true}, 10500, 129, 255);
       check("clock_shadow_eleven");
@@ -534,6 +549,11 @@ void RenderTestDisplay::setup() {
         ++failures;
       }
       shadow_state({10, 9, 30, true}, 18000, 129, 255);
+      if (gray_at(31, 0) > 70 || gray_at(32, 0) > 70 ||
+          gray_at(31, 1) > 48 || gray_at(32, 1) > 48) {
+        std::printf("render test: FAILED shadow clock cardinal-point light blocking\n");
+        ++failures;
+      }
       for (int y = 28; y <= 29; ++y) {
         if (gray_at(31, y) < 200 || gray_at(32, y) < 200) {
           std::printf("render test: FAILED shadow clock rear seconds-body occlusion at y=%d\n", y);
@@ -600,6 +620,17 @@ void RenderTestDisplay::setup() {
           ++failures;
         }
         alignment_frame = this->framebuffer_;
+      }
+      // Angled tip light must leave a contact shadow beside the visible marker.
+      shadow_state({5, 57, 30, true}, 23000, 129, 255);
+      if (gray_at(32, 1) != 0 || gray_at(31, 1) < 16) {
+        std::printf("render test: FAILED shadow clock marker contact from the left\n");
+        ++failures;
+      }
+      shadow_state({5, 3, 30, true}, 24000, 129, 255);
+      if (gray_at(31, 1) != 0 || gray_at(32, 1) < 16) {
+        std::printf("render test: FAILED shadow clock marker contact from the right\n");
+        ++failures;
       }
     }
 

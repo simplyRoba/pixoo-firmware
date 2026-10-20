@@ -48,6 +48,14 @@ constexpr int kSecondTail = 0;
 constexpr int kSecondOcclusion = 128;
 constexpr int kSecondStrokeWidth = kOne / 2;
 constexpr int kSecondInk = detail::kShadowSecondInk;
+constexpr int kMarkerCount = 4;
+constexpr int kMarkerDistance = 29 * kOne;
+constexpr int kMarkerRadius = kOne;
+constexpr int kMarkerBand = 4;
+constexpr int kMarkerResponse = 54;
+static_assert(kMarkerDistance - kMarkerRadius >= kMinuteLength + kOne / 2 + kMinuteWidth);
+static_assert(kMarkerDistance - kMarkerRadius - kOne / 2 >=
+              (pixoo::kWidth - 1 - 2 * kMarkerBand) * kOne / 2);
 
 constexpr int ClampByte(int value) {
   return value < 0 ? 0 : (value > 255 ? 255 : value);
@@ -102,6 +110,9 @@ int EmissionFacing(int along, int across, bool cap) {
 }
 
 struct Point { int x, y; };
+SHADOW_DATA constexpr std::array<Point, kMarkerCount> kMarkerCenters = {{
+    {0, -kMarkerDistance}, {kMarkerDistance, 0},
+    {0, kMarkerDistance}, {-kMarkerDistance, 0}}};
 Point Sub(Point a, Point b) { return {a.x - b.x, a.y - b.y}; }
 int Cross(Point a, Point b) { return a.x * b.y - a.y * b.x; }
 
@@ -241,8 +252,8 @@ struct EdgeBlocker {
 
 struct LineSource {
   // The emitting body cannot block rays to front-facing receivers.
-  // Blockers are the opaque other hand, followed by the seconds hand.
-  std::array<EdgeBlocker, 2> bodies;
+  // Other hand, seconds hand, then four opaque cardinal markers.
+  std::array<EdgeBlocker, 2 + kMarkerCount> bodies;
   int length, edge_offset;
 };
 
@@ -263,7 +274,18 @@ struct Shadows {
       this->edge.bodies[0].corners[i] = {other.x, side * other.y};
       this->edge.bodies[1].corners[i] = {seconds.x, side * seconds.y};
     }
-    for (int body = 0; body < 2; ++body) {
+    for (int marker = 0; marker < kMarkerCount; ++marker) {
+      const Point c = kMarkerCenters[marker];
+      const std::array<Point, 4> corners = {{{c.x - kMarkerRadius, c.y - kMarkerRadius},
+          {c.x + kMarkerRadius, c.y - kMarkerRadius},
+          {c.x + kMarkerRadius, c.y + kMarkerRadius},
+          {c.x - kMarkerRadius, c.y + kMarkerRadius}}};
+      for (int i = 0; i < 4; ++i) {
+        const Point p = emitter.Local(corners[side > 0 ? i : 3 - i]);
+        this->edge.bodies[marker + 2].corners[i] = {p.x, side * p.y};
+      }
+    }
+    for (int body = 0; body < 2 + kMarkerCount; ++body) {
       // Swapping axes reverses winding. The tip spans the full hand width.
       for (int i = 0; i < 4; ++i) {
         const Point p = this->edge.bodies[body].corners[3 - i];
@@ -354,6 +376,84 @@ int SHADOW_HOT LineVisibility(const LineSource &shadows, int along, int across) 
   }
   return ClampByte((255 * (full - other_covered) -
                     kSecondOcclusion * seconds_covered) / full);
+}
+
+int SHADOW_HOT MarkerVisibility(const LineSource &shadows, int along, int across,
+                               int marker_mask, int unmarked) {
+  if (unmarked == 0 || marker_mask == 0)
+    return unmarked;
+  std::array<Interval, 1 + kMarkerCount> opaque;
+  int count = 0;
+  const auto add = [&](Interval interval) {
+    int at = count;
+    while (at > 0 && opaque[at - 1].lo > interval.lo) {
+      opaque[at] = opaque[at - 1];
+      --at;
+    }
+    opaque[at] = interval;
+    ++count;
+  };
+  Interval interval;
+  if (BlockedInterval(shadows.bodies[0], {along, across}, shadows.length,
+                      shadows.edge_offset, interval))
+    add(interval);
+  bool marker_blocked = false;
+  for (int marker = 0; marker < kMarkerCount; ++marker) {
+    if ((marker_mask & (1 << marker)) == 0)
+      continue;
+    if (BlockedInterval(shadows.bodies[marker + 2], {along, across}, shadows.length,
+                        shadows.edge_offset, interval)) {
+      if (interval.lo == 0 && interval.hi == shadows.length)
+        return 0;
+      add(interval);
+      marker_blocked = true;
+    }
+  }
+  if (!marker_blocked)
+    return unmarked;
+  int merged = 0;
+  for (int i = 0; i < count; ++i) {
+    if (merged != 0 && opaque[i].lo <= opaque[merged - 1].hi)
+      opaque[merged - 1].hi = Max(opaque[merged - 1].hi, opaque[i].hi);
+    else
+      opaque[merged++] = opaque[i];
+  }
+  if (merged == 1 && opaque[0].lo == 0 && opaque[0].hi == shadows.length)
+    return 0;
+  const int normal = Max(Abs(across - shadows.edge_offset), kOne);
+  const int end_integral = EdgeIntegral(shadows.length - along, normal);
+  const int start_integral = EdgeIntegral(-along, normal);
+  const int full = end_integral - start_integral;
+  if (full <= 0)
+    return unmarked;
+  const auto integral = [&](int point) {
+    return point == 0 ? start_integral : point == shadows.length ? end_integral
+        : EdgeIntegral(point - along, normal);
+  };
+  Interval seconds;
+  const bool has_seconds = BlockedInterval(shadows.bodies[1], {along, across},
+      shadows.length, shadows.edge_offset, seconds);
+  int seconds_covered = has_seconds ? integral(seconds.hi) - integral(seconds.lo) : 0;
+  int opaque_covered = 0;
+  for (int i = 0; i < merged; ++i) {
+    opaque_covered += integral(opaque[i].hi) - integral(opaque[i].lo);
+    if (has_seconds) {
+      const int lo = Max(opaque[i].lo, seconds.lo);
+      const int hi = Min(opaque[i].hi, seconds.hi);
+      if (lo < hi)
+        seconds_covered -= integral(hi) - integral(lo);
+    }
+  }
+  return ClampByte((255 * (full - opaque_covered) -
+                    kSecondOcclusion * seconds_covered) / full);
+}
+
+// Marker bounds align with pixel edges; coverage matches the shadow quad.
+int MarkerCoverage(int marker, int x, int y) {
+  const Point c = kMarkerCenters[marker];
+  const int dx = Abs(x - c.x), dy = Abs(y - c.y);
+  return Mul(ClampByte(kMarkerRadius + kOne / 2 - dx),
+             ClampByte(kMarkerRadius + kOne / 2 - dy));
 }
 
 struct LightSample {
@@ -479,6 +579,8 @@ struct SceneSnapshot {
                        hour, kHourLength, kHourWidth, second), opacity(opacity) {}
 };
 
+static_assert(sizeof(SceneSnapshot) <= 4096);
+
 // Output starts at first_row and retains screen-row spacing. Signed division
 // retains C++ truncation toward zero for negative subpixel projections.
 void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
@@ -526,8 +628,37 @@ void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_r
           ? LineVisibility(minute_shadows.edge, m_along, m_across) : 0;
       const int mc = exposed && m.cap_light != 0
           ? LineVisibility(minute_shadows.cap, m_across + kMinuteWidth, m_along) : 0;
-      const int value = Shade(h, m, he, hc, me, mc,
+      int value = Shade(h, m, he, hc, me, mc,
           second_body, detail::ShadowSecondCoverage(s_along, s_across));
+      // Emitters lie inside the marker ring; marker shadows stay in this border.
+      const int marker_mask = (y < kMarkerBand ? 1 : 0) |
+          (x >= pixoo::kWidth - kMarkerBand ? 2 : 0) |
+          (y >= pixoo::kHeight - kMarkerBand ? 4 : 0) |
+          (x < kMarkerBand ? 8 : 0);
+      if (marker_mask != 0) {
+        const int marked_he = MarkerVisibility(hour_shadows.edge, h_along, h_across,
+                                                marker_mask, he);
+        const int marked_hc = MarkerVisibility(hour_shadows.cap, h_across + kHourWidth,
+                                                h_along, marker_mask, hc);
+        const int marked_me = MarkerVisibility(minute_shadows.edge, m_along, m_across,
+                                                marker_mask, me);
+        const int marked_mc = MarkerVisibility(minute_shadows.cap, m_across + kMinuteWidth,
+                                                m_along, marker_mask, mc);
+        value = Shade(h, m, marked_he, marked_hc, marked_me, marked_mc,
+                      second_body, detail::ShadowSecondCoverage(s_along, s_across));
+        for (int marker = 0; marker < kMarkerCount; ++marker) {
+          if ((marker_mask & (1 << marker)) == 0)
+            continue;
+          const int coverage = MarkerCoverage(marker, (2 * x - 63) * 128, dy * 128);
+          if (coverage != 0) {
+            const int incident = Screen(
+                Screen(Mul(h.edge_light, he), Mul(h.cap_light, hc)),
+                Screen(Mul(m.edge_light, me), Mul(m.cap_light, mc)));
+            const int tone = Mul(kMarkerResponse, incident);
+            value = Mul(value, 255 - coverage) + Mul(tone, coverage);
+          }
+        }
+      }
       *row++ = static_cast<uint8_t>(Mul(value, opacity));
       ah += 2 * hour.x;
       sh -= 2 * hour.y;
