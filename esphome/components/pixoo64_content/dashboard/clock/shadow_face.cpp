@@ -8,7 +8,6 @@
 #include "pixoo_cmd.h"
 
 #if defined(USE_ESP32)
-#include "esp_attr.h"
 #include "sdkconfig.h"
 #include "esphome/core/log.h"
 #if !defined(CONFIG_FREERTOS_UNICORE) || !CONFIG_FREERTOS_UNICORE
@@ -19,14 +18,9 @@
 #include "freertos/task.h"
 #define SHADOW_PARALLEL
 #endif
-#define SHADOW_HOT IRAM_ATTR
-#define SHADOW_DATA DRAM_ATTR
-#else
-#define SHADOW_HOT
-#define SHADOW_DATA
 #endif
 
-// Balance shader execution speed with its internal instruction-RAM footprint.
+// Balance shader execution speed with its code footprint.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #pragma GCC optimize("O2")
@@ -79,9 +73,9 @@ constexpr std::array<uint8_t, 256> MakeScaledEmission(int scale) {
     result[i] = static_cast<uint8_t>(Mul(kEmission[i], scale));
   return result;
 }
-SHADOW_DATA constexpr auto kEmissionNear = MakeScaledEmission(130);
-SHADOW_DATA constexpr auto kEmissionDiffuse = MakeScaledEmission(120);
-SHADOW_DATA constexpr auto kEmissionCrease = MakeScaledEmission(245);
+constexpr auto kEmissionNear = MakeScaledEmission(130);
+constexpr auto kEmissionDiffuse = MakeScaledEmission(120);
+constexpr auto kEmissionCrease = MakeScaledEmission(245);
 
 constexpr std::array<uint32_t, 512> MakeReciprocal() {
   std::array<uint32_t, 512> result{};
@@ -89,7 +83,7 @@ constexpr std::array<uint32_t, 512> MakeReciprocal() {
     result[i] = 16711680u / i;
   return result;
 }
-SHADOW_DATA constexpr auto kReciprocal = MakeReciprocal();
+constexpr auto kReciprocal = MakeReciprocal();
 
 int EmissionFacing(int along, int across, bool cap) {
   const int front = Max(cap ? along : across, 0);
@@ -110,7 +104,7 @@ int EmissionFacing(int along, int across, bool cap) {
 }
 
 struct Point { int x, y; };
-SHADOW_DATA constexpr std::array<Point, kMarkerCount> kMarkerCenters = {{
+constexpr std::array<Point, kMarkerCount> kMarkerCenters = {{
     {0, -kMarkerDistance}, {kMarkerDistance, 0},
     {0, kMarkerDistance}, {-kMarkerDistance, 0}}};
 Point Sub(Point a, Point b) { return {a.x - b.x, a.y - b.y}; }
@@ -202,7 +196,7 @@ constexpr std::array<FrontSpan, 16> MakeFrontSpans() {
   }
   return spans;
 }
-SHADOW_DATA constexpr auto kFrontSpans = MakeFrontSpans();
+constexpr auto kFrontSpans = MakeFrontSpans();
 
 struct EdgeBlocker {
   std::array<Point, 4> corners;
@@ -334,7 +328,7 @@ int EdgeIntegral(int delta, int normal) {
   return delta < 0 ? -angle : angle;
 }
 
-int SHADOW_HOT LineVisibility(const LineSource &shadows, int along, int across) {
+int LineVisibility(const LineSource &shadows, int along, int across) {
   Interval other, seconds;
   const bool has_other = BlockedInterval(shadows.bodies[0], {along, across},
       shadows.length, shadows.edge_offset, other);
@@ -378,8 +372,8 @@ int SHADOW_HOT LineVisibility(const LineSource &shadows, int along, int across) 
                     kSecondOcclusion * seconds_covered) / full);
 }
 
-int SHADOW_HOT MarkerVisibility(const LineSource &shadows, int along, int across,
-                               int marker_mask, int unmarked) {
+int MarkerVisibility(const LineSource &shadows, int along, int across,
+                     int marker_mask, int unmarked) {
   if (unmarked == 0 || marker_mask == 0)
     return unmarked;
   std::array<Interval, 1 + kMarkerCount> opaque;
@@ -542,7 +536,7 @@ int Shade(const LightSample &hour, const LightSample &minute,
 
 }  // namespace
 
-uint8_t SHADOW_HOT detail::ShadowSecondCoverage(int along, int across) {
+uint8_t detail::ShadowSecondCoverage(int along, int across) {
   return BodyCoverage(along, across, kSecondLength, kSecondStrokeWidth, kSecondTail);
 }
 
@@ -583,8 +577,8 @@ static_assert(sizeof(SceneSnapshot) <= 4096);
 
 // Output starts at first_row and retains screen-row spacing. Signed division
 // retains C++ truncation toward zero for negative subpixel projections.
-void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
-                           uint8_t *gray, int row_step = 1) {
+void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
+                uint8_t *gray, int row_step = 1) {
   const auto &hour = scene.hour, &minute = scene.minute, &second = scene.second;
   const auto &hour_shadows = scene.hour_shadows;
   const auto &minute_shadows = scene.minute_shadows;
@@ -680,7 +674,7 @@ struct ShadowFace::RenderState {
     const SceneSnapshot *scene;
     int first_row, last_row;
   };
-  uint8_t gray[64 * 64];
+  uint8_t *gray{nullptr};
   StaticQueue_t queue_storage;
   uint8_t job_storage[sizeof(Job)];
   StaticSemaphore_t done_storage;
@@ -708,6 +702,13 @@ struct ShadowFace::RenderState {
   }
 
   bool Start() {
+    this->gray = static_cast<uint8_t *>(
+        heap_caps_malloc(64 * 64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (this->gray == nullptr)
+      this->gray = static_cast<uint8_t *>(
+          heap_caps_malloc(64 * 64, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (this->gray == nullptr)
+      return false;
     this->queue = xQueueCreateStatic(1, sizeof(Job), this->job_storage,
                                     &this->queue_storage);
     this->done = xSemaphoreCreateBinaryStatic(&this->done_storage);
@@ -716,7 +717,7 @@ struct ShadowFace::RenderState {
     // The ordinary ESP-IDF task allocator keeps the stack and TCB in internal
     // RAM. They outlive StopAck and are reclaimed by task deletion, not by us.
     // ESP-IDF task stack sizes are bytes, unlike vanilla FreeRTOS.
-    return xTaskCreatePinnedToCore(&RenderState::Worker, "shadow_rows", 5120,
+    return xTaskCreatePinnedToCore(&RenderState::Worker, "shadow_rows", 2048,
                                   this, 1, &this->task,
                                   1 - xPortGetCoreID()) == pdPASS;
   }
@@ -731,6 +732,7 @@ struct ShadowFace::RenderState {
       vQueueDelete(this->queue);
     if (this->done != nullptr)
       vSemaphoreDelete(this->done);
+    heap_caps_free(this->gray);
   }
 #endif
 };
@@ -754,7 +756,7 @@ void ShadowFace::RenderStateDeleter::operator()(RenderState *state) const {
 #endif
 }
 
-void SHADOW_HOT ShadowFace::Render(display::Display &display) const {
+void ShadowFace::Render(display::Display &display) const {
   const int opacity = static_cast<int>(this->model_.Level() * 255.0f + .5f);
   if (!this->model_.HasTime() || opacity == 0) {
     display.fill(Color(0, 0, 0));
@@ -812,6 +814,4 @@ void SHADOW_HOT ShadowFace::Render(display::Display &display) const {
 #pragma GCC pop_options
 #endif
 
-#undef SHADOW_HOT
-#undef SHADOW_DATA
 #undef SHADOW_PARALLEL
