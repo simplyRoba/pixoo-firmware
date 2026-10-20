@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.0.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.2.0...v2.0.0) (2026-10-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* Stopwatch and timer are no longer dashboard selections. timer_start requires duration_seconds; stop closes the timing view instead of pausing. timer_set, timer_reset, and stopwatch_reset are removed.
+
+### Features
+
+* add light-blocking shadow clock markers ([3d4a072](https://github.com/simplyRoba/pixoo-firmware/commit/3d4a0722ba268e52be6a5f3276aaca43c10d0c5d))
+* add shadow clock dashboard ([ff044ee](https://github.com/simplyRoba/pixoo-firmware/commit/ff044ee977e8b53f73beeb0e20fac3ec5019281f))
+* replace timing dashboards with transient sessions ([c91160b](https://github.com/simplyRoba/pixoo-firmware/commit/c91160bc92d9a6eecdb2d1bf01d0a00340579642))
+
+
+### Bug Fixes
+
+* align shadow clock hands at a shared centre ([47d6c0a](https://github.com/simplyRoba/pixoo-firmware/commit/47d6c0a0ec7e9b0af61e83d4df5b82e8ecd31d4a))
+* extend digital clock fade around the full perimeter ([07a85d7](https://github.com/simplyRoba/pixoo-firmware/commit/07a85d765db95c2be2c0849a25d8f48f8b595190))
+* group dashboard dropdown options ([1046701](https://github.com/simplyRoba/pixoo-firmware/commit/10467015fb37f46ddcb5cc1b96cd7bf2ba34f4d9))
+* release shadow renderer resources while inactive ([c81ba7a](https://github.com/simplyRoba/pixoo-firmware/commit/c81ba7a2da10409646cd3d0eee05d6edf267423b))
+* soften shadow clock seconds occlusion ([9b0b7d7](https://github.com/simplyRoba/pixoo-firmware/commit/9b0b7d723eabeb2eadcc46247a0f1863f2475002))
+
+
+### Performance Improvements
+
+* bound shadow renderer instruction RAM use ([a6fcf64](https://github.com/simplyRoba/pixoo-firmware/commit/a6fcf642aebffc9badca9b7b28bcc510c854655c))
+* reduce shadow renderer internal RAM use ([f84abe2](https://github.com/simplyRoba/pixoo-firmware/commit/f84abe2593f5a85031e83f558ac8c2e3d8643821))
+
+
+### Dependencies
+
+* update Arduino-ESP32 to 3.3.11 ([c0a0fdf](https://github.com/simplyRoba/pixoo-firmware/commit/c0a0fdfdba99b5ce68ad3925ae402bf3332f7173))
+
 ## [1.2.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.1.0...v1.2.0) (2026-10-17)
 
 
