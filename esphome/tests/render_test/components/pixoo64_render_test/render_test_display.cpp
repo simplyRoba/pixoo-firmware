@@ -547,6 +547,10 @@ void RenderTestDisplay::setup() {
       // Crossing the minute emitter changes the illuminated background,
       // away from the moving white line itself.
       shadow_state({10, 9, 8, true}, 19000, 129, 255);
+      if (gray_at(45, 0) < 50 || gray_at(45, 0) > 90) {
+        std::printf("render test: FAILED partial shadow-clock seconds transmission\n");
+        ++failures;
+      }
       const auto before_second = this->framebuffer_;
       shadow_state({10, 9, 9, true}, 20000, 129, 255);
       // Mask both seconds-line positions and the hour/minute hand edges.

@@ -45,6 +45,7 @@ constexpr int kMinuteWidth = kOne / 2;
 constexpr int kSecondLength = 28 * kOne;
 constexpr int kSecondWidth = 77;
 constexpr int kSecondTail = 0;
+constexpr int kSecondOcclusion = 128;
 constexpr int kSecondStrokeWidth = kOne / 2;
 constexpr int kSecondInk = detail::kShadowSecondInk;
 
@@ -240,6 +241,7 @@ struct EdgeBlocker {
 
 struct LineSource {
   // The emitting body cannot block rays to front-facing receivers.
+  // Blockers are the opaque other hand, followed by the seconds hand.
   std::array<EdgeBlocker, 2> bodies;
   int length, edge_offset;
 };
@@ -311,39 +313,47 @@ int EdgeIntegral(int delta, int normal) {
 }
 
 int SHADOW_HOT LineVisibility(const LineSource &shadows, int along, int across) {
-  std::array<Interval, 2> blocked;
-  int count = 0;
-  for (const auto &body : shadows.bodies) {
-    if (BlockedInterval(body, {along, across}, shadows.length,
-                        shadows.edge_offset, blocked[count]))
-      ++count;
-  }
-  if (count == 0)
-    return 255;
-  if (count == 2) {
-    if (blocked[1].lo < blocked[0].lo) {
-      const Interval first = blocked[0];
-      blocked[0] = blocked[1];
-      blocked[1] = first;
-    }
-    if (blocked[1].lo <= blocked[0].hi) {
-      blocked[0].hi = Max(blocked[0].hi, blocked[1].hi);
-      count = 1;
-    }
-  }
-  if (count == 1 && blocked[0].lo == 0 && blocked[0].hi == shadows.length)
+  Interval other, seconds;
+  const bool has_other = BlockedInterval(shadows.bodies[0], {along, across},
+      shadows.length, shadows.edge_offset, other);
+  if (has_other && other.lo == 0 && other.hi == shadows.length)
     return 0;
+  const bool has_seconds = BlockedInterval(shadows.bodies[1], {along, across},
+      shadows.length, shadows.edge_offset, seconds);
+  if (!has_other && !has_seconds)
+    return 255;
+  if (!has_other && seconds.lo == 0 && seconds.hi == shadows.length)
+    return 255 - kSecondOcclusion;
   const int normal = Max(Abs(across - shadows.edge_offset), kOne);
   const int end_integral = EdgeIntegral(shadows.length - along, normal);
   const int start_integral = EdgeIntegral(-along, normal);
   const int full = end_integral - start_integral;
-  int covered = 0;
-  for (int i = 0; i < count; ++i)
-    covered += (blocked[i].hi == shadows.length ? end_integral :
-                EdgeIntegral(blocked[i].hi - along, normal)) -
-               (blocked[i].lo == 0 ? start_integral :
-                EdgeIntegral(blocked[i].lo - along, normal));
-  return full > 0 ? ClampByte(255 * (full - covered) / full) : 255;
+  if (full <= 0)
+    return 255;
+  const auto integral = [&](int point) {
+    return point == 0 ? start_integral : point == shadows.length ? end_integral
+        : EdgeIntegral(point - along, normal);
+  };
+  int other_lo = 0, other_hi = 0, other_covered = 0;
+  if (has_other) {
+    other_lo = integral(other.lo);
+    other_hi = integral(other.hi);
+    other_covered = other_hi - other_lo;
+  }
+  int seconds_covered = 0;
+  if (has_seconds) {
+    if (!has_other || seconds.hi <= other.lo || seconds.lo >= other.hi) {
+      seconds_covered = integral(seconds.hi) - integral(seconds.lo);
+    } else {
+      // Keep the overlap with the opaque hand fully blocked.
+      if (seconds.lo < other.lo)
+        seconds_covered += other_lo - integral(seconds.lo);
+      if (seconds.hi > other.hi)
+        seconds_covered += integral(seconds.hi) - other_hi;
+    }
+  }
+  return ClampByte((255 * (full - other_covered) -
+                    kSecondOcclusion * seconds_covered) / full);
 }
 
 struct LightSample {
@@ -407,7 +417,7 @@ int SurfaceGain(int emission, Point surface, const Direction &emitter, int side,
   const Point second_local = second.Local(source);
   const int second_gain = ClampByte(128 + BodyDistance(
       second_local.x, second_local.y, kSecondLength, kSecondWidth, kSecondTail));
-  return Mul(other_gain, second_gain);
+  return Mul(other_gain, 255 - Mul(kSecondOcclusion, 255 - second_gain));
 }
 
 int Shade(const LightSample &hour, const LightSample &minute,
@@ -505,8 +515,8 @@ void SHADOW_HOT RenderRows(const SceneSnapshot &scene, int first_row, int last_r
             hour, kHourLength, kHourWidth, second, false)));
       }
       const int s_along = as / 256, s_across = ss / 256;
-      const int second_body = BodyCoverage(
-          s_along, s_across, kSecondLength, kSecondWidth, kSecondTail);
+      const int second_body = Mul(kSecondOcclusion, BodyCoverage(
+          s_along, s_across, kSecondLength, kSecondWidth, kSecondTail));
       const bool exposed = Max(Max(h.body, m.body), second_body) < 255;
       const int he = exposed && h.edge_light != 0
           ? LineVisibility(hour_shadows.edge, h_along, h_across) : 0;
