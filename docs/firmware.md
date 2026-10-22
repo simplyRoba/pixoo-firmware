@@ -217,8 +217,9 @@ This layer contains models that can be compiled and tested without ESPHome:
 
 - weather data, WMO mapping, astronomy, refresh policy, condition transitions,
   and weather animation mechanics;
-- now-playing snapshots, metadata publication policy, playback progress,
-  media/artwork identities, text timing, and deterministic fallback artwork;
+- now-playing snapshots, metadata publication policy, presentation transitions,
+  playback progress, media/artwork identities, text timing, and deterministic
+  fallback artwork;
 - microphone spectrum analysis and equalizer level processing;
 - split-flap, analog, binary, digital, and shadow clock animation state; and
 - the bounded 64×64 Game of Life board.

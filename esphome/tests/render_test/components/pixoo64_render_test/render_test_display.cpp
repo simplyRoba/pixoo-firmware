@@ -188,8 +188,7 @@ void RenderTestDisplay::setup() {
 
     if (this->animation_only_) {
       for (const AnimationFrame &frame : this->animation_frames_) {
-        if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
-                                 frame.base_visible, frame.timing)) {
+        if (!this->run_animation_frame_(frame)) {
           std::printf("render test: FAILED to render %s at %ums\n",
                       frame.dashboard_id.c_str(), frame.now_ms);
           ++failures;
@@ -680,8 +679,7 @@ void RenderTestDisplay::setup() {
     }
 
     for (const AnimationFrame &frame : this->animation_frames_) {
-      if (!this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
-                               frame.base_visible, frame.timing)) {
+      if (!this->run_animation_frame_(frame)) {
         std::printf("render test: FAILED to render %s at %ums\n",
                     frame.dashboard_id.c_str(), frame.now_ms);
         ++failures;
@@ -693,29 +691,13 @@ void RenderTestDisplay::setup() {
     const char *now_playing_snapshots[] = {
         "now_playing_playing_artwork",
         "now_playing_showcase",
-        "now_playing_paused_midpoint",
         "now_playing_paused",
         "now_playing_buffering",
-        "now_playing_track_change_old",
-        "now_playing_track_change_pending",
-        "now_playing_track_change_ready_start",
         "now_playing_track_change_midpoint",
-        "now_playing_track_change_fade_in",
-        "now_playing_track_change_ready",
-        "now_playing_title_marquee_start",
         "now_playing_title_marquee_scrolled",
-        "now_playing_text_only_start",
-        "now_playing_text_only_midpoint",
         "now_playing_text_only_fade_in",
-        "now_playing_text_only_complete",
-        "now_playing_artist_marquee_start",
         "now_playing_artist_marquee_scrolled",
         "now_playing_revision_crossfade_midpoint",
-        "now_playing_revision_crossfade_complete",
-        "now_playing_duplicate_pending",
-        "now_playing_duplicate_ready",
-        "now_playing_stable_id_change_pending",
-        "now_playing_stable_id_change_ready",
         "now_playing_idle",
         "now_playing_waiting_start",
         "now_playing_waiting_animated",
@@ -726,16 +708,6 @@ void RenderTestDisplay::setup() {
         "now_playing_stale",
         "now_playing_failed_art",
         "now_playing_unsupported_fallback",
-        "now_playing_interrupted_old",
-        "now_playing_interrupted_pending",
-        "now_playing_interrupted_failed_midpoint",
-        "now_playing_interrupted_idle_start",
-        "now_playing_interrupted_ready_start",
-        "now_playing_interrupted_ready_complete",
-        "now_playing_fallback_change_pending",
-        "now_playing_fallback_change_ready_start",
-        "now_playing_fallback_change_midpoint",
-        "now_playing_fallback_change_ready",
     };
     bool now_playing_valid = true;
     for (const char *name : now_playing_snapshots) {
@@ -751,122 +723,6 @@ void RenderTestDisplay::setup() {
       return a != now_playing_frames.end() && b != now_playing_frames.end() &&
              a->second != b->second;
     };
-    const auto frame_rows_equal = [&](const char *left, const char *right,
-                                      size_t first_row, size_t row_count) {
-      const auto a = now_playing_frames.find(left);
-      const auto b = now_playing_frames.find(right);
-      if (a == now_playing_frames.end() || b == now_playing_frames.end())
-        return false;
-      constexpr size_t kRowBytes = 64 * 3;
-      const size_t first = first_row * kRowBytes;
-      const size_t last = first + row_count * kRowBytes;
-      return std::equal(a->second.begin() + first, a->second.begin() + last,
-                        b->second.begin() + first);
-    };
-    const auto artwork_pixels_equal = [&](const char *left, const char *right) {
-      return frame_rows_equal(left, right, 0, 39);
-    };
-    const auto cover_pixels_equal = [&](const char *left, const char *right) {
-      return frame_rows_equal(left, right, 15, 24);
-    };
-    now_playing_valid &= frames_differ("now_playing_playing_artwork",
-                                       "now_playing_showcase");
-    now_playing_valid &= frames_differ("now_playing_playing_artwork",
-                                       "now_playing_paused_midpoint");
-    now_playing_valid &= frames_differ("now_playing_paused_midpoint",
-                                       "now_playing_paused");
-    now_playing_valid &= frames_differ("now_playing_paused",
-                                       "now_playing_buffering");
-    // Pending media keeps the old cover and title. The retained artist may keep
-    // scrolling. A ready replacement begins at that same image, crosses through
-    // a distinct blend, then reaches the replacement image rather than cutting
-    // to it.
-    now_playing_valid &= cover_pixels_equal(
-        "now_playing_track_change_old", "now_playing_track_change_pending");
-    now_playing_valid &= frame_rows_equal(
-        "now_playing_track_change_old", "now_playing_track_change_pending", 45, 8);
-    now_playing_valid &= cover_pixels_equal(
-        "now_playing_track_change_pending",
-        "now_playing_track_change_ready_start");
-    now_playing_valid &= frame_rows_equal(
-        "now_playing_track_change_pending",
-        "now_playing_track_change_ready_start", 45, 8);
-    now_playing_valid &= !cover_pixels_equal(
-        "now_playing_track_change_pending", "now_playing_track_change_midpoint");
-    now_playing_valid &= !cover_pixels_equal(
-        "now_playing_track_change_midpoint", "now_playing_track_change_fade_in");
-    now_playing_valid &= !cover_pixels_equal(
-        "now_playing_track_change_fade_in", "now_playing_track_change_ready");
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_track_change_midpoint", "now_playing_track_change_fade_in", 45, 18);
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_track_change_fade_in", "now_playing_track_change_ready", 45, 18);
-    now_playing_valid &= frames_differ("now_playing_title_marquee_start",
-                                       "now_playing_title_marquee_scrolled");
-    // Metadata-only changes retain the cover while their rows fade through a
-    // distinct midpoint and a partially visible replacement.
-    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_start",
-                                               "now_playing_text_only_midpoint");
-    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_midpoint",
-                                               "now_playing_text_only_fade_in");
-    now_playing_valid &= artwork_pixels_equal("now_playing_text_only_fade_in",
-                                               "now_playing_text_only_complete");
-    now_playing_valid &= !frame_rows_equal("now_playing_text_only_start",
-                                            "now_playing_text_only_midpoint", 45, 18);
-    now_playing_valid &= !frame_rows_equal("now_playing_text_only_midpoint",
-                                            "now_playing_text_only_fade_in", 45, 18);
-    now_playing_valid &= !frame_rows_equal("now_playing_text_only_fade_in",
-                                            "now_playing_text_only_complete", 45, 18);
-    now_playing_valid &= !frame_rows_equal("now_playing_artist_marquee_start",
-                                            "now_playing_artist_marquee_scrolled", 53, 8);
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_revision_crossfade_midpoint",
-        "now_playing_revision_crossfade_complete");
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_revision_crossfade_complete",
-        "now_playing_duplicate_pending");
-    now_playing_valid &= artwork_pixels_equal("now_playing_duplicate_pending",
-                                               "now_playing_duplicate_ready");
-    now_playing_valid &= !frame_rows_equal("now_playing_duplicate_pending",
-                                            "now_playing_duplicate_ready", 45, 18);
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending");
-    now_playing_valid &= frame_rows_equal(
-        "now_playing_duplicate_ready", "now_playing_stable_id_change_pending", 45, 18);
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_stable_id_change_pending",
-        "now_playing_stable_id_change_ready");
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_stable_id_change_pending",
-        "now_playing_stable_id_change_ready", 45, 18);
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_fallback_change_pending",
-        "now_playing_fallback_change_ready_start");
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_fallback_change_ready_start",
-        "now_playing_fallback_change_midpoint");
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_fallback_change_midpoint",
-        "now_playing_fallback_change_ready");
-    now_playing_valid &= !frame_rows_equal(
-        "now_playing_fallback_change_pending",
-        "now_playing_fallback_change_ready", 45, 18);
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_fallback_change_pending",
-        "now_playing_fallback_change_ready");
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_interrupted_old", "now_playing_interrupted_pending");
-    now_playing_valid &= frame_rows_equal(
-        "now_playing_interrupted_old", "now_playing_interrupted_pending", 45, 18);
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_interrupted_old", "now_playing_interrupted_failed_midpoint");
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_interrupted_old", "now_playing_interrupted_idle_start");
-    now_playing_valid &= artwork_pixels_equal(
-        "now_playing_interrupted_old", "now_playing_interrupted_ready_start");
-    now_playing_valid &= !artwork_pixels_equal(
-        "now_playing_interrupted_ready_start",
-        "now_playing_interrupted_ready_complete");
     now_playing_valid &= frames_differ("now_playing_waiting_start",
                                        "now_playing_waiting_animated");
     if (!now_playing_valid) {
@@ -1921,19 +1777,22 @@ void RenderTestDisplay::setup() {
       std::printf("render test: ok DDP readiness, lifecycle, and UDP rendering\n");
     }
 
-    const size_t now_playing_ticks = static_cast<size_t>(std::count_if(
-        this->animation_frames_.begin(), this->animation_frames_.end(),
-        [](const AnimationFrame &frame) {
-          return frame.dashboard_id == "now_playing";
-        }));
-    const bool now_playing_lifecycle_valid =
-        now_playing_ticks == 0
-            ? this->now_playing_source_ == nullptr
-            : this->now_playing_source_ != nullptr &&
-                  this->now_playing_source_->eligible_true_count() == 1 &&
-                  this->now_playing_source_->eligible_false_count() == 1 &&
-                  this->now_playing_source_->data_count() == now_playing_ticks + 1 &&
-                  this->now_playing_source_->copy_count() == 9;
+    bool now_playing_lifecycle_valid = this->now_playing_source_ != nullptr &&
+        this->now_playing_dashboard_ != nullptr;
+    if (now_playing_lifecycle_valid) {
+      auto &source = *this->now_playing_source_;
+      auto &dashboard = *this->now_playing_dashboard_;
+      const auto shows = source.eligible_true_count();
+      const auto hides = source.eligible_false_count();
+      StaticNowPlayingSource::SetCurrentRenderTime(0);
+      dashboard.Prepare(0);
+      now_playing_lifecycle_valid &= dashboard.ReadyToShow() &&
+          source.eligible_true_count() == shows + 1;
+      dashboard.OnShow(0);
+      now_playing_lifecycle_valid &= source.eligible_true_count() == shows + 1;
+      dashboard.OnHide(1);
+      now_playing_lifecycle_valid &= source.eligible_false_count() == hides + 1;
+    }
     if (!now_playing_lifecycle_valid) {
       std::printf("render test: FAILED now-playing source lifecycle\n");
       ++failures;
@@ -2131,71 +1990,6 @@ void RenderTestDisplay::setup() {
       ++failures;
     }
 
-    if (this->now_playing_source_ != nullptr) {
-      this->content_controller_->HideBaseContent(2200);
-      bool now_playing_preparation_valid =
-          render_preparation(0, "__prepare_outgoing") &&
-          render_preparation(0, "now_playing");
-      const std::vector<uint8_t> old_now_playing = this->framebuffer_;
-      now_playing_preparation_valid &=
-          render_preparation(1, "__prepare_outgoing") &&
-          render_preparation(6000, "now_playing") && is_solid(outgoing.color) &&
-          render_preparation(6300, "now_playing") &&
-          this->framebuffer_ != old_now_playing && !is_solid(outgoing.color);
-      uint16_t current_artwork[pixoo::now_playing::kArtworkPixelCount];
-      now_playing_preparation_valid &=
-          this->now_playing_source_->CopyArtwork(5002, 1, current_artwork,
-                                                 pixoo::now_playing::kArtworkPixelCount) &&
-          this->framebuffer_[0] ==
-              static_cast<uint8_t>(((current_artwork[0] >> 11) & 0x1f) * 255 / 31) &&
-          this->framebuffer_[1] ==
-              static_cast<uint8_t>(((current_artwork[0] >> 5) & 0x3f) * 255 / 63) &&
-          this->framebuffer_[2] ==
-              static_cast<uint8_t>((current_artwork[0] & 0x1f) * 255 / 31);
-      this->content_controller_->HideBaseContent(13199);
-      now_playing_preparation_valid &=
-          render_preparation(13200, "__prepare_outgoing") &&
-          render_preparation(13200, "now_playing") &&
-          !is_solid(outgoing.color);
-
-      this->content_controller_->HideBaseContent(25399);
-      const uint32_t copies_before_failed_entry =
-          this->now_playing_source_->copy_count();
-      const int hides_before_failed_entry = outgoing.hide_count;
-      now_playing_preparation_valid &=
-          render_preparation(25400, "__prepare_outgoing") &&
-          render_preparation(25400, "now_playing") &&
-          is_solid(outgoing.color) &&
-          outgoing.hide_count == hides_before_failed_entry &&
-          render_preparation(25600, "now_playing") &&
-          !is_solid(outgoing.color) && !is_global_loading() &&
-          outgoing.hide_count == hides_before_failed_entry + 1 &&
-          this->now_playing_source_->copy_count() == copies_before_failed_entry;
-      const std::vector<uint8_t> failed_entry_fallback = this->framebuffer_;
-      now_playing_preparation_valid &=
-          render_preparation(25601, "now_playing") &&
-          this->framebuffer_ == failed_entry_fallback;
-
-      this->content_controller_->HideBaseContent(28999);
-      now_playing_preparation_valid &=
-          render_preparation(29000, "__prepare_outgoing") &&
-          render_preparation(29000, "now_playing") &&
-          is_solid(outgoing.color) &&
-          render_preparation(30000, "now_playing") &&
-          is_solid(outgoing.color) &&
-          render_preparation(30050, "now_playing") &&
-          is_solid(outgoing.color) &&
-          render_preparation(30100, "now_playing") &&
-          is_solid(outgoing.color) &&
-          render_preparation(30200, "now_playing") &&
-          !is_solid(outgoing.color) && !is_global_loading() &&
-          render_preparation(30300, "now_playing") &&
-          !is_solid(outgoing.color);
-      if (!now_playing_preparation_valid) {
-        std::printf("render test: FAILED now-playing re-entry preparation\n");
-        ++failures;
-      }
-    }
     this->content_controller_->HideBaseContent(30301);
     bool gradient_valid = this->now_playing_source_ != nullptr &&
         this->render_frame_(0, "now_playing", nullptr, 0, true);
@@ -2411,10 +2205,24 @@ void RenderTestDisplay::add_animation_frame(std::string dashboard_id,
                                             uint32_t now_ms,
                                             std::string snapshot_id,
                                             bool base_visible,
-                                            pixoo::TimingSnapshot timing) {
+                                            pixoo::TimingSnapshot timing,
+                                            bool advance_only) {
   this->animation_frames_.push_back(AnimationFrame{
       std::move(dashboard_id), now_ms, std::move(snapshot_id), base_visible,
-      timing});
+      timing, advance_only});
+}
+
+bool RenderTestDisplay::run_animation_frame_(const AnimationFrame &frame) {
+  if (frame.advance_only) {
+    if (frame.dashboard_id != "now_playing" ||
+        this->now_playing_dashboard_ == nullptr || !frame.snapshot_id.empty())
+      return false;
+    StaticNowPlayingSource::SetCurrentRenderTime(frame.now_ms);
+    this->now_playing_dashboard_->Tick(frame.now_ms);
+    return true;
+  }
+  return this->render_frame_(frame.now_ms, frame.dashboard_id, nullptr, 0,
+                             frame.base_visible, frame.timing);
 }
 
 bool RenderTestDisplay::has_animation_frames_(

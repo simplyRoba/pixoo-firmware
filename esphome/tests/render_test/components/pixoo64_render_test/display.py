@@ -21,6 +21,8 @@ TimingSnapshot = cg.global_ns.namespace("pixoo").struct("TimingSnapshot")
 CONF_NOW_PLAYING_SOURCE = "now_playing_source"
 CONF_WEATHER_SOURCE = "weather_source"
 CONF_ADAPTER_CHECKS = "adapter_checks"
+CONF_NOW_PLAYING_DASHBOARD = "now_playing_dashboard"
+CONF_ADVANCE_ONLY = "advance_only"
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 NowPlayingSource = pixoo_ns.namespace("now_playing").class_("NowPlayingSource")
@@ -32,10 +34,11 @@ dashboard_ns = pixoo64_ns.namespace("dashboard")
 render_test_ns = cg.esphome_ns.namespace("pixoo64_render_test")
 ContentController = content_ns.class_("ContentController")
 EqualizerDashboard = dashboard_ns.class_("EqualizerDashboard")
+NowPlayingDashboard = dashboard_ns.class_("NowPlayingDashboard")
 RenderTestDisplay = render_test_ns.class_("RenderTestDisplay", display.Display)
 
-# A dashboard listed here is rendered at these tick times, in order, instead of
-# once. Omitting `snapshot` advances the animation without comparing a frame.
+# Animated dashboards run at these tick times instead of once. Omitting
+# `snapshot` skips comparison; `advance_only` ticks now-playing without drawing.
 TIMING_SCHEMA = cv.Schema({
     cv.Required("mode"): cv.one_of("stopwatch", "timer"),
     cv.Required("state"): cv.one_of("running", "paused", "finished"),
@@ -49,6 +52,7 @@ ANIMATION_FRAME_SCHEMA = cv.All(cv.Schema(
         cv.Required(CONF_NOW_MS): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_SNAPSHOT): cv.string_strict,
         cv.Optional(CONF_BASE_VISIBLE, default=True): cv.boolean,
+        cv.Optional(CONF_ADVANCE_ONLY, default=False): cv.boolean,
     }
 ), cv.has_exactly_one_key(CONF_DASHBOARD, CONF_TIMING))
 
@@ -59,6 +63,7 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
         cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
         cv.Optional(CONF_NOW_PLAYING_SOURCE): cv.use_id(NowPlayingSource),
+        cv.Optional(CONF_NOW_PLAYING_DASHBOARD): cv.use_id(NowPlayingDashboard),
         cv.Optional(CONF_WEATHER_SOURCE): cv.use_id(WeatherSource),
         cv.Optional(CONF_ADAPTER_CHECKS, default=False): cv.boolean,
         cv.Optional(CONF_ANIMATION_FRAMES, default=[]): cv.ensure_list(
@@ -110,6 +115,10 @@ async def to_code(config):
                 await cg.get_variable(config[CONF_NOW_PLAYING_SOURCE])
             )
         )
+    if CONF_NOW_PLAYING_DASHBOARD in config:
+        cg.add(var.set_now_playing_dashboard(
+            await cg.get_variable(config[CONF_NOW_PLAYING_DASHBOARD])
+        ))
     if CONF_WEATHER_SOURCE in config:
         cg.add(
             var.set_weather_source(
@@ -135,6 +144,7 @@ async def to_code(config):
                 frame.get(CONF_SNAPSHOT, ""),
                 frame[CONF_BASE_VISIBLE],
                 snapshot,
+                frame[CONF_ADVANCE_ONLY],
             )
         )
     cg.add(var.set_output_dir(config[CONF_OUTPUT_DIR]))

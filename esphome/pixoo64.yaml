@@ -83,6 +83,8 @@ esphome:
     - ../pixoo_content/src/dashboard/now_playing/now_playing_art.cpp
     - ../pixoo_content/include/dashboard/now_playing/now_playing_timing.h
     - ../pixoo_content/src/dashboard/now_playing/now_playing_timing.cpp
+    - ../pixoo_content/include/dashboard/now_playing/now_playing_presentation.h
+    - ../pixoo_content/src/dashboard/now_playing/now_playing_presentation.cpp
     - ../pixoo_content/include/dashboard/now_playing/metadata_policy.h
     - ../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
 

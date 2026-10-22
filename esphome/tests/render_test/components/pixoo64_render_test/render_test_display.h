@@ -5,6 +5,7 @@
 
 #include "esphome/components/pixoo64_content/content_controller.h"
 #include "dashboard/equalizer/equalizer_dashboard.h"
+#include "dashboard/now_playing/now_playing_dashboard.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/text/text.h"
 #include "static_now_playing_source.h"
@@ -25,6 +26,9 @@ class RenderTestDisplay final : public display::Display {
   void set_now_playing_source(StaticNowPlayingSource *source) {
     this->now_playing_source_ = source;
   }
+  void set_now_playing_dashboard(pixoo64::dashboard::NowPlayingDashboard *dashboard) {
+    this->now_playing_dashboard_ = dashboard;
+  }
   void set_weather_source(StaticWeatherSource *source) {
     this->weather_source_ = source;
   }
@@ -32,12 +36,12 @@ class RenderTestDisplay final : public display::Display {
   void set_animation_only(bool animation_only) {
     this->animation_only_ = animation_only;
   }
-  // Renders `dashboard_id` at tick time `now_ms`, in the order added and after
-  // the single-frame dashboards. An empty `snapshot_id` only advances the
-  // animation. A dashboard with animation frames gets no single frame.
+  // Renders `dashboard_id` at tick time `now_ms`, after single-frame dashboards.
+  // Empty snapshot IDs skip comparison; advance_only ticks the now-playing
+  // dashboard without drawing. Animated dashboards get no single frame.
   void add_animation_frame(std::string dashboard_id, uint32_t now_ms,
                            std::string snapshot_id, bool base_visible,
-                           pixoo::TimingSnapshot timing);
+                           pixoo::TimingSnapshot timing, bool advance_only = false);
   display::DisplayType get_display_type() override {
     return display::DISPLAY_TYPE_COLOR;
   }
@@ -52,8 +56,10 @@ class RenderTestDisplay final : public display::Display {
     std::string snapshot_id;
     bool base_visible{true};
     pixoo::TimingSnapshot timing{};
+    bool advance_only{false};
   };
 
+  bool run_animation_frame_(const AnimationFrame &frame);
   bool render_frame_(uint32_t now_ms, const std::string &dashboard_id,
                      const pixoo::Notification *notification,
                      uint32_t notification_visible_elapsed_ms,
@@ -65,6 +71,7 @@ class RenderTestDisplay final : public display::Display {
   pixoo64::dashboard::EqualizerDashboard *equalizer_{nullptr};
   text::Text *text_{nullptr};
   StaticNowPlayingSource *now_playing_source_{nullptr};
+  pixoo64::dashboard::NowPlayingDashboard *now_playing_dashboard_{nullptr};
   StaticWeatherSource *weather_source_{nullptr};
   std::string output_dir_;
   std::vector<AnimationFrame> animation_frames_;

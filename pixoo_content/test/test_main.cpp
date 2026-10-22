@@ -32,6 +32,7 @@ using namespace pixoo;
 using pixoo::life::GameOfLifeModel;
 
 void RunDdpTests();
+void RunNowPlayingPresentationTests();
 
 void setUp() {}
 void tearDown() {}
@@ -3313,5 +3314,6 @@ int main(int, char**) {
   RUN_TEST(test_now_playing_marquee_transition_and_layout);
   RUN_TEST(test_now_playing_placeholder_is_deterministic);
   RunDdpTests();
+  RunNowPlayingPresentationTests();
   return UNITY_END();
 }

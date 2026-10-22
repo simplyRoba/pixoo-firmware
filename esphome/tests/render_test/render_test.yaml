@@ -52,6 +52,8 @@ esphome:
     - ../../../pixoo_content/src/dashboard/now_playing/now_playing_art.cpp
     - ../../../pixoo_content/include/dashboard/now_playing/now_playing_timing.h
     - ../../../pixoo_content/src/dashboard/now_playing/now_playing_timing.cpp
+    - ../../../pixoo_content/include/dashboard/now_playing/now_playing_presentation.h
+    - ../../../pixoo_content/src/dashboard/now_playing/now_playing_presentation.cpp
     - ../../../pixoo_content/include/dashboard/now_playing/metadata_policy.h
     - ../../../pixoo_content/src/dashboard/now_playing/metadata_policy.cpp
     - ../../components/pixoo64/artwork_decoder.h
@@ -543,17 +545,6 @@ pixoo64_render_test:
         artwork_identity: 5001
         artwork_availability: ready
         artwork_revision: 1
-      - at_ms: 6000
-        source_state: ready
-        playback_state: playing
-        title: "A Deterministic Marquee Title Beyond Sixty Pixels"
-        artist: "Short Artist"
-        duration_ms: 180000
-        position_ms: 45000
-        media_identity: 2002
-        artwork_identity: 5002
-        artwork_availability: pending
-        artwork_revision: 1
       - at_ms: 6300
         source_state: ready
         playback_state: playing
@@ -591,56 +582,6 @@ pixoo64_render_test:
         artwork_availability: ready
         artwork_revision: 2
         artwork_copy_ready_at_ms: 10000
-      - at_ms: 10800
-        source_state: ready
-        playback_state: playing
-        title: "Stable ID Title"
-        artist: "Stable ID Artist"
-        duration_ms: 180000
-        position_ms: 49800
-        media_identity: 2003
-        artwork_identity: 5003
-        artwork_content_identity: 5002
-        artwork_content_revision: 2
-        artwork_availability: pending
-        artwork_revision: 3
-      - at_ms: 10900
-        source_state: ready
-        playback_state: playing
-        title: "Stable ID Title"
-        artist: "Stable ID Artist"
-        duration_ms: 180000
-        position_ms: 49900
-        media_identity: 2003
-        artwork_identity: 5003
-        artwork_content_identity: 5002
-        artwork_content_revision: 2
-        artwork_availability: ready
-        artwork_revision: 3
-        artwork_copy_ready_at_ms: 10900
-      - at_ms: 11700
-        source_state: ready
-        playback_state: playing
-        title: "Stable ID New Art"
-        artist: "Stable ID Artist"
-        duration_ms: 180000
-        position_ms: 49920
-        media_identity: 2003
-        artwork_identity: 5005
-        artwork_availability: pending
-        artwork_revision: 4
-      - at_ms: 12400
-        source_state: ready
-        playback_state: playing
-        title: "Stable ID New Art"
-        artist: "Stable ID Artist"
-        duration_ms: 180000
-        position_ms: 49940
-        media_identity: 2003
-        artwork_identity: 5005
-        artwork_availability: ready
-        artwork_revision: 4
-        artwork_copy_ready_at_ms: 12400
       - at_ms: 13200
         source_state: ready
         playback_state: idle
@@ -699,155 +640,6 @@ pixoo64_render_test:
         artwork_identity: 5004
         artwork_availability: failed
         artwork_revision: 1
-      - at_ms: 24000
-        source_state: ready
-        playback_state: playing
-        title: "Timed Title"
-        artist: "Timed Artist"
-        duration_ms: 120000
-        position_ms: 10000
-        media_identity: 5005
-      - at_ms: 25000
-        source_state: ready
-        playback_state: playing
-        title: "Interrupted B"
-        artist: "Staged Before C"
-        duration_ms: 120000
-        position_ms: 11000
-        media_identity: 8008
-        artwork_identity: 8100
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 25000
-      - at_ms: 25400
-        source_state: ready
-        playback_state: playing
-        title: "Interrupted C"
-        artist: "Pending Must Hold A"
-        duration_ms: 120000
-        position_ms: 11300
-        media_identity: 8009
-        artwork_identity: 8200
-        artwork_availability: pending
-        artwork_revision: 1
-      - at_ms: 25600
-        source_state: ready
-        playback_state: playing
-        title: "Interrupted C"
-        artist: "Failed Must Not Commit B"
-        duration_ms: 120000
-        position_ms: 11600
-        media_identity: 8009
-        artwork_identity: 8200
-        artwork_availability: failed
-        artwork_revision: 1
-      - at_ms: 25900
-        source_state: ready
-        playback_state: idle
-        media_identity: 0
-      - at_ms: 26600
-        source_state: ready
-        playback_state: playing
-        title: "Newest Ready"
-        artist: "Retargeted Presentation"
-        duration_ms: 120000
-        position_ms: 12000
-        media_identity: 8010
-        artwork_identity: 8300
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 26600
-      - at_ms: 29000
-        source_state: stale
-        playback_state: playing
-        title: "Newest Ready"
-        artist: "Retargeted Presentation"
-        duration_ms: 120000
-        position_ms: 14400
-        media_identity: 8010
-        artwork_identity: 8300
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 26600
-      - at_ms: 30000
-        source_state: ready
-        playback_state: playing
-        snapshot_settled: false
-        title: "Newest Ready"
-        artist: "Retargeted Presentation"
-        duration_ms: 120000
-        position_ms: 15400
-        media_identity: 8010
-        artwork_identity: 8300
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 26600
-      - at_ms: 30050
-        source_state: ready
-        playback_state: playing
-        title: "Fresh Active State"
-        artist: "Metadata Coalesced"
-        duration_ms: 120000
-        position_ms: 950
-        media_identity: 9010
-        artwork_known: false
-      - at_ms: 30100
-        source_state: ready
-        playback_state: playing
-        title: "Fresh Active State"
-        artist: "Metadata Coalesced"
-        duration_ms: 120000
-        position_ms: 1000
-        media_identity: 9010
-        artwork_identity: 9300
-        artwork_availability: pending
-        artwork_revision: 1
-      - at_ms: 30200
-        source_state: ready
-        playback_state: playing
-        title: "Fresh Active State"
-        artist: "Metadata Coalesced"
-        duration_ms: 120000
-        position_ms: 1100
-        media_identity: 9010
-        artwork_identity: 9300
-        artwork_availability: failed
-        artwork_revision: 1
-      - at_ms: 30300
-        source_state: ready
-        playback_state: playing
-        title: "Fresh Active State"
-        artist: "Metadata Coalesced"
-        duration_ms: 120000
-        position_ms: 1200
-        media_identity: 9010
-        artwork_identity: 9300
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 30300
-      - at_ms: 48000
-        source_state: ready
-        playback_state: playing
-        title: "This deliberately very long title remains visible while its marquee keeps looping"
-        artist: "Timed Artist"
-        duration_ms: 600000
-        position_ms: 20000
-        media_identity: 6006
-        artwork_identity: 7007
-        artwork_availability: pending
-        artwork_revision: 1
-      - at_ms: 48100
-        source_state: ready
-        playback_state: playing
-        title: "This deliberately very long title remains visible while its marquee keeps looping"
-        artist: "Timed Artist"
-        duration_ms: 600000
-        position_ms: 20100
-        media_identity: 6006
-        artwork_identity: 7007
-        artwork_availability: ready
-        artwork_revision: 1
-        artwork_copy_ready_at_ms: 48100
       - at_ms: 50000
         source_state: ready
         playback_state: playing
@@ -1412,6 +1204,7 @@ display:
     equalizer: equalizer_dashboard
     panel_text: render_test_text
     now_playing_source: src_now_playing
+    now_playing_dashboard: now_playing_dashboard
     weather_source: src_weather_loading
     adapter_checks: true
     # Showing the face sends every column to its digit the long way around,
@@ -1424,62 +1217,49 @@ display:
         snapshot: now_playing_playing_artwork
       - dashboard: now_playing
         now_ms: 1000
+        advance_only: true
       - dashboard: now_playing
         now_ms: 2000
-      - dashboard: now_playing
-        now_ms: 2200
-        snapshot: now_playing_paused_midpoint
+        advance_only: true
       - dashboard: now_playing
         now_ms: 2400
         snapshot: now_playing_paused
       - dashboard: now_playing
         now_ms: 4000
+        advance_only: true
       - dashboard: now_playing
         now_ms: 4400
         snapshot: now_playing_buffering
       - dashboard: now_playing
         now_ms: 5000
-        snapshot: now_playing_track_change_old
-      - dashboard: now_playing
-        now_ms: 6000
-        snapshot: now_playing_track_change_pending
+        advance_only: true
       - dashboard: now_playing
         now_ms: 6300
-        snapshot: now_playing_track_change_ready_start
+        advance_only: true
       - dashboard: now_playing
         now_ms: 6650
         snapshot: now_playing_track_change_midpoint
       - dashboard: now_playing
         now_ms: 6825
-        snapshot: now_playing_track_change_fade_in
-      - dashboard: now_playing
-        now_ms: 7001
-        snapshot: now_playing_track_change_ready
-      - dashboard: now_playing
-        now_ms: 7100
-        snapshot: now_playing_title_marquee_start
+        advance_only: true
       - dashboard: now_playing
         now_ms: 8000
         snapshot: now_playing_title_marquee_scrolled
       - dashboard: now_playing
         now_ms: 8500
-        snapshot: now_playing_text_only_start
-      - dashboard: now_playing
-        now_ms: 8850
-        snapshot: now_playing_text_only_midpoint
+        advance_only: true
       - dashboard: now_playing
         now_ms: 8851
+        advance_only: true
       - dashboard: now_playing
         now_ms: 9025
         snapshot: now_playing_text_only_fade_in
       - dashboard: now_playing
         now_ms: 9201
-        snapshot: now_playing_text_only_complete
-      - dashboard: now_playing
-        now_ms: 9202
-        snapshot: now_playing_artist_marquee_start
+        advance_only: true
       - dashboard: now_playing
         now_ms: 10000
+        advance_only: true
       - dashboard: now_playing
         now_ms: 10350
         snapshot: now_playing_revision_crossfade_midpoint
@@ -1487,26 +1267,8 @@ display:
         now_ms: 10400
         snapshot: now_playing_artist_marquee_scrolled
       - dashboard: now_playing
-        now_ms: 10700
-        snapshot: now_playing_revision_crossfade_complete
-      - dashboard: now_playing
-        now_ms: 10800
-        snapshot: now_playing_duplicate_pending
-      - dashboard: now_playing
-        now_ms: 10900
-      - dashboard: now_playing
-        now_ms: 11600
-        snapshot: now_playing_duplicate_ready
-      - dashboard: now_playing
-        now_ms: 11700
-        snapshot: now_playing_stable_id_change_pending
-      - dashboard: now_playing
-        now_ms: 12400
-      - dashboard: now_playing
-        now_ms: 13100
-        snapshot: now_playing_stable_id_change_ready
-      - dashboard: now_playing
         now_ms: 13200
+        advance_only: true
       - dashboard: now_playing
         now_ms: 13800
         snapshot: now_playing_idle
@@ -1518,81 +1280,51 @@ display:
         snapshot: now_playing_waiting_animated
       - dashboard: now_playing
         now_ms: 15200
+        advance_only: true
       - dashboard: now_playing
         now_ms: 15800
         snapshot: now_playing_unconfigured
       - dashboard: now_playing
         now_ms: 16500
+        advance_only: true
       - dashboard: now_playing
         now_ms: 17100
         snapshot: now_playing_no_entity_data
       - dashboard: now_playing
         now_ms: 17800
+        advance_only: true
       - dashboard: now_playing
         now_ms: 18400
         snapshot: now_playing_offline
       - dashboard: now_playing
         now_ms: 19100
+        advance_only: true
       - dashboard: now_playing
         now_ms: 19700
         snapshot: now_playing_missing_art
       - dashboard: now_playing
         now_ms: 20000
+        advance_only: true
       - dashboard: now_playing
         now_ms: 20600
         snapshot: now_playing_stale
       - dashboard: now_playing
         now_ms: 21500
+        advance_only: true
       - dashboard: now_playing
         now_ms: 22100
         snapshot: now_playing_failed_art
       - dashboard: now_playing
         now_ms: 22400
+        advance_only: true
       - dashboard: now_playing
         now_ms: 23100
         snapshot: now_playing_unsupported_fallback
-      - dashboard: now_playing
-        now_ms: 24000
-      - dashboard: now_playing
-        now_ms: 24900
-        snapshot: now_playing_interrupted_old
-      - dashboard: now_playing
-        now_ms: 25000
-      - dashboard: now_playing
-        now_ms: 25360
-      - dashboard: now_playing
-        now_ms: 25400
-        snapshot: now_playing_interrupted_pending
-      - dashboard: now_playing
-        now_ms: 25600
-      - dashboard: now_playing
-        now_ms: 25800
-        snapshot: now_playing_interrupted_failed_midpoint
-      - dashboard: now_playing
-        now_ms: 25900
-        snapshot: now_playing_interrupted_idle_start
-      - dashboard: now_playing
-        now_ms: 26600
-        snapshot: now_playing_interrupted_ready_start
-      - dashboard: now_playing
-        now_ms: 27300
-        snapshot: now_playing_interrupted_ready_complete
-      - dashboard: now_playing
-        now_ms: 48000
-        snapshot: now_playing_fallback_change_pending
-      - dashboard: now_playing
-        now_ms: 48100
-        snapshot: now_playing_fallback_change_ready_start
-      - dashboard: now_playing
-        now_ms: 48450
-        snapshot: now_playing_fallback_change_midpoint
-      - dashboard: now_playing
-        now_ms: 48800
-        snapshot: now_playing_fallback_change_ready
       # Short, fictional metadata and original full-bleed artwork make a stable
       # now-playing render suitable for the project overview.
       - dashboard: now_playing
         now_ms: 60000
+        advance_only: true
       - dashboard: now_playing
         now_ms: 60700
         snapshot: now_playing_showcase

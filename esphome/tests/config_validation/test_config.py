@@ -282,6 +282,7 @@ for field in ('options', 'legacy_options'):
             "now_playing_art.cpp",
             "now_playing_timing.cpp",
             "metadata_policy.cpp",
+            "now_playing_presentation.cpp",
         ):
             self.assertIn(source, production)
 
@@ -303,6 +304,7 @@ for field in ('options', 'legacy_options'):
             "now_playing_art.cpp",
             "now_playing_timing.cpp",
             "metadata_policy.cpp",
+            "now_playing_presentation.cpp",
         ):
             self.assertIn(source, render)
         result = self.run_config(self.fixture, render_path)
@@ -314,14 +316,11 @@ for field in ('options', 'legacy_options'):
             shutil.copytree(self.fixture, repo)
             render_path = repo / "esphome/tests/render_test/render_test.yaml"
             text = render_path.read_text(encoding="utf-8")
-            old = (
-                "        artwork_content_identity: 5002\n"
-                "        artwork_content_revision: 2\n"
-            )
-            self.assertIn(old, text)
+            anchor = "        artwork_identity: 5001\n"
+            self.assertIn(anchor, text)
             render_path.write_text(
                 text.replace(
-                    old, "        artwork_content_identity: 5002\n", 1
+                    anchor, anchor + "        artwork_content_identity: 5002\n", 1
                 ),
                 encoding="utf-8",
             )
