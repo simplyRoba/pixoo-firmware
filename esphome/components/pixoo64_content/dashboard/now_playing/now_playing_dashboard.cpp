@@ -626,7 +626,7 @@ void NowPlayingDashboard::DrawBackground_(display::Display &display) const {
     uint8_t lower_third = 255;
     if (y >= 39) {
       const int row = y - 39;
-      lower_third = static_cast<uint8_t>(std::max(35, 238 - row * 8));
+      lower_third = static_cast<uint8_t>(std::max(35, 255 - row * 8));
     }
     const uint8_t level = static_cast<uint8_t>(
         (static_cast<uint16_t>(this->dim_value_) * lower_third + 127u) / 255u);

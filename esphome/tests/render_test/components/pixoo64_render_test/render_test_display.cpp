@@ -2196,6 +2196,40 @@ void RenderTestDisplay::setup() {
         ++failures;
       }
     }
+    this->content_controller_->HideBaseContent(30301);
+    bool gradient_valid = this->now_playing_source_ != nullptr &&
+        this->render_frame_(0, "now_playing", nullptr, 0, true);
+    if (gradient_valid) {
+      const auto data = this->now_playing_source_->Data();
+      uint16_t artwork[pixoo::now_playing::kArtworkPixelCount];
+      gradient_valid = this->now_playing_source_->CopyArtwork(
+          data.artwork_identity, data.artwork_revision, artwork,
+          pixoo::now_playing::kArtworkPixelCount);
+      // The left edge avoids text and status marks; rows 38–44 are bare cover.
+      // Row 39 is undimmed, then each row loses eight brightness levels.
+      for (int y = 0; gradient_valid && y < 63; ++y) {
+        const int level = y <= 39 ? 255 : 255 - (y - 39) * 8;
+        const int width = y >= 38 && y <= 44 ? 64 : 1;
+        for (int x = 0; x < width; ++x) {
+          const size_t pixel = y * 64 + x;
+          const uint16_t rgb565 = artwork[pixel];
+          const int channels[] = {((rgb565 >> 11) & 31) * 255 / 31,
+                                  ((rgb565 >> 5) & 63) * 255 / 63,
+                                  (rgb565 & 31) * 255 / 31};
+          for (int channel = 0; channel < 3; ++channel)
+            gradient_valid &= this->framebuffer_[pixel * 3 + channel] ==
+                              (channels[channel] * level + 127) / 255;
+        }
+      }
+    }
+    if (!gradient_valid) {
+      std::printf("render test: FAILED now-playing cover darkening onset/ramp\n");
+      ++failures;
+    } else {
+      std::printf("render test: ok now-playing cover darkening onset/ramp\n");
+    }
+    this->content_controller_->HideBaseContent(1);
+
     std::printf(
         "render test: now-playing object=%zu bytes buffers=%zu bytes "
         "source=%zu bytes\n",
