@@ -455,7 +455,7 @@ void RenderTestDisplay::setup() {
       face.OnShow(5000);
       shadow_state(invalid, 5000, 0, 0);
       shadow_state(valid, 6000, 0, 0);
-      shadow_state(valid, 6450, 1, 128);
+      shadow_state(valid, 6450, 1, 255);
       shadow_state(valid, 6900, 129, 255);
       shadow_state(invalid, 7000, 0, 0);
       shadow_state(valid, 8000, 0, 0);
@@ -484,6 +484,40 @@ void RenderTestDisplay::setup() {
       auto gray_at = [&](int x, int y) {
         return this->framebuffer_[(y * 64 + x) * 3];
       };
+      {
+        pixoo64::clockface::ShadowFace ignition;
+        ignition.OnShow(0);
+        ignition.Tick(valid, 0);
+        ignition.Tick(valid, 280);
+        ignition.Render(*this);
+        if (gray_at(23, 26) < 128 || gray_at(44, 23) > 64) {
+          std::printf("render test: FAILED independent shadow hour ignition\n");
+          ++failures;
+        }
+        ignition.Tick(valid, 340);
+        ignition.Render(*this);
+        if (gray_at(23, 26) > 64 || gray_at(44, 23) < 128) {
+          std::printf("render test: FAILED independent shadow minute ignition\n");
+          ++failures;
+        }
+        auto seconds_peak = [&]() {
+          int peak = 0;
+          for (int y = 46; y <= 58; ++y)
+            for (int x = 25; x <= 33; ++x)
+              peak = std::max(peak, static_cast<int>(gray_at(x, y)));
+          return peak;
+        };
+        ignition.Tick(valid, 900);
+        ignition.Render(*this);
+        const int before_seconds = seconds_peak();
+        ignition.Tick(valid, 1500);
+        ignition.Render(*this);
+        if (before_seconds != 0 || seconds_peak() < 64) {
+          std::printf("render test: FAILED shadow seconds ignition handoff\n");
+          ++failures;
+        }
+        face.Render(*this);
+      }
       // At 10:09:30 the right and bottom markers receive no light.
       const int cardinal_points[][4] = {
           {31, 2, 1, 48}, {60, 31, 0, 0}, {31, 60, 0, 0}, {2, 31, 1, 24}};

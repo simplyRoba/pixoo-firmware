@@ -328,18 +328,20 @@ int EdgeIntegral(int delta, int normal) {
   return delta < 0 ? -angle : angle;
 }
 
-int LineVisibility(const LineSource &shadows, int along, int across) {
+int LineVisibility(const LineSource &shadows, int along, int across,
+                   int second_occlusion = kSecondOcclusion) {
   Interval other, seconds;
   const bool has_other = BlockedInterval(shadows.bodies[0], {along, across},
       shadows.length, shadows.edge_offset, other);
   if (has_other && other.lo == 0 && other.hi == shadows.length)
     return 0;
-  const bool has_seconds = BlockedInterval(shadows.bodies[1], {along, across},
-      shadows.length, shadows.edge_offset, seconds);
+  const bool has_seconds = second_occlusion != 0 &&
+      BlockedInterval(shadows.bodies[1], {along, across},
+                      shadows.length, shadows.edge_offset, seconds);
   if (!has_other && !has_seconds)
     return 255;
   if (!has_other && seconds.lo == 0 && seconds.hi == shadows.length)
-    return 255 - kSecondOcclusion;
+    return 255 - second_occlusion;
   const int normal = Max(Abs(across - shadows.edge_offset), kOne);
   const int end_integral = EdgeIntegral(shadows.length - along, normal);
   const int start_integral = EdgeIntegral(-along, normal);
@@ -369,11 +371,12 @@ int LineVisibility(const LineSource &shadows, int along, int across) {
     }
   }
   return ClampByte((255 * (full - other_covered) -
-                    kSecondOcclusion * seconds_covered) / full);
+                    second_occlusion * seconds_covered) / full);
 }
 
 int MarkerVisibility(const LineSource &shadows, int along, int across,
-                     int marker_mask, int unmarked) {
+                     int marker_mask, int unmarked,
+                     int second_occlusion = kSecondOcclusion) {
   if (unmarked == 0 || marker_mask == 0)
     return unmarked;
   std::array<Interval, 1 + kMarkerCount> opaque;
@@ -425,8 +428,9 @@ int MarkerVisibility(const LineSource &shadows, int along, int across,
         : EdgeIntegral(point - along, normal);
   };
   Interval seconds;
-  const bool has_seconds = BlockedInterval(shadows.bodies[1], {along, across},
-      shadows.length, shadows.edge_offset, seconds);
+  const bool has_seconds = second_occlusion != 0 &&
+      BlockedInterval(shadows.bodies[1], {along, across},
+                      shadows.length, shadows.edge_offset, seconds);
   int seconds_covered = has_seconds ? integral(seconds.hi) - integral(seconds.lo) : 0;
   int opaque_covered = 0;
   for (int i = 0; i < merged; ++i) {
@@ -439,7 +443,7 @@ int MarkerVisibility(const LineSource &shadows, int along, int across,
     }
   }
   return ClampByte((255 * (full - opaque_covered) -
-                    kSecondOcclusion * seconds_covered) / full);
+                    second_occlusion * seconds_covered) / full);
 }
 
 // Marker bounds align with pixel edges; coverage matches the shadow quad.
@@ -498,7 +502,8 @@ LightSample SampleHand(int along, int across, int length, int width) {
 // Direct emission is clipped at its physical source before raster coverage.
 int SurfaceGain(int emission, Point surface, const Direction &emitter, int side,
                 const Direction &other, int other_length, int other_width,
-                const Direction &second, bool clip_other = true) {
+                const Direction &second, bool clip_other = true,
+                int second_occlusion = kSecondOcclusion) {
   if (emission == 0)
     return 255;
   const Point source = emitter.World(surface.x, side * surface.y);
@@ -511,7 +516,7 @@ int SurfaceGain(int emission, Point surface, const Direction &emitter, int side,
   const Point second_local = second.Local(source);
   const int second_gain = ClampByte(128 + BodyDistance(
       second_local.x, second_local.y, kSecondLength, kSecondWidth, kSecondTail));
-  return Mul(other_gain, 255 - Mul(kSecondOcclusion, 255 - second_gain));
+  return Mul(other_gain, 255 - Mul(second_occlusion, 255 - second_gain));
 }
 
 int Shade(const LightSample &hour, const LightSample &minute,
@@ -563,14 +568,19 @@ namespace {
 struct SceneSnapshot {
   Direction hour, minute, second;
   Shadows hour_shadows, minute_shadows;
-  int opacity;
+  int hour_level, minute_level, second_level, second_occlusion;
 
-  SceneSnapshot(const pixoo::clock::ShadowHandAngles &angles, int opacity)
+  SceneSnapshot(const pixoo::clock::ShadowHandAngles &angles,
+                const pixoo::clock::ShadowHandLevels &levels)
       : hour(angles.hour), minute(angles.minute), second(angles.second),
         hour_shadows(hour, kHourLength, kHourWidth, 1,
                      minute, kMinuteLength, kMinuteWidth, second),
         minute_shadows(minute, kMinuteLength, kMinuteWidth, -1,
-                       hour, kHourLength, kHourWidth, second), opacity(opacity) {}
+                       hour, kHourLength, kHourWidth, second),
+        hour_level(ClampByte(static_cast<int>(levels.hour * 255.0f + .5f))),
+        minute_level(ClampByte(static_cast<int>(levels.minute * 255.0f + .5f))),
+        second_level(ClampByte(static_cast<int>(levels.second * 255.0f + .5f))),
+        second_occlusion(Mul(kSecondOcclusion, second_level)) {}
 };
 
 static_assert(sizeof(SceneSnapshot) <= 4096);
@@ -582,7 +592,8 @@ void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
   const auto &hour = scene.hour, &minute = scene.minute, &second = scene.second;
   const auto &hour_shadows = scene.hour_shadows;
   const auto &minute_shadows = scene.minute_shadows;
-  const int opacity = scene.opacity;
+  const int hour_level = scene.hour_level, minute_level = scene.minute_level;
+  const int second_level = scene.second_level, second_occlusion = scene.second_occlusion;
   for (int y = first_row; y < last_row; y += row_step) {
     uint8_t *row = gray + (y - first_row) * pixoo::kWidth;
     const int dy = 2 * y - 63;
@@ -599,31 +610,42 @@ void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
       LightSample m = SampleHand(m_along, m_across, kMinuteLength, kMinuteWidth);
       if (h.crease != 0 || h.cap_crease != 0) {
         h.crease = Max(Mul(h.crease, SurfaceGain(h.crease, h.edge_surface, hour, 1,
-            minute, kMinuteLength, kMinuteWidth, second)),
+            minute, kMinuteLength, kMinuteWidth, second, true, second_occlusion)),
             Mul(h.cap_crease, SurfaceGain(h.cap_crease, {kHourLength, 0}, hour, 1,
-            minute, kMinuteLength, kMinuteWidth, second)));
+            minute, kMinuteLength, kMinuteWidth, second, true, second_occlusion)));
       }
       if (m.crease != 0 || m.cap_crease != 0) {
         // The minute surface is above the hour surface.
         m.crease = Max(Mul(m.crease, SurfaceGain(m.crease, m.edge_surface, minute, -1,
-            hour, kHourLength, kHourWidth, second, false)),
+            hour, kHourLength, kHourWidth, second, false, second_occlusion)),
             Mul(m.cap_crease, SurfaceGain(m.cap_crease, {kMinuteLength, 0}, minute, -1,
-            hour, kHourLength, kHourWidth, second, false)));
+            hour, kHourLength, kHourWidth, second, false, second_occlusion)));
+      }
+      if (hour_level != 255) {
+        h.edge_light = Mul(h.edge_light, hour_level);
+        h.cap_light = Mul(h.cap_light, hour_level);
+        h.crease = Mul(h.crease, hour_level);
+      }
+      if (minute_level != 255) {
+        m.edge_light = Mul(m.edge_light, minute_level);
+        m.cap_light = Mul(m.cap_light, minute_level);
+        m.crease = Mul(m.crease, minute_level);
       }
       const int s_along = as / 256, s_across = ss / 256;
-      const int second_body = Mul(kSecondOcclusion, BodyCoverage(
+      const int second_body = Mul(second_occlusion, BodyCoverage(
           s_along, s_across, kSecondLength, kSecondWidth, kSecondTail));
       const bool exposed = Max(Max(h.body, m.body), second_body) < 255;
       const int he = exposed && h.edge_light != 0
-          ? LineVisibility(hour_shadows.edge, h_along, h_across) : 0;
+          ? LineVisibility(hour_shadows.edge, h_along, h_across, second_occlusion) : 0;
       const int hc = exposed && h.cap_light != 0
-          ? LineVisibility(hour_shadows.cap, h_across + kHourWidth, h_along) : 0;
+          ? LineVisibility(hour_shadows.cap, h_across + kHourWidth, h_along, second_occlusion) : 0;
       const int me = exposed && m.edge_light != 0
-          ? LineVisibility(minute_shadows.edge, m_along, m_across) : 0;
+          ? LineVisibility(minute_shadows.edge, m_along, m_across, second_occlusion) : 0;
       const int mc = exposed && m.cap_light != 0
-          ? LineVisibility(minute_shadows.cap, m_across + kMinuteWidth, m_along) : 0;
-      int value = Shade(h, m, he, hc, me, mc,
-          second_body, detail::ShadowSecondCoverage(s_along, s_across));
+          ? LineVisibility(minute_shadows.cap, m_across + kMinuteWidth, m_along, second_occlusion) : 0;
+      const int second_coverage = Mul(second_level,
+          detail::ShadowSecondCoverage(s_along, s_across));
+      int value = Shade(h, m, he, hc, me, mc, second_body, second_coverage);
       // Emitters lie inside the marker ring; marker shadows stay in this border.
       const int marker_mask = (y < kMarkerBand ? 1 : 0) |
           (x >= pixoo::kWidth - kMarkerBand ? 2 : 0) |
@@ -631,15 +653,15 @@ void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
           (x < kMarkerBand ? 8 : 0);
       if (marker_mask != 0) {
         const int marked_he = MarkerVisibility(hour_shadows.edge, h_along, h_across,
-                                                marker_mask, he);
+                                                marker_mask, he, second_occlusion);
         const int marked_hc = MarkerVisibility(hour_shadows.cap, h_across + kHourWidth,
-                                                h_along, marker_mask, hc);
+                                                h_along, marker_mask, hc, second_occlusion);
         const int marked_me = MarkerVisibility(minute_shadows.edge, m_along, m_across,
-                                                marker_mask, me);
+                                                marker_mask, me, second_occlusion);
         const int marked_mc = MarkerVisibility(minute_shadows.cap, m_across + kMinuteWidth,
-                                                m_along, marker_mask, mc);
+                                                m_along, marker_mask, mc, second_occlusion);
         value = Shade(h, m, marked_he, marked_hc, marked_me, marked_mc,
-                      second_body, detail::ShadowSecondCoverage(s_along, s_across));
+                      second_body, second_coverage);
         for (int marker = 0; marker < kMarkerCount; ++marker) {
           if ((marker_mask & (1 << marker)) == 0)
             continue;
@@ -653,7 +675,7 @@ void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
           }
         }
       }
-      *row++ = static_cast<uint8_t>(Mul(value, opacity));
+      *row++ = static_cast<uint8_t>(value);
       ah += 2 * hour.x;
       sh -= 2 * hour.y;
       am += 2 * minute.x;
@@ -757,13 +779,13 @@ void ShadowFace::RenderStateDeleter::operator()(RenderState *state) const {
 }
 
 void ShadowFace::Render(display::Display &display) const {
-  const int opacity = static_cast<int>(this->model_.Level() * 255.0f + .5f);
-  if (!this->model_.HasTime() || opacity == 0) {
+  const auto levels = this->model_.Levels();
+  if (!this->model_.HasTime() || this->model_.Level() == 0.0f) {
     display.fill(Color(0, 0, 0));
     return;
   }
   static_assert(pixoo::kWidth == 64 && pixoo::kHeight == 64);
-  const SceneSnapshot scene(this->model_.Angles(), opacity);
+  const SceneSnapshot scene(this->model_.Angles(), levels);
 #ifdef SHADOW_PARALLEL
   if (!this->render_state_attempted_) {
     this->render_state_attempted_ = true;

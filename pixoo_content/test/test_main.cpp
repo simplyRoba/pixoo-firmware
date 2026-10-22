@@ -2879,6 +2879,15 @@ static void assert_shadow_angles(const clock::ShadowClockModel &model,
   TEST_ASSERT_TRUE(angles.second >= 0.0f && angles.second < 360.0f);
 }
 
+static void assert_shadow_levels(const clock::ShadowClockModel &model,
+                                 float hour, float minute, float second) {
+  const auto levels = model.Levels();
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, hour, levels.hour);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, minute, levels.minute);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, second, levels.second);
+  TEST_ASSERT_EQUAL_FLOAT(std::max(hour, std::max(minute, second)), model.Level());
+}
+
 static void test_shadow_direct_update_and_fractional_hands() {
   clock::ShadowClockModel model;
   TEST_ASSERT_FALSE(model.HasTime());
@@ -2886,7 +2895,7 @@ static void test_shadow_direct_update_and_fractional_hands() {
   assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
   model.Update(10, 9, 30, 100);
   TEST_ASSERT_TRUE(model.HasTime());
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
   assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
   model.Update(10, 9, 30, 350);
   assert_shadow_angles(model, 304.752083f, 57.025f, 181.5f);
@@ -2948,50 +2957,60 @@ static void test_shadow_clock_corrections_reset_full_timestamp_anchor() {
   assert_shadow_angles(model, 334.24375f, 50.925f, 175.5f);
 }
 
-static void test_shadow_global_fade_keeps_time_live_without_winding() {
+static void test_shadow_independent_ignition_time_live() {
   clock::ShadowClockModel model;
   model.StartLoad(100);
   TEST_ASSERT_FALSE(model.HasTime());
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
   model.Update(10, 9, 30, 100);
   assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
-  model.Update(10, 9, 30, 325);
-  TEST_ASSERT_EQUAL_FLOAT(0.15625f, model.Level());
-  model.Update(10, 9, 31, 550);
-  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
+  assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 380);
+  TEST_ASSERT_EQUAL_FLOAT(0.78f, model.Levels().hour);
+  TEST_ASSERT_TRUE(model.Levels().minute < model.Levels().hour);
+  model.Update(10, 9, 31, 440);
+  TEST_ASSERT_EQUAL_FLOAT(0.10f, model.Levels().hour);
   assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
-  model.Update(10, 9, 31, 775);
-  TEST_ASSERT_EQUAL_FLOAT(0.84375f, model.Level());
+  model.Update(10, 9, 31, 665);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Levels().second);
   assert_shadow_angles(model, 304.760208f, 57.1225f, 187.35f);
-  model.Update(10, 9, 31, 1000);
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
-  model.Update(10, 9, 32, 2000);
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  model.Update(10, 9, 31, 1450);
+  assert_shadow_levels(model, 1.0f, 1.0f, 0.5f);
+  model.Update(10, 9, 31, 1600);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
+  model.Update(10, 9, 32, 4000);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
 }
 
 static void test_shadow_entry_delay_clear_and_reentry() {
   clock::ShadowClockModel model;
   model.StartLoad(100);
-  model.Update(10, 9, 30, 550);
-  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
-  // Entry delay advances opacity, but the first observation anchors the hands.
+  model.Update(10, 9, 30, 380);
+  TEST_ASSERT_EQUAL_FLOAT(0.78f, model.Levels().hour);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Levels().second);
+  // Entry delay advances ignition, but the first observation anchors the hands.
   assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
   model.Clear();
   TEST_ASSERT_FALSE(model.HasTime());
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
   assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
   model.Update(10, 9, 30, 600);
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
   assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
   model.StartLoad(1000);
   TEST_ASSERT_FALSE(model.HasTime());
   assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
   model.Update(10, 9, 30, 1000);
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+  assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 1350);
+  TEST_ASSERT_EQUAL_FLOAT(0.74f, model.Levels().minute);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Levels().second);
   model.StartLoad(2000);
-  model.Update(10, 9, 30, 4000);
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+  TEST_ASSERT_FALSE(model.HasTime());
+  assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
+  assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
+  model.Update(10, 9, 30, 5000);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
   assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
 }
 
@@ -3005,13 +3024,110 @@ static void test_shadow_invalid_fields_clear_and_recover() {
     model.Update(10, 9, 30, 450);
     model.Update(fields[0], fields[1], fields[2], 500);
     TEST_ASSERT_FALSE(model.HasTime());
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Level());
+    assert_shadow_levels(model, 0.0f, 0.0f, 0.0f);
     assert_shadow_angles(model, 0.0f, 0.0f, 0.0f);
     model.Update(10, 9, 30, 600);
     TEST_ASSERT_TRUE(model.HasTime());
-    TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
+    assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
     assert_shadow_angles(model, 304.75f, 57.0f, 180.0f);
   }
+}
+
+static void test_shadow_ignition_keyframes() {
+  const uint32_t hour_ms[] = {0, 120, 230, 280, 340, 500, 650, 700,
+                              840, 930, 1050, 1500};
+  const float hour_level[] = {0, .06f, .12f, .78f, .10f, .90f, .94f, .20f,
+                              1, .70f, 1, 1};
+  const uint32_t minute_ms[] = {0, 170, 280, 350, 420, 600, 740, 810,
+                                950, 1030, 1150, 1500};
+  const float minute_level[] = {0, .04f, .10f, .74f, .12f, .94f, .96f, .26f,
+                                1, .78f, 1, 1};
+  clock::ShadowClockModel model;
+  model.StartLoad(0);
+  TEST_ASSERT_EQUAL_UINT32(1500, clock::ShadowClockModel::kLoadMs);
+  for (unsigned i = 0; i < 12; ++i) {
+    model.Update(10, 9, 30, hour_ms[i]);
+    TEST_ASSERT_FLOAT_WITHIN(0.00001f, hour_level[i], model.Levels().hour);
+  }
+  model.StartLoad(0);
+  for (unsigned i = 0; i < 12; ++i) {
+    model.Update(10, 9, 30, minute_ms[i]);
+    TEST_ASSERT_FLOAT_WITHIN(0.00001f, minute_level[i], model.Levels().minute);
+  }
+}
+
+static void test_shadow_ignition_sweep() {
+  clock::ShadowClockModel model, wrapped;
+  const uint32_t start = UINT32_MAX - 300;
+  model.StartLoad(0);
+  wrapped.StartLoad(start);
+  clock::ShadowHandLevels previous{};
+  int directions[2] = {0, 0};
+  unsigned peaks[2] = {0, 0}, dips[2] = {0, 0};
+  uint32_t last_dip[2] = {0, 0}, last_interval[2] = {UINT32_MAX, UINT32_MAX};
+  float last_dip_level[2] = {0.0f, 0.0f};
+  const uint32_t expected_dips[2][3] = {
+      {340, 700, 930}, {420, 810, 1030}};
+  unsigned differences = 0;
+  for (uint32_t ms = 0; ms <= clock::ShadowClockModel::kLoadMs; ++ms) {
+    model.Update(10, 9, 30, ms);
+    wrapped.Update(10, 9, 30, start + ms);
+    const auto levels = model.Levels();
+    assert_shadow_levels(wrapped, levels.hour, levels.minute, levels.second);
+    const auto angles = model.Angles();
+    assert_shadow_angles(wrapped, angles.hour, angles.minute, angles.second);
+    const float values[] = {levels.hour, levels.minute, levels.second};
+    const float before[] = {previous.hour, previous.minute, previous.second};
+    for (unsigned i = 0; i < 3; ++i) {
+      TEST_ASSERT_TRUE(std::isfinite(values[i]));
+      TEST_ASSERT_TRUE(values[i] >= 0.0f && values[i] <= 1.0f);
+      TEST_ASSERT_TRUE(std::fabs(values[i] - before[i]) < 0.025f);
+      if (i < 2 && ms > 0) {
+        TEST_ASSERT_TRUE(values[i] > 0.0f);
+        const int direction = (values[i] > before[i]) - (values[i] < before[i]);
+        if (direction != 0) {
+          if (directions[i] > 0 && direction < 0) ++peaks[i];
+          if (directions[i] < 0 && direction > 0) {
+            TEST_ASSERT_TRUE(dips[i] < 3);
+            const uint32_t dip_ms = ms - 1;
+            TEST_ASSERT_EQUAL_UINT32(expected_dips[i][dips[i]], dip_ms);
+            if (dips[i] > 0) {
+              const uint32_t interval = dip_ms - last_dip[i];
+              TEST_ASSERT_TRUE(interval < last_interval[i]);
+              TEST_ASSERT_TRUE(before[i] > last_dip_level[i]);
+              last_interval[i] = interval;
+            }
+            if (dips[i] == 2) TEST_ASSERT_TRUE(before[i] >= 0.70f);
+            last_dip[i] = dip_ms;
+            last_dip_level[i] = before[i];
+            ++dips[i];
+          }
+          directions[i] = direction;
+        }
+      }
+    }
+    if (levels.hour != levels.minute) ++differences;
+    TEST_ASSERT_EQUAL_FLOAT(std::max(levels.hour, std::max(levels.minute, levels.second)),
+                            model.Level());
+    TEST_ASSERT_TRUE(levels.second >= previous.second);
+    if (ms <= clock::ShadowClockModel::kLoadMs - 300) {
+      TEST_ASSERT_EQUAL_FLOAT(0.0f, levels.second);
+    } else {
+      const float t = static_cast<float>(ms - (clock::ShadowClockModel::kLoadMs - 300)) / 300.0f;
+      TEST_ASSERT_FLOAT_WITHIN(0.00001f, t * t * (3.0f - 2.0f * t), levels.second);
+    }
+    previous = levels;
+  }
+  for (unsigned i = 0; i < 2; ++i) {
+    TEST_ASSERT_EQUAL_UINT(3, peaks[i]);
+    TEST_ASSERT_EQUAL_UINT(3, dips[i]);
+  }
+  TEST_ASSERT_TRUE(differences > 1000);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
+  model.Update(10, 9, 31, clock::ShadowClockModel::kLoadMs + 1);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
+  model.Update(10, 9, 32, 5000);
+  assert_shadow_levels(model, 1.0f, 1.0f, 1.0f);
 }
 
 static void test_shadow_timers_survive_millis_wraparound() {
@@ -3019,12 +3135,14 @@ static void test_shadow_timers_survive_millis_wraparound() {
   const uint32_t start = UINT32_MAX - 300;
   model.StartLoad(start);
   model.Update(10, 9, 30, start);
-  model.Update(10, 9, 30, start + 450);
-  TEST_ASSERT_EQUAL_FLOAT(0.5f, model.Level());
-  assert_shadow_angles(model, 304.75375f, 57.045f, 182.7f);
-  model.Update(10, 9, 30, start + 900);
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, model.Level());
-  assert_shadow_angles(model, 304.7575f, 57.09f, 185.4f);
+  model.Update(10, 9, 30, start + 500);
+  TEST_ASSERT_EQUAL_FLOAT(0.90f, model.Levels().hour);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Levels().second);
+  assert_shadow_angles(model, 304.754167f, 57.05f, 183.0f);
+  model.Update(10, 9, 30, start + 810);
+  TEST_ASSERT_EQUAL_FLOAT(0.26f, model.Levels().minute);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, model.Levels().second);
+  assert_shadow_angles(model, 304.75675f, 57.081f, 184.86f);
   model.Update(10, 9, 30, start + 5000);
   assert_shadow_angles(model, 304.758333f, 57.1f, 186.0f);
   model.Update(10, 9, 31, start + 5100);
@@ -3037,7 +3155,9 @@ int main(int, char**) {
   RUN_TEST(test_shadow_repeated_timestamp_and_delayed_ticks_freeze);
   RUN_TEST(test_shadow_rollovers_are_normalized_and_continuous);
   RUN_TEST(test_shadow_clock_corrections_reset_full_timestamp_anchor);
-  RUN_TEST(test_shadow_global_fade_keeps_time_live_without_winding);
+  RUN_TEST(test_shadow_independent_ignition_time_live);
+  RUN_TEST(test_shadow_ignition_sweep);
+  RUN_TEST(test_shadow_ignition_keyframes);
   RUN_TEST(test_shadow_entry_delay_clear_and_reentry);
   RUN_TEST(test_shadow_invalid_fields_clear_and_recover);
   RUN_TEST(test_shadow_timers_survive_millis_wraparound);
