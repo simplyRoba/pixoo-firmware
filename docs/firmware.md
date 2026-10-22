@@ -318,10 +318,9 @@ no second runtime face selector.
 
 ### 5.2 Drawing storage
 
-`ContentController` owns the active framebuffer, a clean base snapshot, and a
-reaction-background buffer. Shared `BlendCanvas` and `aa_draw` utilities provide
-coverage-based shapes, gradients, glows, and alpha composition without allocating
-per frame.
+`ContentController` owns the active framebuffer and temporary notification and
+reaction backgrounds. Shared `BlendCanvas` and `aa_draw` utilities provide
+coverage-based shapes, gradients, glows, and alpha composition.
 
 Rendering returns a `FrameView` over this retained storage. Presentation is
 synchronous: the panel adapter finishes consuming the view before the next render
@@ -332,9 +331,11 @@ may reuse it.
 One base dashboard is active at a time. Notifications and reactions are transient
 overlays managed by a bounded FIFO in `FirmwareApp`.
 
-- A notification keeps the base dashboard live. An empty title produces a
-  one-line message banner; a title produces title and message lines. Its minimum
-  visible time may increase to accommodate the longer text-scroll pass.
+- A notification keeps the base dashboard live beneath a translucent dark
+  backdrop with a soft lower fade and a severity-colored top accent. An empty
+  title produces a one-line message banner; a title produces title and message
+  lines. Its minimum visible time may increase to accommodate the longer
+  text-scroll pass.
 - A reaction freezes one clean base frame, derives a blurred and darkened
   background once, and restores that background before each animated reaction
   frame.

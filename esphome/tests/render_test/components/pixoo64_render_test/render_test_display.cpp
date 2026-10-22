@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <limits>
 #include <numeric>
 #include <utility>
 #include <cerrno>
@@ -40,6 +41,68 @@ bool WriteFile(const std::string &path, const std::vector<uint8_t> &data) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out.write(reinterpret_cast<const char *>(data.data()), data.size());
   return out.good();
+}
+
+bool CheckBlendSpans() {
+  class Probe : public pixoo64::content::ContentController {
+   public:
+    auto &pixels() { return this->framebuffer_.payload(); }
+  };
+  Probe reference;
+  Probe spans;
+  float alphas[15] = {0.0f, 1.0f, 0.74f};
+  for (int row = 0; row < 12; ++row) {
+    const float t = static_cast<float>(row + 1) / 12;
+    const float smooth = t * t * (3.0f - 2.0f * t);
+    alphas[row + 3] = 0.74f * (1.0f - smooth);
+  }
+  const Color colors[] = {Color(0, 0, 0), Color(255, 127, 13),
+                          Color(29, 233, 255)};
+  struct Span { int x; int y; int length; };
+  const Span ranges[] = {
+      {0, 7, 64}, {-5, 7, 17}, {59, 7, 17}, {0, 7, 0}, {0, 7, -1},
+      {-70, 7, 3}, {64, 7, 3}, {0, -1, 64}, {0, 64, 64},
+      {std::numeric_limits<int>::max() - 1, 7, 4},
+      {std::numeric_limits<int>::min(), 7, 2}, {8, 7, 21}};
+  size_t cases = 0;
+  size_t mismatches = 0;
+  for (bool clipped : {false, true}) {
+    if (clipped) {
+      reference.start_clipping(10, 7, 40, 8);
+      spans.start_clipping(10, 7, 40, 8);
+    }
+    for (float alpha : alphas) {
+      for (Color color : colors) {
+        for (int batch = 0; batch < 4; ++batch) {
+          for (const Span &span : ranges) {
+            reference.fill(Color(31, 61, 91));
+            spans.fill(Color(31, 61, 91));
+            for (int x = 0; x < 64; ++x) {
+              const int v = x + batch * 64;
+              const Color under(v, 255 - v, (v + 97) % 256);
+              reference.draw_pixel_at(x, 7, under);
+              spans.draw_pixel_at(x, 7, under);
+            }
+            const int64_t end = static_cast<int64_t>(span.x) + span.length;
+            for (int64_t x = span.x;
+                 x < end && x <= std::numeric_limits<int>::max(); ++x)
+              reference.BlendPixel(static_cast<int>(x), span.y, color, alpha);
+            spans.BlendSpan(span.x, span.y, span.length, color, alpha);
+            ++cases;
+            if (reference.pixels() != spans.pixels())
+              ++mismatches;
+          }
+        }
+      }
+    }
+    if (clipped) {
+      reference.end_clipping();
+      spans.end_clipping();
+    }
+  }
+  std::printf("render test: %s blend spans (%zu cases, %zu mismatches)\n",
+              mismatches == 0 ? "ok" : "FAILED", cases, mismatches);
+  return mismatches == 0;
 }
 
 // Probe only the foreground over black: the light field must not bridge gaps.
@@ -161,7 +224,7 @@ bool CheckShadowSecondContinuity() {
 void RenderTestDisplay::setup() {
   this->set_timeout(100, [this]() {
     const bool update = std::getenv("PIXOO_UPDATE_SNAPSHOTS") != nullptr;
-    int failures = 0;
+    int failures = CheckBlendSpans() ? 0 : 1;
     std::map<std::string, std::vector<uint8_t>> now_playing_frames;
     auto check = [&](const std::string &id) {
       if (id.rfind("now_playing_", 0) == 0)
@@ -1085,6 +1148,231 @@ void RenderTestDisplay::setup() {
       ++failures;
     }
 
+    // Exercise composition through the configured controller and real font,
+    // including independent base/overlay deadlines on a changing dashboard.
+    struct NotificationDashboard final : pixoo64::dashboard::Dashboard {
+      bool available() const override { return true; }
+      void Tick(uint32_t now_ms) override {
+        ++ticks;
+        color = Color(160 + now_ms % 32, 120 + now_ms % 48,
+                      200 + now_ms % 40);
+      }
+      void Render(display::Display &display) const override {
+        ++renders;
+        display.fill(color);
+      }
+      Color color;
+      int ticks{0};
+      mutable int renders{0};
+    } notification_dashboard;
+    notification_dashboard.set_id("__notification_composition");
+    this->content_controller_->add_dashboard(&notification_dashboard);
+    auto composition = [&](const pixoo::Overlay *overlay, uint32_t elapsed,
+                           bool render_base, bool render_overlay,
+                           bool visible = true, uint32_t now_ms = 100) {
+      pixoo::FrameView frame;
+      if (!this->content_controller_->RenderContent(
+              now_ms, notification_dashboard.id(), {}, overlay, elapsed,
+              visible, overlay != nullptr &&
+                           overlay->tag == pixoo::OverlayTag::kReaction,
+              render_base, render_overlay, &frame) ||
+          !frame.valid() || frame.size != this->framebuffer_.size())
+        return false;
+      this->framebuffer_.assign(frame.data, frame.data + frame.size);
+      return true;
+    };
+    auto composition_check = [&](bool valid, const char *name) {
+      std::printf("render test: %s notification composition %s\n",
+                  valid ? "ok" : "FAILED", name);
+      failures += !valid;
+    };
+    pixoo::Overlay long_banner;
+    long_banner.tag = pixoo::OverlayTag::kNotification;
+    long_banner.notification = {"A long message that will not fit",
+                                pixoo::Severity::kWarning,
+                                "A long title that will not fit"};
+    pixoo::Overlay short_banner;
+    short_banner.tag = pixoo::OverlayTag::kNotification;
+    short_banner.notification = {"Saved", pixoo::Severity::kSuccess};
+    const int fade_height = pixoo64::content::NotificationRenderer::kFadeHeight;
+    const size_t titled_backdrop_bytes =
+        pixoo64::content::NotificationRenderer::BackdropHeight(long_banner.notification) * 64 * 3;
+    const size_t short_backdrop_bytes =
+        pixoo64::content::NotificationRenderer::BackdropHeight(short_banner.notification) * 64 * 3;
+    bool composition_valid = composition(nullptr, 0, true, false);
+    const auto clean_notification_base = this->framebuffer_;
+    composition_valid &= composition(&long_banner, 0, false, true);
+    const auto first_banner = this->framebuffer_;
+    bool alpha_valid = composition_valid;
+    // x=0 excludes all text; y>0 excludes the severity accent.
+    for (int y = 1; y < 64; ++y) {
+      float alpha = 0.74f;
+      if (y >= 20) {
+        const float t = std::min(1.0f, static_cast<float>(y - 19) / fade_height);
+        alpha *= 1.0f - t * t * (3.0f - 2.0f * t);
+      }
+      for (int c = 0; c < 3; ++c) {
+        const int p = y * 64 * 3 + c;
+        const int expected = std::lround(clean_notification_base[p] * (1 - alpha));
+        alpha_valid &= std::abs(int(first_banner[p]) - expected) <= 1;
+        if (y >= 20)
+          alpha_valid &= first_banner[p] >= first_banner[p - 64 * 3];
+      }
+    }
+    alpha_valid &= first_banner[0] == 255 && first_banner[1] == 170 &&
+                   first_banner[2] == 0 && first_banner[64 * 3] > 0 &&
+                   std::equal(first_banner.begin() + titled_backdrop_bytes,
+                              first_banner.end(),
+                              clean_notification_base.begin() + titled_backdrop_bytes);
+    composition_check(alpha_valid, "74% black, smooth lower fade, top accent");
+
+    bool trails_valid = composition_valid;
+    for (uint32_t elapsed : {0u, 1500u, 2500u}) {
+      const int overlay_ticks = notification_dashboard.ticks;
+      const int overlay_renders = notification_dashboard.renders;
+      trails_valid &= composition(&long_banner, elapsed, false, true);
+      const auto repeated = this->framebuffer_;
+      trails_valid &= notification_dashboard.ticks == overlay_ticks &&
+                      notification_dashboard.renders == overlay_renders;
+      // A fresh base at the same elapsed time is the pixel-exact oracle.
+      trails_valid &= composition(&long_banner, elapsed, true, true) &&
+                      this->framebuffer_ == repeated;
+      trails_valid &= notification_dashboard.ticks == overlay_ticks + 1 &&
+                      notification_dashboard.renders == overlay_renders + 1;
+    }
+    composition_check(trails_valid, "overlay-only scrolling has no trails or redraw");
+
+    bool shrink_valid = composition(&short_banner, 0, false, true);
+    const auto shrunk = this->framebuffer_;
+    shrink_valid &= std::equal(shrunk.begin() + short_backdrop_bytes, shrunk.end(),
+                               clean_notification_base.begin() + short_backdrop_bytes);
+    shrink_valid &= composition(&short_banner, 0, true, true) &&
+                    this->framebuffer_ == shrunk;
+    composition_check(shrink_valid, "titled-to-untitled restores old band");
+
+    const int before_live_ticks = notification_dashboard.ticks;
+    const int before_live_renders = notification_dashboard.renders;
+    bool live_valid = composition(&short_banner, 1500, true, false, true, 131);
+    const auto live_base = this->framebuffer_;
+    live_valid &= live_base != clean_notification_base &&
+                  notification_dashboard.ticks == before_live_ticks + 1 &&
+                  notification_dashboard.renders == before_live_renders + 1;
+    live_valid &= composition(&short_banner, 1500, false, true, true, 131);
+    const auto live_banner = this->framebuffer_;
+    live_valid &= notification_dashboard.ticks == before_live_ticks + 1 &&
+                  notification_dashboard.renders == before_live_renders + 1 &&
+                  live_banner != live_base &&
+                  std::equal(live_banner.begin() + short_backdrop_bytes, live_banner.end(),
+                             live_base.begin() + short_backdrop_bytes);
+    live_valid &= composition(&short_banner, 1500, true, true, true, 131) &&
+                  this->framebuffer_ == live_banner;
+    const int removal_renders = notification_dashboard.renders;
+    live_valid &= composition(nullptr, 0, false, false, true, 131) &&
+                  this->framebuffer_ == live_base &&
+                  notification_dashboard.renders == removal_renders;
+    composition_check(live_valid, "live base-only refresh and overlay removal");
+
+    pixoo::Overlay composition_reaction;
+    composition_reaction.tag = pixoo::OverlayTag::kReaction;
+    composition_reaction.reaction = pixoo::Reaction::kLove;
+    bool transition_valid = composition(&short_banner, 0, true, true) &&
+        composition(&composition_reaction, 0, true, true) &&
+        composition(&composition_reaction, 700, false, true) &&
+        composition(&long_banner, 1500, true, true);
+    const auto after_reaction = this->framebuffer_;
+    transition_valid &= composition(nullptr, 0, true, false) &&
+                        composition(&long_banner, 1500, false, true) &&
+                        this->framebuffer_ == after_reaction;
+    composition_check(transition_valid, "notification/reaction/notification cleanup");
+
+    // Simulate a memoized allocation failure, not a global allocator failure.
+    struct NotificationAccess : pixoo64::content::ContentController {
+      static auto Backing() { return &NotificationAccess::notification_background_; }
+      static auto Height() { return &NotificationAccess::notification_background_height_; }
+      static auto Attempt() { return &NotificationAccess::notification_background_allocation_attempted_; }
+      static auto Fallback() { return &NotificationAccess::notification_fallback_active_; }
+    };
+    auto &actual = *this->content_controller_;
+    auto resources_clear = [&]() {
+      return !(actual.*NotificationAccess::Backing()) &&
+             actual.*NotificationAccess::Height() == 0 &&
+             !(actual.*NotificationAccess::Attempt()) &&
+             !(actual.*NotificationAccess::Fallback());
+    };
+    bool fallback_valid = composition(nullptr, 0, true, false);
+    actual.ReleaseOverlayResources();
+    fallback_valid &= resources_clear();
+    actual.*NotificationAccess::Attempt() = true;
+    auto unavailable = [&]() {
+      return !(actual.*NotificationAccess::Backing()) &&
+             actual.*NotificationAccess::Height() == 0 &&
+             actual.*NotificationAccess::Attempt() &&
+             actual.*NotificationAccess::Fallback();
+    };
+    auto forced_base = [&](const pixoo::Overlay *overlay, uint32_t elapsed) {
+      const int ticks = notification_dashboard.ticks;
+      const int renders = notification_dashboard.renders;
+      const bool valid = composition(overlay, elapsed, false, true);
+      return valid && notification_dashboard.ticks == ticks + 1 &&
+             notification_dashboard.renders == renders + 1;
+    };
+    for (uint32_t elapsed : {0u, 1500u, 2500u}) {
+      fallback_valid &= forced_base(&long_banner, elapsed) && unavailable();
+      const auto opaque = this->framebuffer_;
+      const size_t padding = (64 + 1) * 3;
+      fallback_valid &= opaque[padding] == 0 && opaque[padding + 1] == 0 &&
+                        opaque[padding + 2] == 0;
+      // A repeated scrolling frame must match one drawn over a fresh base.
+      fallback_valid &= composition(&long_banner, elapsed, true, true) &&
+                        this->framebuffer_ == opaque && unavailable();
+      fallback_valid &= forced_base(&long_banner, elapsed) &&
+                        this->framebuffer_ == opaque && unavailable();
+    }
+    fallback_valid &= forced_base(&short_banner, 0) && unavailable();
+    fallback_valid &= std::equal(this->framebuffer_.begin() + 12 * 64 * 3,
+                                 this->framebuffer_.end(),
+                                 clean_notification_base.begin() + 12 * 64 * 3);
+    fallback_valid &= forced_base(nullptr, 0) &&
+                      this->framebuffer_ == clean_notification_base &&
+                      resources_clear();
+    actual.ReleaseOverlayResources();
+    fallback_valid &= resources_clear();
+    const int recovered_ticks = notification_dashboard.ticks;
+    const int recovered_renders = notification_dashboard.renders;
+    fallback_valid &= composition(&long_banner, 0, false, true) &&
+                      this->framebuffer_ == first_banner;
+    const auto *backing = (actual.*NotificationAccess::Backing()).get();
+    fallback_valid &= backing != nullptr &&
+                      actual.*NotificationAccess::Height() > 0 &&
+                      actual.*NotificationAccess::Attempt() &&
+                      !(actual.*NotificationAccess::Fallback());
+    fallback_valid &= composition(&long_banner, 0, false, true) &&
+                      this->framebuffer_ == first_banner &&
+                      (actual.*NotificationAccess::Backing()).get() == backing &&
+                      notification_dashboard.ticks == recovered_ticks &&
+                      notification_dashboard.renders == recovered_renders;
+    fallback_valid &= composition(nullptr, 0, false, false) &&
+                      this->framebuffer_ == clean_notification_base &&
+                      resources_clear();
+    fallback_valid &= composition(&long_banner, 0, false, true) &&
+                      (actual.*NotificationAccess::Backing()) != nullptr;
+    actual.ReleaseOverlayResources();
+    fallback_valid &= resources_clear();
+    actual.ReleaseOverlayResources();
+    fallback_valid &= resources_clear();
+    composition_check(fallback_valid, "backing unavailable: opaque fallback and cleanup");
+
+    bool hidden_valid = composition(&long_banner, 1500, false, true, false) &&
+        composition(&short_banner, 0, false, true, false);
+    const auto hidden_banner = this->framebuffer_;
+    hidden_valid &= std::all_of(hidden_banner.begin() + 12 * 64 * 3,
+                               hidden_banner.end(),
+                               [](uint8_t value) { return value == 0; });
+    hidden_valid &= composition(&short_banner, 0, false, true, false) &&
+                    this->framebuffer_ == hidden_banner;
+    composition_check(hidden_valid, "hidden base clears every overlay-only frame");
+    this->content_controller_->HideBaseContent(132);
+
     const pixoo::Notification titled{
         "Message", pixoo::Severity::kSuccess, "Status"};
     if (!this->render_frame_(0, "text", &titled, 0, true)) {
@@ -1410,7 +1698,8 @@ void RenderTestDisplay::setup() {
       drain();
       std::copy_n(first_rgb, 3, expected.begin() + 3);
       ddp_valid &= this->render_frame_(ddp.advance(), "__ddp", &ddp_note, 0, true);
-      const size_t banner_bytes = 64 * pixoo64::content::NotificationRenderer::kHeight * 3;
+      const size_t banner_bytes =
+          64 * pixoo64::content::NotificationRenderer::BackdropHeight(ddp_note) * 3;
       ddp_valid &= std::equal(expected.begin() + banner_bytes, expected.end(),
                               this->framebuffer_.begin() + banner_bytes);
       pixoo::Overlay ddp_reaction;

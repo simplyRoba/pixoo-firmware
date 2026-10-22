@@ -63,6 +63,7 @@ class ContentController : public display::Display,
   void fill(Color color) override;
   void draw_pixel_at(int x, int y, Color color) override;
   void BlendPixel(int x, int y, Color color, float alpha) override;
+  void BlendSpan(int x, int y, int length, Color color, float alpha) override;
 
   bool ResolveDashboard(const std::string &requested_id,
                         pixoo::DashboardSelection *selection) override;
@@ -95,6 +96,9 @@ class ContentController : public display::Display,
   bool CaptureReactionBackground_();
   bool EnsureReactionBackground_();
   void ReleaseReactionBackground_();
+  bool EnsureNotificationBackground_();
+  void RestoreNotificationBackground_();
+  void ReleaseNotificationBackground_();
   void RecordRender_(uint32_t elapsed_us);
   void PublishRenderWindow_();
   void ResetRenderWindow_();
@@ -108,9 +112,17 @@ class ContentController : public display::Display,
     void operator()(pixoo::Framebuffer *framebuffer) const;
   };
 
+  struct NotificationBackgroundDeleter {
+    void operator()(uint8_t *pixels) const;
+  };
+
   pixoo::Framebuffer framebuffer_;
   std::unique_ptr<pixoo::Framebuffer, ReactionBackgroundDeleter>
       reaction_background_;
+  std::unique_ptr<uint8_t, NotificationBackgroundDeleter> notification_background_;
+  uint8_t notification_background_height_{0};
+  bool notification_background_allocation_attempted_{false};
+  bool notification_fallback_active_{false};
   NotificationRenderer notification_renderer_;
   ReactionRenderer reaction_renderer_;
   const pixoo::Overlay *reaction_overlay_{nullptr};

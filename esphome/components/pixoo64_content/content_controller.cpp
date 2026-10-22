@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <new>
 #include <utility>
 
@@ -425,10 +426,12 @@ void ContentController::HideBaseContent(uint32_t now_ms) {
   this->CancelPending_(now_ms);
   this->HideVisible_(now_ms);
   this->ReleaseReactionBackground_();
+  this->ReleaseNotificationBackground_();
 }
 
 void ContentController::ReleaseOverlayResources() {
   this->ReleaseReactionBackground_();
+  this->ReleaseNotificationBackground_();
 }
 
 void ContentController::RecordRender_(uint32_t elapsed_us) {
@@ -511,6 +514,50 @@ void ContentController::ReleaseReactionBackground_() {
   this->last_reaction_elapsed_ms_ = 0;
 }
 
+void ContentController::NotificationBackgroundDeleter::operator()(
+    uint8_t *pixels) const {
+#ifdef ESP_PLATFORM
+  heap_caps_free(pixels);
+#else
+  delete[] pixels;
+#endif
+}
+
+bool ContentController::EnsureNotificationBackground_() {
+  if (this->notification_background_ != nullptr)
+    return true;
+  if (this->notification_background_allocation_attempted_)
+    return false;
+  this->notification_background_allocation_attempted_ = true;
+  constexpr size_t bytes = NotificationRenderer::kMaxBackdropHeight * pixoo::kWidth * 3;
+#ifdef ESP_PLATFORM
+  this->notification_background_.reset(static_cast<uint8_t *>(
+      heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+#else
+  this->notification_background_.reset(new (std::nothrow) uint8_t[bytes]);
+#endif
+  if (this->notification_background_ == nullptr) {
+    ESP_LOGW(TAG, "notification background allocation failed; using opaque banner");
+    return false;
+  }
+  return true;
+}
+
+void ContentController::RestoreNotificationBackground_() {
+  if (this->notification_background_height_ == 0)
+    return;
+  std::memcpy(this->framebuffer_.PixelBytes(0, 0),
+              this->notification_background_.get(),
+              this->notification_background_height_ * pixoo::kWidth * 3);
+  this->notification_background_height_ = 0;
+}
+
+void ContentController::ReleaseNotificationBackground_() {
+  this->RestoreNotificationBackground_();
+  this->notification_background_.reset();
+  this->notification_background_allocation_attempted_ = false;
+}
+
 bool ContentController::CaptureReactionBackground_() {
   if (!this->EnsureReactionBackground_())
     return false;
@@ -573,6 +620,29 @@ bool ContentController::RenderContent(
     return false;
   const uint32_t started_us =
       this->render_budget_us_ == 0 ? 0 : micros();
+
+  const bool previous_fallback = this->notification_fallback_active_;
+  this->notification_fallback_active_ = false;
+  const bool notification = overlay != nullptr &&
+      overlay->tag == pixoo::OverlayTag::kNotification;
+  bool translucent_notification = true;
+  if (notification && render_overlay && base_visible &&
+      this->notification_renderer_.ready()) {
+    translucent_notification = this->EnsureNotificationBackground_();
+    if (!translucent_notification)
+      render_base = true;
+  }
+  // Without backing storage, a fresh base erases the opaque fallback instead.
+  if (previous_fallback && base_visible)
+    render_base = true;
+
+  // A full clear supersedes cached pixels; overlay-only frames need them restored.
+  if (!base_visible || render_base)
+    this->notification_background_height_ = 0;
+  else
+    this->RestoreNotificationBackground_();
+  if (!notification || !base_visible)
+    this->ReleaseNotificationBackground_();
 
   // This renderer owns the framebuffer, so effects may composite against it
   // for the duration of the frame.
@@ -670,10 +740,17 @@ bool ContentController::RenderContent(
   } else if (render_overlay && overlay != nullptr &&
              overlay->tag == pixoo::OverlayTag::kNotification &&
              this->notification_renderer_.ready()) {
-    // The opaque banner replaces every pixel it touched on the preceding
-    // notification frame. Pixels below it retain the latest base render.
+    if (base_visible && translucent_notification) {
+      this->notification_background_height_ = static_cast<uint8_t>(
+          NotificationRenderer::BackdropHeight(overlay->notification));
+      std::memcpy(this->notification_background_.get(),
+                  this->framebuffer_.payload().data(),
+                  this->notification_background_height_ * pixoo::kWidth * 3);
+    }
     this->notification_renderer_.Render(*this, overlay->notification,
-                                        overlay_visible_elapsed_ms);
+                                        overlay_visible_elapsed_ms,
+                                        translucent_notification);
+    this->notification_fallback_active_ = base_visible && !translucent_notification;
   }
 
   PopActiveBlendCanvas();
@@ -732,6 +809,42 @@ void ContentController::BlendPixel(int x, int y, Color color, float alpha) {
   pixel[0] = mix(pixel[0], color.r);
   pixel[1] = mix(pixel[1], color.g);
   pixel[2] = mix(pixel[2], color.b);
+}
+
+void ContentController::BlendSpan(int x, int y, int length, Color color,
+                                  float alpha) {
+  if (length <= 0 || alpha <= 0.0f)
+    return;
+  if (this->is_clipping()) {
+    BlendCanvas::BlendSpan(x, y, length, color, alpha);
+    return;
+  }
+  if (y < 0 || y >= pixoo::kHeight)
+    return;
+  const int64_t end = std::min<int64_t>(
+      pixoo::kWidth, static_cast<int64_t>(x) + length);
+  x = std::max(x, 0);
+  if (x >= end)
+    return;
+  uint8_t *pixel = this->framebuffer_.PixelBytes(x, y);
+  if (alpha >= 1.0f) {
+    for (; x < end; ++x, pixel += 3) {
+      pixel[0] = color.r;
+      pixel[1] = color.g;
+      pixel[2] = color.b;
+    }
+    return;
+  }
+  const auto mix = [alpha](uint8_t under, uint8_t over) {
+    return static_cast<uint8_t>(std::fma(
+        static_cast<float>(over) - static_cast<float>(under), alpha,
+        static_cast<float>(under)));
+  };
+  for (; x < end; ++x, pixel += 3) {
+    pixel[0] = mix(pixel[0], color.r);
+    pixel[1] = mix(pixel[1], color.g);
+    pixel[2] = mix(pixel[2], color.b);
+  }
 }
 
 Dashboard *ContentController::find_(const std::string &id) const {

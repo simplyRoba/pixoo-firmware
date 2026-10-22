@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <limits>
+
 #include "esphome/components/display/display.h"
 #include "esphome/core/color.h"
 
@@ -20,6 +23,14 @@ class BlendCanvas {
   // Mix `color` over the pixel already at (x, y). alpha 0 leaves it untouched,
   // alpha 1 replaces it. Out-of-range coordinates are ignored.
   virtual void BlendPixel(int x, int y, Color color, float alpha) = 0;
+
+  // Composite a solid horizontal span with the same semantics as BlendPixel.
+  // Non-positive lengths are empty; coordinates beyond int range are ignored.
+  virtual void BlendSpan(int x, int y, int length, Color color, float alpha) {
+    const int64_t end = static_cast<int64_t>(x) + length;
+    for (int64_t px = x; px < end && px <= std::numeric_limits<int>::max(); ++px)
+      this->BlendPixel(static_cast<int>(px), y, color, alpha);
+  }
 };
 
 // The renderer publishes its blend surface for the duration of a frame.

@@ -1,5 +1,7 @@
 #include "notification_renderer.h"
 
+#include "esphome/components/pixoo64_content/blend_canvas.h"
+
 namespace esphome::pixoo64::content {
 namespace {
 
@@ -84,14 +86,31 @@ void NotificationRenderer::RenderTextLine_(
 
 void NotificationRenderer::Render(display::Display &display,
                                   const pixoo::Notification &note,
-                                  uint32_t visible_elapsed_ms) const {
+                                  uint32_t visible_elapsed_ms,
+                                  bool translucent) const {
   if (this->font_ == nullptr)
     return;
 
-  // Opaque banner background plus a severity-coloured 1px border.
   const Color severity_color = SeverityColor(note.severity);
-  display.filled_rectangle(0, 0, 64, Height(note), kBg);
-  display.rectangle(0, 0, 64, Height(note), severity_color);
+  const int height = Height(note);
+  BlendCanvas *canvas = BlendCanvasOf(display);
+  if (translucent && canvas != nullptr) {
+    for (int y = 0; y < BackdropHeight(note); ++y) {
+      float alpha = 0.74f;
+      if (y >= height) {
+        const float t = static_cast<float>(y - height + 1) / kFadeHeight;
+        const float smooth = t * t * (3.0f - 2.0f * t);
+        alpha *= 1.0f - smooth;
+      }
+      if (alpha <= 0.0f)
+        continue;
+      canvas->BlendSpan(0, y, 64, kBg, alpha);
+    }
+    display.horizontal_line(0, 0, 64, severity_color);
+  } else {
+    display.filled_rectangle(0, 0, 64, height, kBg);
+    display.rectangle(0, 0, 64, height, severity_color);
+  }
 
   if (note.title.empty()) {
     this->RenderTextLine_(display, note.text.c_str(), kTextTop, kText,
