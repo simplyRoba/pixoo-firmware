@@ -636,6 +636,8 @@ bool ContentController::RenderContent(
   if (previous_fallback && base_visible)
     render_base = true;
 
+  const uint8_t restored_notification_height = base_visible && !render_base
+      ? this->notification_background_height_ : 0;
   // A full clear supersedes cached pixels; overlay-only frames need them restored.
   if (!base_visible || render_base)
     this->notification_background_height_ = 0;
@@ -743,9 +745,10 @@ bool ContentController::RenderContent(
     if (base_visible && translucent_notification) {
       this->notification_background_height_ = static_cast<uint8_t>(
           NotificationRenderer::BackdropHeight(overlay->notification));
-      std::memcpy(this->notification_background_.get(),
-                  this->framebuffer_.payload().data(),
-                  this->notification_background_height_ * pixoo::kWidth * 3);
+      if (this->notification_background_height_ > restored_notification_height)
+        std::memcpy(this->notification_background_.get(),
+                    this->framebuffer_.payload().data(),
+                    this->notification_background_height_ * pixoo::kWidth * 3);
     }
     this->notification_renderer_.Render(*this, overlay->notification,
                                         overlay_visible_elapsed_ms,
@@ -856,6 +859,16 @@ void ContentController::BlendSpan(int x, int y, int length, Color color,
       pixel[0] = color.r;
       pixel[1] = color.g;
       pixel[2] = color.b;
+    }
+    return;
+  }
+  if ((color.r | color.g | color.b) == 0 && alpha >= 0.5f) {
+    // In [0.5, 1], 1-alpha is exact; the product rounds identically to the FMA.
+    const float gain = 1.0f - alpha;
+    for (; x < end; ++x, pixel += 3) {
+      pixel[0] = static_cast<uint8_t>(static_cast<float>(pixel[0]) * gain);
+      pixel[1] = static_cast<uint8_t>(static_cast<float>(pixel[1]) * gain);
+      pixel[2] = static_cast<uint8_t>(static_cast<float>(pixel[2]) * gain);
     }
     return;
   }

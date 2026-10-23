@@ -22,14 +22,15 @@ class NotificationRenderer {
   static constexpr int kHeight = 12;
   static constexpr int kTitledHeight = 20;
   static constexpr int kFadeHeight = 12;
-  static constexpr int kMaxBackdropHeight = kTitledHeight + kFadeHeight;
+  // The final fade sample has zero alpha and needs no backing pixels.
+  static constexpr int kMaxBackdropHeight = kTitledHeight + kFadeHeight - 1;
 
   static int Height(const pixoo::Notification &note) {
     return note.title.empty() ? kHeight : kTitledHeight;
   }
 
   static int BackdropHeight(const pixoo::Notification &note) {
-    return Height(note) + kFadeHeight;
+    return Height(note) + kFadeHeight - 1;
   }
 
   // Draws the banner for `note` at its visible elapsed time, which drives the

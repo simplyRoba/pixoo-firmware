@@ -95,7 +95,8 @@ void NotificationRenderer::Render(display::Display &display,
   const int height = Height(note);
   BlendCanvas *canvas = BlendCanvasOf(display);
   if (translucent && canvas != nullptr) {
-    for (int y = 0; y < BackdropHeight(note); ++y) {
+    // The opaque severity accent covers row zero.
+    for (int y = 1; y < BackdropHeight(note); ++y) {
       float alpha = 0.74f;
       if (y >= height) {
         const float t = static_cast<float>(y - height + 1) / kFadeHeight;

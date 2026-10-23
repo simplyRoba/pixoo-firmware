@@ -50,11 +50,15 @@ bool CheckBlendSpans() {
   };
   Probe reference;
   Probe spans;
-  float alphas[15] = {0.0f, 1.0f, 0.74f};
+  float alphas[21] = {
+      0.0f, 1.0f, 0.74f, 0.5f, std::nextafter(0.5f, 0.0f),
+      std::nextafter(0.5f, 1.0f), std::nextafter(1.0f, 0.0f),
+      // At under=255, unrestricted multiplication gives 163 instead of 164.
+      0.356862754f, std::nextafter(0.0f, 1.0f)};
   for (int row = 0; row < 12; ++row) {
     const float t = static_cast<float>(row + 1) / 12;
     const float smooth = t * t * (3.0f - 2.0f * t);
-    alphas[row + 3] = 0.74f * (1.0f - smooth);
+    alphas[row + 9] = 0.74f * (1.0f - smooth);
   }
   const Color colors[] = {Color(0, 0, 0), Color(255, 127, 13),
                           Color(29, 233, 255)};
@@ -1355,6 +1359,14 @@ void RenderTestDisplay::setup() {
     shrink_valid &= composition(&short_banner, 0, true, true) &&
                     this->framebuffer_ == shrunk;
     composition_check(shrink_valid, "titled-to-untitled restores old band");
+
+    bool grow_valid = composition(&long_banner, 1500, false, true);
+    const auto grown = this->framebuffer_;
+    grow_valid &= composition(&long_banner, 1500, true, true) &&
+                  this->framebuffer_ == grown;
+    grow_valid &= composition(&long_banner, 1500, false, true) &&
+                  this->framebuffer_ == grown;
+    composition_check(grow_valid, "untitled-to-titled preserves the expanded band");
 
     const int before_live_ticks = notification_dashboard.ticks;
     const int before_live_renders = notification_dashboard.renders;
