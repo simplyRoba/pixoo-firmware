@@ -105,6 +105,111 @@ bool CheckBlendSpans() {
   return mismatches == 0;
 }
 
+bool CheckGrayscaleSpans() {
+  class ProbeController : public pixoo64::content::ContentController {
+   public:
+    const auto &pixels() const { return this->framebuffer_.payload(); }
+  };
+  class DefaultCanvas : public pixoo64::content::BlendCanvas {
+   public:
+    int calls{0};
+    int origin{0};
+    int row{0};
+    const uint8_t *source{nullptr};
+    bool correct{true};
+    void BlendPixel(int x, int y, Color color, float alpha) override {
+      const uint8_t value = source[calls];
+      correct &= x == origin + calls && y == row && alpha == 1.0f &&
+                 color.r == value && color.g == value && color.b == value &&
+                 color.w == 0;
+      ++calls;
+    }
+  };
+  ProbeController reference;
+  ProbeController spans;
+  uint8_t source[256];
+  size_t cases = 0;
+  size_t mismatches = 0;
+  const auto compare = [&]() {
+    ++cases;
+    if (reference.pixels() != spans.pixels())
+      ++mismatches;
+  };
+  struct Span { int x, y, length; };
+  const Span ranges[] = {
+      {0, 7, 64}, {-5, 7, 64}, {59, 7, 64}, {8, 7, 21},
+      {0, 7, 0}, {0, 7, -1}, {-70, 7, 3}, {64, 7, 3},
+      {0, -1, 64}, {0, 64, 64},
+      {std::numeric_limits<int>::max() - 1, 7, 4},
+      {std::numeric_limits<int>::min(), 7, 2},
+      {std::numeric_limits<int>::min(), 7, std::numeric_limits<int>::max()}};
+  for (bool clipped : {false, true}) {
+    if (clipped) {
+      reference.start_clipping(10, 7, 40, 8);
+      spans.start_clipping(10, 7, 40, 8);
+    }
+    for (int batch = 0; batch < 4; ++batch) {
+      for (int i = 0; i < 256; ++i)
+        source[i] = static_cast<uint8_t>(i + batch * 64);
+      for (const auto &span : ranges) {
+        reference.fill(Color(31, 61, 91));
+        spans.fill(Color(31, 61, 91));
+        const int64_t end = static_cast<int64_t>(span.x) + span.length;
+        for (int x = 0; x < 64; ++x) {
+          if (span.length > 0 && x >= span.x && x < end &&
+              span.y >= 0 && span.y < 64) {
+            const uint8_t value = source[static_cast<int64_t>(x) - span.x];
+            reference.BlendPixel(x, span.y, Color(value, value, value), 1.0f);
+          }
+        }
+        spans.WriteGrayscaleSpan(span.x, span.y, span.length, source);
+        compare();
+      }
+      spans.WriteGrayscaleSpan(0, 7, 64, nullptr);
+      compare();
+    }
+    reference.fill(Color(31, 61, 91));
+    spans.fill(Color(31, 61, 91));
+    reference.fill(Color(0, 0, 0));
+    for (int y = 0; y < 64; ++y) {
+      for (int x = 0; x < 64; ++x) {
+        source[x] = static_cast<uint8_t>(y * 64 + x);
+        if (source[x] != 0)
+          reference.BlendPixel(x, y, Color(source[x], source[x], source[x]), 1.0f);
+      }
+      spans.WriteGrayscaleSpan(0, y, 64, source);
+    }
+    compare();
+    if (clipped) {
+      reference.end_clipping();
+      spans.end_clipping();
+    }
+  }
+  for (int i = 0; i < 256; ++i)
+    source[i] = static_cast<uint8_t>(i);
+  DefaultCanvas generic;
+  generic.source = source;
+  generic.origin = -5;
+  generic.row = 11;
+  generic.WriteGrayscaleSpan(-5, 11, 256, source);
+  ++cases;
+  mismatches += !generic.correct || generic.calls != 256;
+  generic.calls = 0;
+  generic.origin = std::numeric_limits<int>::max() - 1;
+  generic.WriteGrayscaleSpan(generic.origin, 11, 4, source);
+  ++cases;
+  mismatches += !generic.correct || generic.calls != 2;
+  generic.calls = 0;
+  generic.WriteGrayscaleSpan(0, 0, 64, nullptr);
+  generic.WriteGrayscaleSpan(0, 0, 0, source);
+  generic.WriteGrayscaleSpan(0, 0, -1, source);
+  ++cases;
+  mismatches += generic.calls != 0;
+  std::printf("render test: %s grayscale spans (%zu cases, %zu mismatches)\n",
+              mismatches == 0 ? "ok" : "FAILED", cases, mismatches);
+  return mismatches == 0;
+}
+
 // Probe only the foreground over black: the light field must not bridge gaps.
 bool CheckShadowSecondContinuity() {
   constexpr float kRadians = 3.14159265358979323846f / 180.0f;
@@ -225,6 +330,7 @@ void RenderTestDisplay::setup() {
   this->set_timeout(100, [this]() {
     const bool update = std::getenv("PIXOO_UPDATE_SNAPSHOTS") != nullptr;
     int failures = CheckBlendSpans() ? 0 : 1;
+    failures += CheckGrayscaleSpans() ? 0 : 1;
     std::map<std::string, std::vector<uint8_t>> now_playing_frames;
     auto check = [&](const std::string &id) {
       if (id.rfind("now_playing_", 0) == 0)

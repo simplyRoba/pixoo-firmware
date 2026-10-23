@@ -24,6 +24,19 @@ class BlendCanvas {
   // alpha 1 replaces it. Out-of-range coordinates are ignored.
   virtual void BlendPixel(int x, int y, Color color, float alpha) = 0;
 
+  // Replace a horizontal span with opaque RGB grayscale, including black.
+  // The source contains at least length bytes; null and empty spans are ignored.
+  virtual void WriteGrayscaleSpan(int x, int y, int length,
+                                  const uint8_t *gray) {
+    if (gray == nullptr || length <= 0)
+      return;
+    const int64_t end = static_cast<int64_t>(x) + length;
+    for (int64_t px = x; px < end && px <= std::numeric_limits<int>::max(); ++px) {
+      const uint8_t value = *gray++;
+      this->BlendPixel(static_cast<int>(px), y, Color(value, value, value), 1.0f);
+    }
+  }
+
   // Composite a solid horizontal span with the same semantics as BlendPixel.
   // Non-positive lengths are empty; coordinates beyond int range are ignored.
   virtual void BlendSpan(int x, int y, int length, Color color, float alpha) {

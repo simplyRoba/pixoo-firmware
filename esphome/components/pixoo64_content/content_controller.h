@@ -64,6 +64,8 @@ class ContentController : public display::Display,
   void draw_pixel_at(int x, int y, Color color) override;
   void BlendPixel(int x, int y, Color color, float alpha) override;
   void BlendSpan(int x, int y, int length, Color color, float alpha) override;
+  void WriteGrayscaleSpan(int x, int y, int length,
+                          const uint8_t *gray) override;
 
   bool ResolveDashboard(const std::string &requested_id,
                         pixoo::DashboardSelection *selection) override;

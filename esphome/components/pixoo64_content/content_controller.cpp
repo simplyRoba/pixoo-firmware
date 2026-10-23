@@ -811,6 +811,30 @@ void ContentController::BlendPixel(int x, int y, Color color, float alpha) {
   pixel[2] = mix(pixel[2], color.b);
 }
 
+void ContentController::WriteGrayscaleSpan(int x, int y, int length,
+                                            const uint8_t *gray) {
+  if (gray == nullptr || length <= 0 || y < 0 || y >= pixoo::kHeight)
+    return;
+  const int64_t begin = std::max<int64_t>(x, 0);
+  const int64_t end = std::min<int64_t>(
+      pixoo::kWidth, static_cast<int64_t>(x) + length);
+  if (begin >= end)
+    return;
+  gray += begin - static_cast<int64_t>(x);
+  if (this->is_clipping()) {
+    BlendCanvas::WriteGrayscaleSpan(static_cast<int>(begin), y,
+                                    static_cast<int>(end - begin), gray);
+    return;
+  }
+  uint8_t *pixel = this->framebuffer_.PixelBytes(static_cast<int>(begin), y);
+  for (int64_t px = begin; px < end; ++px, pixel += 3) {
+    const uint8_t value = *gray++;
+    pixel[0] = value;
+    pixel[1] = value;
+    pixel[2] = value;
+  }
+}
+
 void ContentController::BlendSpan(int x, int y, int length, Color color,
                                   float alpha) {
   if (length <= 0 || alpha <= 0.0f)

@@ -5,6 +5,7 @@
 #include <limits>
 #include <new>
 
+#include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "pixoo_cmd.h"
 
 #if defined(USE_ESP32)
@@ -57,7 +58,11 @@ constexpr int ClampByte(int value) {
 constexpr int Abs(int value) { return value < 0 ? -value : value; }
 constexpr int Max(int a, int b) { return a > b ? a : b; }
 constexpr int Min(int a, int b) { return a < b ? a : b; }
-constexpr int Mul(int a, int b) { return (a * b + 127) / 255; }
+// Rounded multiplication of two byte-valued light or coverage levels.
+constexpr int Mul(int a, int b) {
+  const int product = a * b + 128;
+  return (product + (product >> 8)) >> 8;
+}
 constexpr int Screen(int a, int b) { return a + Mul(255 - a, b); }
 
 constexpr std::array<uint8_t, 256> MakeEmission() {
@@ -785,6 +790,7 @@ void ShadowFace::Render(display::Display &display) const {
     return;
   }
   static_assert(pixoo::kWidth == 64 && pixoo::kHeight == 64);
+  auto *canvas = content::BlendCanvasOf(display);
   const SceneSnapshot scene(this->model_.Angles(), levels);
 #ifdef SHADOW_PARALLEL
   if (!this->render_state_attempted_) {
@@ -805,6 +811,11 @@ void ShadowFace::Render(display::Display &display) const {
     xQueueSend(state.queue, &job, portMAX_DELAY);
     RenderRows(scene, 1, 64, state.gray + 64, 2);
     xSemaphoreTake(state.done, portMAX_DELAY);
+    if (canvas != nullptr) {
+      for (int y = 0; y < 64; ++y)
+        canvas->WriteGrayscaleSpan(0, y, 64, state.gray + y * 64);
+      return;
+    }
     display.fill(Color(0, 0, 0));
     for (int y = 0; y < 64; ++y)
       for (int x = 0; x < 64; ++x) {
@@ -820,13 +831,18 @@ void ShadowFace::Render(display::Display &display) const {
     ESP_LOGW("shadow_face", "Single-core target; using exact serial rendering");
   }
 #endif
-  display.fill(Color(0, 0, 0));
+  if (canvas == nullptr)
+    display.fill(Color(0, 0, 0));
   uint8_t row[64];
   for (int y = 0; y < 64; ++y) {
     RenderRows(scene, y, y + 1, row);
-    for (int x = 0; x < 64; ++x)
-      if (row[x] != 0)
-        display.draw_pixel_at(x, y, Color(row[x], row[x], row[x]));
+    if (canvas != nullptr) {
+      canvas->WriteGrayscaleSpan(0, y, 64, row);
+    } else {
+      for (int x = 0; x < 64; ++x)
+        if (row[x] != 0)
+          display.draw_pixel_at(x, y, Color(row[x], row[x], row[x]));
+    }
   }
 }
 
