@@ -187,6 +187,10 @@ TimerPauseAction = pixoo64_ns.class_("TimerPauseAction", automation.Action)
 TimerResumeAction = pixoo64_ns.class_("TimerResumeAction", automation.Action)
 TimerStartAction = pixoo64_ns.class_("TimerStartAction", automation.Action)
 TimerStopAction = pixoo64_ns.class_("TimerStopAction", automation.Action)
+TimerMinimizeAction = pixoo64_ns.class_("TimerMinimizeAction", automation.Action)
+TimerShowAction = pixoo64_ns.class_("TimerShowAction", automation.Action)
+StopwatchMinimizeAction = pixoo64_ns.class_("StopwatchMinimizeAction", automation.Action)
+StopwatchShowAction = pixoo64_ns.class_("StopwatchShowAction", automation.Action)
 NowPlayingConfigureAction = adapters_ns.class_(
     "NowPlayingConfigureAction", automation.Action
 )
@@ -336,6 +340,7 @@ WEATHER_SCHEMA = cv.Schema(
 TIMING_BUTTONS = (
     "stopwatch_start", "stopwatch_pause", "stopwatch_resume", "stopwatch_stop",
     "timer_start", "timer_pause", "timer_resume", "timer_stop",
+    "timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show",
 )
 TimingButton = pixoo64_ns.class_("TimingButton", button.Button)
 TIMING_SCHEMA = cv.Schema({
@@ -557,6 +562,42 @@ async def timer_stop_to_code(config, action_id, template_arg, args):
     synchronous=True,
 )
 async def timer_pause_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.timer_minimize", TimerMinimizeAction, TIMER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_minimize_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.timer_show", TimerShowAction, TIMER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def timer_show_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.stopwatch_minimize", StopwatchMinimizeAction, STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_minimize_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, parent)
+
+
+@automation.register_action(
+    "pixoo64.stopwatch_show", StopwatchShowAction, STOPWATCH_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def stopwatch_show_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
 

@@ -2558,6 +2558,38 @@ void RenderTestDisplay::setup() {
           true, false, true, false, &frame);
       valid &= pending.prepares == 2 && pending.cancels == 0 &&
                pending.shows == 1 && pending.hides == 0 && pending.ticks == 1;
+      // A minimized session follows the ordinary dashboard path, including
+      // resource reacquisition and selection changes beneath overlays.
+      timing.minimized = true;
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= render(3000, timing) && pixels() == clean_base && base.resources;
+      const int ticks_before_show = base.ticks;
+      timing.minimized = false;
+      valid &= render(3010, timing) && pixels() != clean_base && !base.resources &&
+               base.ticks == ticks_before_show;
+      timing.minimized = true;
+      valid &= render(3020, timing, &notification) && base.resources &&
+               base.ticks == ticks_before_show + 1;
+      controller.ReleaseOverlayResources();
+      valid &= render(3030, timing) && pixels() == clean_base;
+      valid &= render(3040, timing, &reaction, 0) && !base.resources;
+      valid &= render(3050, timing, &reaction, 250, false);
+      controller.ReleaseOverlayResources();
+      valid &= render(3060, timing) && pixels() == clean_base && base.resources;
+      pending.ready = false;
+      preparing.HideBaseContent(3100);
+      valid &= preparing.RenderContent(3110, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      const int prepares_before = pending.prepares;
+      timing.minimized = false;
+      valid &= preparing.RenderContent(3120, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      valid &= pending.prepares == prepares_before;
+      timing.minimized = true;
+      pending.ready = true;
+      valid &= preparing.RenderContent(3130, "pending", timing, nullptr, 0,
+          true, false, true, false, &frame);
+      valid &= pending.prepares == prepares_before + 1 && pending.shows == 2;
       if (!valid) {
         std::printf("render test: FAILED timing cover, phases, or clean reaction restore\n");
         ++failures;

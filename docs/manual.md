@@ -106,9 +106,10 @@ The configured Home Assistant/native-API surface includes:
 - `notify` (message, optional title, severity, duration, optional sound),
   `reaction`, `clear_overlay_queue`, `now_playing_configure` (`entity_id`,
   `home_assistant_url`), `now_playing_clear`, `stopwatch_start`,
-  `stopwatch_stop`, `stopwatch_reset`, `timer_set` (`duration_ms`),
-  `timer_start`, `timer_stop`, `timer_reset`, and `reboot` API actions. `reboot`
-  safely restarts the device
+  `stopwatch_pause`, `stopwatch_resume`, `stopwatch_stop`, `stopwatch_minimize`,
+  `stopwatch_show`, `timer_start` (`duration_seconds`, 1–5,999), `timer_pause`,
+  `timer_resume`, `timer_stop`, `timer_minimize`, `timer_show`, and `reboot` API
+  actions. `reboot` safely restarts the device
   without clearing persisted preferences. An empty notification title keeps the
   one-line banner; a title adds a line above the message. Notifications
   support `info`, `success`, `warning`, and `error`. Reactions are `laughing`,
@@ -147,6 +148,9 @@ The power button toggles the panel when released after 50–2,000 ms. The
 brightness button cycles 25%, 50%, 75%, and 100% after 50–1,999 ms; manual
 adjustment disables Solar Brightness. Releasing it after **2–10 seconds** toggles
 Solar Brightness without changing power. Other hold lengths do nothing.
+While a timer or stopwatch view is visible without an overlay, a short brightness
+press pauses or resumes it, and a 2–10-second hold stops and closes it. A short
+press dismisses a finished timer.
 
 A power-button hold released after **10–60 seconds**, inclusive, resets ESPHome
 preferences and safely reboots. Holds shorter than 50 ms, from 2,001–9,999 ms, or
@@ -156,9 +160,13 @@ resulting provisioning and settings state after reset.
 
 Available dashboards are text, now-playing, forecast weather, landscape weather,
 equalizer bars, equalizer waveform, Game of Life, split-flap clock, analog clock,
-binary clock, digital clock, shadow clock, stopwatch, timer, and DDP. Weather needs
-configured location and network access; equalizer views use the panel microphone.
+binary clock, digital clock, shadow clock, and DDP. Weather needs configured
+location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
+
+Timer and stopwatch Minimize buttons/actions restore the selected dashboard or
+off display while retaining the running or paused session. Show reopens its view.
+Timer completion opens the view and sounds the alarm.
 
 Select `ddp` to display images from a DDP sender. Configure the sender with the
 display's IPv4 address, UDP port 4048, destination ID 1, and 4,096 RGB pixels

@@ -468,9 +468,14 @@ for field in ('options', 'legacy_options'):
         self.assertIn("                  success: false\n", text)
         actions = [f"{kind}_{verb}" for kind in ("stopwatch", "timer")
                    for verb in ("start", "pause", "resume", "stop")]
+        actions += ["timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show"]
         for action in actions:
             self.assertEqual(text.count(f"    - action: {action}\n"), 1)
-            self.assertIn(f"    {action}:\n", text)
+            name = action.replace("_", " ").title()
+            self.assertIn(f"    {action}:\n      name: {name}\n", text)
+            if action != "timer_start":
+                self.assertIn(f"    - action: {action}\n      then:\n"
+                              f"        - pixoo64.{action}: pixoo_firmware\n", text)
         for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start"):
             self.assertNotIn(old, text)
         result = subprocess.run(
@@ -486,8 +491,36 @@ for field in ('options', 'legacy_options'):
             "pixoo_firmware->set_stopwatch_elapsed(", "pixoo_firmware->set_timer_remaining(",
         ):
             self.assertIn(statement, generated)
-        self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 8)
+        self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 12)
+        adapter = (self.fixture / "esphome/components/pixoo64/firmware_app_component.cpp").read_text()
+        header = (self.fixture / "esphome/components/pixoo64/firmware_app_component.h").read_text()
+        for index, action in enumerate(actions):
+            with self.subTest(action=action):
+                binding = re.search(
+                    rf"pixoo_firmware->set_timing_button\({index}, (\w+)\);", generated)
+                self.assertIsNotNone(binding)
+                self.assertIn(f'App.register_button({binding.group(1)}, "{action.replace("_", " ").title()}",', generated)
+                command = "".join(word.title() for word in action.split("_"))
+                if action != "timer_start":
+                    self.assertIn(f"pixoo64::{command}Action<>(pixoo_firmware);", generated)
+                if index >= 8:
+                    self.assertIn(f"case {index}: {command}(); break;", adapter)
+                    self.assertIn(f"PIXOO_TIMING_COMMAND({command})", adapter)
+                    self.assertIn(f"PIXOO_TIMING_ACTION({command})", header)
         self.assertNotIn("SelectDashboard(x)", generated)
+
+    def test_timing_visibility_buttons_required(self):
+        for action in ("timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tempdir:
+                repo = Path(tempdir) / "repo"
+                shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
+                path = repo / "esphome/pixoo64.yaml"
+                name = action.replace("_", " ").title()
+                path.write_text(path.read_text().replace(
+                    f"    {action}:\n      name: {name}\n", "", 1))
+                result = self.run_config(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"'{action}' is a required option", result.stdout + result.stderr)
 
     def test_timing_action_validation(self):
         cases = [
@@ -499,6 +532,11 @@ for field in ('options', 'legacy_options'):
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_ms: 1000\n", "duration_ms"),
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 0\n", "at least 1"),
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 6000\n", "at most 5999"),
+        ]
+        cases += [
+            (f"        - pixoo64.{action}:\n            id: pixoo_firmware\n"
+             "            duration_seconds: 300\n", "duration_seconds")
+            for action in ("timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show")
         ]
         for replacement, message in cases:
             with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as tempdir:

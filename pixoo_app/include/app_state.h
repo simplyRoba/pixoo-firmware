@@ -24,6 +24,8 @@ struct TimingSnapshot {
   TimingPhase phase{TimingPhase::kIdle};
   uint32_t value_ms{0};
   uint32_t duration_ms{0};
+  bool minimized{false};
+  bool visible() const { return active() && !minimized; }
   bool active() const {
     return kind != TimingKind::kNone && phase != TimingPhase::kIdle;
   }

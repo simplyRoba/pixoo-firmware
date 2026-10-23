@@ -223,6 +223,18 @@ api:
     - action: timer_stop
       then:
         - pixoo64.timer_stop: pixoo_firmware
+    - action: timer_minimize
+      then:
+        - pixoo64.timer_minimize: pixoo_firmware
+    - action: timer_show
+      then:
+        - pixoo64.timer_show: pixoo_firmware
+    - action: stopwatch_minimize
+      then:
+        - pixoo64.stopwatch_minimize: pixoo_firmware
+    - action: stopwatch_show
+      then:
+        - pixoo64.stopwatch_show: pixoo_firmware
     - action: now_playing_configure
       variables:
         entity_id: string
@@ -343,6 +355,14 @@ pixoo64:
       name: Timer Resume
     timer_stop:
       name: Timer Stop
+    timer_minimize:
+      name: Timer Minimize
+    timer_show:
+      name: Timer Show
+    stopwatch_minimize:
+      name: Stopwatch Minimize
+    stopwatch_show:
+      name: Stopwatch Show
     mode:
       name: Timing Mode
     state:

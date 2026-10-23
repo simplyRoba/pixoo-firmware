@@ -265,7 +265,8 @@ separate deadlines:
 - each dashboard supplies a validated positive frame interval through
   `DashboardSelection`;
 - boot frames use `boot_frame_interval_ms`;
-- notifications and reactions use `overlay_frame_interval_ms`; and
+- visible timer and stopwatch views, notifications, and reactions use
+  `overlay_frame_interval_ms`; and
 - production values for boot and overlays are 33 ms.
 
 Deadlines use wrap-safe unsigned time arithmetic. A delayed poll renders at the
@@ -280,7 +281,8 @@ nor an off-panel overlay's full-brightness wake.
 
 A dashboard selection resolves through `RenderPort`'s trusted catalog. The result
 contains its canonical ID, frame interval, and microphone requirement. The
-application enables capture only while the selected base dashboard requires it.
+application enables capture only while the selected base dashboard is visible,
+requires it, and has no foreground timing view.
 
 ## 5. Rendering and presentation
 
@@ -288,7 +290,7 @@ application enables capture only while the selected base dashboard requires it.
 
 Each configured dashboard has a stable ID and implements the shared `Dashboard`
 interface. ESPHome's typed schema admits the closed dashboard families `text`,
-`ddp`, `now_playing`, `weather`, `equalizer`, `game_of_life`, `clock`, and `timing`.
+`ddp`, `now_playing`, `weather`, `equalizer`, `game_of_life`, and `clock`.
 Final validation checks that
 the dashboard-select options match the renderer catalog and that its initial
 option matches the renderer default.

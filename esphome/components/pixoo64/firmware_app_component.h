@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
 
@@ -103,10 +104,14 @@ class FirmwareAppComponent final : public PollingComponent,
   void StopwatchPause();
   void StopwatchResume();
   void StopwatchStop();
+  void StopwatchMinimize();
+  void StopwatchShow();
   bool TimerStart(int32_t duration_seconds);
   void TimerPause();
   void TimerResume();
   void TimerStop();
+  void TimerMinimize();
+  void TimerShow();
   void set_timer_duration(number::Number *value) { timer_duration_ = value; }
   void set_timing_mode(text_sensor::TextSensor *value) { timing_mode_ = value; }
   void set_timing_state(text_sensor::TextSensor *value) { timing_state_ = value; }
@@ -129,7 +134,7 @@ class FirmwareAppComponent final : public PollingComponent,
   text_sensor::TextSensor *timing_state_{nullptr};
   sensor::Sensor *stopwatch_elapsed_{nullptr};
   sensor::Sensor *timer_remaining_{nullptr};
-  button::Button *timing_buttons_[8]{};
+  std::array<button::Button *, 12> timing_buttons_{};
   pixoo::TimingSnapshot published_timing_{};
   uint32_t timing_published_ms_{0};
   bool timing_published_{false};
@@ -246,6 +251,10 @@ PIXOO_TIMING_ACTION(StopwatchPause)
 PIXOO_TIMING_ACTION(StopwatchResume)
 PIXOO_TIMING_ACTION(TimerPause)
 PIXOO_TIMING_ACTION(TimerResume)
+PIXOO_TIMING_ACTION(TimerMinimize)
+PIXOO_TIMING_ACTION(TimerShow)
+PIXOO_TIMING_ACTION(StopwatchMinimize)
+PIXOO_TIMING_ACTION(StopwatchShow)
 #undef PIXOO_TIMING_ACTION
 
 template<typename... Ts>

@@ -84,7 +84,7 @@ void FirmwareAppComponent::setup() {
 
   this->dashboard_select_->add_on_state_callback(
       [this](size_t index) { this->SelectDashboard(this->dashboard_select_->option_at(index)); });
-  for (uint8_t i = 0; i < 8; ++i) {
+  for (size_t i = 0; i < this->timing_buttons_.size(); ++i) {
     if (this->timing_buttons_[i] == nullptr) continue;
     this->timing_buttons_[i]->add_on_press_callback([this, i]() {
       switch (i) {
@@ -104,6 +104,10 @@ void FirmwareAppComponent::setup() {
         case 5: TimerPause(); break;
         case 6: TimerResume(); break;
         case 7: TimerStop(); break;
+        case 8: TimerMinimize(); break;
+        case 9: TimerShow(); break;
+        case 10: StopwatchMinimize(); break;
+        case 11: StopwatchShow(); break;
       }
     });
   }
@@ -266,6 +270,10 @@ PIXOO_TIMING_COMMAND(StopwatchStop)
 PIXOO_TIMING_COMMAND(TimerPause)
 PIXOO_TIMING_COMMAND(TimerResume)
 PIXOO_TIMING_COMMAND(TimerStop)
+PIXOO_TIMING_COMMAND(TimerMinimize)
+PIXOO_TIMING_COMMAND(TimerShow)
+PIXOO_TIMING_COMMAND(StopwatchMinimize)
+PIXOO_TIMING_COMMAND(StopwatchShow)
 #undef PIXOO_TIMING_COMMAND
 
 bool FirmwareAppComponent::TimerStart(int32_t duration_seconds) {

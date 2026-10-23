@@ -655,7 +655,7 @@ bool ContentController::RenderContent(
     this->ReleaseReactionBackground_();
 
   Dashboard *requested = nullptr;
-  if (base_visible && !timing.active()) {
+  if (base_visible && !timing.visible()) {
     requested = this->find_(dashboard_id);
     if (requested == nullptr)
       requested = this->find_(this->default_dashboard_id_);
@@ -671,7 +671,7 @@ bool ContentController::RenderContent(
     this->HideVisible_(now_ms);
   }
 
-  if (base_visible && render_base && timing.active()) {
+  if (base_visible && render_base && timing.visible()) {
     this->framebuffer_.Clear();
     this->timing_view_.Render(*this, timing, this->firmware_update_detail_font_);
   } else if (base_visible && render_base) {
@@ -757,7 +757,7 @@ bool ContentController::RenderContent(
   }
 
   PopActiveBlendCanvas();
-  if (this->visible_ != nullptr && (timing.active() || base_frozen))
+  if (this->visible_ != nullptr && (timing.visible() || base_frozen))
     this->visible_->ReleaseRenderResources();
   if (this->render_budget_us_ != 0)
     this->RecordRender_(micros() - started_us);
