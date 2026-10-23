@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.1.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.0.0...v2.1.0) (2026-10-23)
+
+
+### Features
+
+* add flickering shadow clock ignition ([9aa117f](https://github.com/simplyRoba/pixoo-firmware/commit/9aa117feb0881b4e20466b246a16415e3c621d6c))
+* add timer and stopwatch minimize and show actions ([37ad50e](https://github.com/simplyRoba/pixoo-firmware/commit/37ad50e32197bb7324f1027790d7f8edfbc05e7a))
+* add translucent notification backdrops ([c8a7b02](https://github.com/simplyRoba/pixoo-firmware/commit/c8a7b02e7db748230afe899805d39bee98890762))
+
+
+### Bug Fixes
+
+* smooth now-playing text background ([7c285ad](https://github.com/simplyRoba/pixoo-firmware/commit/7c285adef042812aa888799fceedc6f8b2a22880))
+
+
+### Performance Improvements
+
+* reduce shadow clock shading and transfer overhead ([d6c5fa2](https://github.com/simplyRoba/pixoo-firmware/commit/d6c5fa279a66c610cf50072bca147333835fc155))
+* reduce translucent notification compositing work ([47327bd](https://github.com/simplyRoba/pixoo-firmware/commit/47327bdd76f9d53ea0f72a4fb37c33680ca1f965))
+* skip redundant shadow clock blocker calculations ([9dcfce0](https://github.com/simplyRoba/pixoo-firmware/commit/9dcfce05a72fa204c47ea788cff6f9782949b195))
+
+
+### Code Refactoring
+
+* test now-playing presentation without rendering ([d3a874a](https://github.com/simplyRoba/pixoo-firmware/commit/d3a874a66f96e5e527aa1d072284d8b947e52aab))
+
 ## [2.0.0](https://github.com/simplyRoba/pixoo-firmware/compare/v1.2.0...v2.0.0) (2026-10-20)
 
 
