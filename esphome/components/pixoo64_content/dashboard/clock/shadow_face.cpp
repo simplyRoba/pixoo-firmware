@@ -314,13 +314,14 @@ bool BlockedInterval(const EdgeBlocker &blocker, Point q,
   interval = {0, length};
   if (start < 0)
     return true;  // Receiver inside the blocking body.
+  if (!blocker.ClipFace(start, interval) ||
+      (last != start && !blocker.ClipFace(last, interval)))
+    return false;
   const Point a = Sub(body[start], q);
   const Point b = Sub(body[(last + 1) % 4], q);
   const int sign = Cross(a, b) >= 0 ? 1 : -1;
   return interval.Ray(a, q, offset, sign) &&
-         interval.Ray(b, q, offset, -sign) &&
-         blocker.ClipFace(start, interval) &&
-         (last == start || blocker.ClipFace(last, interval));
+         interval.Ray(b, q, offset, -sign);
 }
 
 // atan(delta / normal), with a quarter turn represented by 32768.
@@ -396,9 +397,6 @@ int MarkerVisibility(const LineSource &shadows, int along, int across,
     ++count;
   };
   Interval interval;
-  if (BlockedInterval(shadows.bodies[0], {along, across}, shadows.length,
-                      shadows.edge_offset, interval))
-    add(interval);
   bool marker_blocked = false;
   for (int marker = 0; marker < kMarkerCount; ++marker) {
     if ((marker_mask & (1 << marker)) == 0)
@@ -413,6 +411,9 @@ int MarkerVisibility(const LineSource &shadows, int along, int across,
   }
   if (!marker_blocked)
     return unmarked;
+  if (BlockedInterval(shadows.bodies[0], {along, across}, shadows.length,
+                      shadows.edge_offset, interval))
+    add(interval);
   int merged = 0;
   for (int i = 0; i < count; ++i) {
     if (merged != 0 && opaque[i].lo <= opaque[merged - 1].hi)
