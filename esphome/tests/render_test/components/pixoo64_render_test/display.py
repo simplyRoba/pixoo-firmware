@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import esphome.codegen as cg
-from esphome.components import display, text
+from esphome.components import display, font, text
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 
@@ -43,6 +43,7 @@ TIMING_SCHEMA = cv.Schema({
     cv.Required("mode"): cv.one_of("stopwatch", "timer"),
     cv.Required("state"): cv.one_of("running", "paused", "finished"),
     cv.Required("value_ms"): cv.int_range(min=0, max=0xFFFFFFFF),
+    cv.Optional("minimized", default=False): cv.boolean,
     cv.Optional("duration_ms", default=0): cv.int_range(min=0, max=0xFFFFFFFF),
 })
 ANIMATION_FRAME_SCHEMA = cv.All(cv.Schema(
@@ -54,13 +55,14 @@ ANIMATION_FRAME_SCHEMA = cv.All(cv.Schema(
         cv.Optional(CONF_BASE_VISIBLE, default=True): cv.boolean,
         cv.Optional(CONF_ADVANCE_ONLY, default=False): cv.boolean,
     }
-), cv.has_exactly_one_key(CONF_DASHBOARD, CONF_TIMING))
+), cv.has_at_least_one_key(CONF_DASHBOARD, CONF_TIMING))
 
 CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend(
     {
         cv.GenerateID(): cv.declare_id(RenderTestDisplay),
         cv.Required(CONF_CONTENT_CONTROLLER): cv.use_id(ContentController),
         cv.Optional(CONF_EQUALIZER): cv.use_id(EqualizerDashboard),
+        cv.Required("notification_font"): cv.use_id(font.Font),
         cv.Required(CONF_PANEL_TEXT): cv.use_id(text.Text),
         cv.Optional(CONF_NOW_PLAYING_SOURCE): cv.use_id(NowPlayingSource),
         cv.Optional(CONF_NOW_PLAYING_DASHBOARD): cv.use_id(NowPlayingDashboard),
@@ -108,6 +110,7 @@ async def to_code(config):
                 await cg.get_variable(config[CONF_EQUALIZER])
             )
         )
+    cg.add(var.set_notification_font(await cg.get_variable(config["notification_font"])))
     cg.add(var.set_panel_text(await cg.get_variable(config[CONF_PANEL_TEXT])))
     if CONF_NOW_PLAYING_SOURCE in config:
         cg.add(
@@ -136,6 +139,7 @@ async def to_code(config):
                 ("phase", cg.RawExpression("pixoo::TimingPhase::k" + timing["state"].title())),
                 ("value_ms", timing["value_ms"]),
                 ("duration_ms", timing["duration_ms"]),
+                ("minimized", timing["minimized"]),
             )
         cg.add(
             var.add_animation_frame(

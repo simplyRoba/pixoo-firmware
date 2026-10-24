@@ -147,7 +147,7 @@ The power button toggles the panel when released after 50–2,000 ms. The
 brightness button cycles 25%, 50%, 75%, and 100% after 50–1,999 ms; manual
 adjustment disables Solar Brightness. Releasing it after **2–10 seconds** toggles
 Solar Brightness without changing power. Other hold lengths do nothing.
-While a timer or stopwatch view is visible without an overlay, a short brightness
+While a timer or stopwatch is full-screen without an overlay, a short brightness
 press pauses or resumes it, and a 2–10-second hold stops and closes it. A short
 press dismisses a finished timer.
 
@@ -163,11 +163,12 @@ binary clock, digital clock, shadow clock, and DDP. Weather needs configured
 location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
 
-Timing Pause, Resume, Stop, Minimize, and Show buttons/actions control the active
-timer or stopwatch. Minimize restores the selected dashboard or off display while
-retaining the running or paused session; Show reopens its view. Timer completion
-opens the view and sounds the alarm. `Timing Visible` is on for an active,
-non-minimized session, independent of panel power or covering notifications.
+Timer and stopwatch start as a banner over the selected dashboard. Timing Pause,
+Resume, Stop, Minimize, and Show buttons/actions control the active session.
+Minimize selects the banner; Show selects the full-screen view. Notifications and
+reactions temporarily replace the banner. Timer completion opens full-screen and
+sounds the alarm. `Timing Visible` is on for full-screen timing, not banner mode,
+independent of panel power or covering notifications.
 
 Select `ddp` to display images from a DDP sender. Configure the sender with the
 display's IPv4 address, UDP port 4048, destination ID 1, and 4,096 RGB pixels

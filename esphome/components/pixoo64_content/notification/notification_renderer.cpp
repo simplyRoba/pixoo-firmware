@@ -1,11 +1,10 @@
 #include "notification_renderer.h"
 
-#include "esphome/components/pixoo64_content/blend_canvas.h"
+#include "banner.h"
 
 namespace esphome::pixoo64::content {
 namespace {
 
-const Color kBg(0, 0, 0);
 const Color kText(235, 238, 245);
 
 // Banner interior available for text, inside the 1px border + 1px padding.
@@ -92,26 +91,7 @@ void NotificationRenderer::Render(display::Display &display,
     return;
 
   const Color severity_color = SeverityColor(note.severity);
-  const int height = Height(note);
-  BlendCanvas *canvas = BlendCanvasOf(display);
-  if (translucent && canvas != nullptr) {
-    // The opaque severity accent covers row zero.
-    for (int y = 1; y < BackdropHeight(note); ++y) {
-      float alpha = 0.74f;
-      if (y >= height) {
-        const float t = static_cast<float>(y - height + 1) / kFadeHeight;
-        const float smooth = t * t * (3.0f - 2.0f * t);
-        alpha *= 1.0f - smooth;
-      }
-      if (alpha <= 0.0f)
-        continue;
-      canvas->BlendSpan(0, y, 64, kBg, alpha);
-    }
-    display.horizontal_line(0, 0, 64, severity_color);
-  } else {
-    display.filled_rectangle(0, 0, 64, height, kBg);
-    display.rectangle(0, 0, 64, height, severity_color);
-  }
+  banner::DrawBackdrop(display, Height(note), severity_color, translucent);
 
   if (note.title.empty()) {
     this->RenderTextLine_(display, note.text.c_str(), kTextTop, kText,

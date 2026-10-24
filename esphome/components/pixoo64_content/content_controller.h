@@ -37,6 +37,7 @@ class ContentController : public display::Display,
 
   void set_notification_font(font::Font *font) {
     this->notification_renderer_.set_font(font);
+    this->timing_banner_font_ = font;
   }
   void set_firmware_update_title_font(font::Font *font) {
     this->firmware_update_title_font_ = font;
@@ -109,6 +110,8 @@ class ContentController : public display::Display,
   Dashboard *visible_{nullptr};
   Dashboard *pending_{nullptr};
   TimingView timing_view_;
+  font::Font *timing_banner_font_{nullptr};
+  bool timing_banner_drawn_{false};
   std::string default_dashboard_id_;
   struct ReactionBackgroundDeleter {
     void operator()(pixoo::Framebuffer *framebuffer) const;

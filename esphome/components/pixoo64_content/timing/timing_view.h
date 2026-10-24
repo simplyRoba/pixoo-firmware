@@ -8,6 +8,8 @@ namespace esphome::pixoo64::content {
 
 class TimingView {
  public:
+  void RenderBanner(display::Display &display,
+                    const pixoo::TimingSnapshot &timing, font::Font *font) const;
   void Render(display::Display &display, const pixoo::TimingSnapshot &timing,
               font::Font *label_font) const;
 };

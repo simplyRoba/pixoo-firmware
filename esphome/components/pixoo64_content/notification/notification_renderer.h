@@ -5,6 +5,7 @@
 #include "esphome/components/display/display.h"
 #include "esphome/components/font/font.h"
 #include "app_state.h"
+#include "banner.h"
 
 namespace esphome::pixoo64::content {
 
@@ -19,18 +20,18 @@ class NotificationRenderer {
 
   // Text geometry: 2px top inset + 8px text + 2px bottom inset.
   // Titled banners add a second 8px line; the backdrop fade extends below.
-  static constexpr int kHeight = 12;
+  static constexpr int kHeight = banner::kHeight;
   static constexpr int kTitledHeight = 20;
-  static constexpr int kFadeHeight = 12;
+  static constexpr int kFadeHeight = banner::kFadeHeight;
   // The final fade sample has zero alpha and needs no backing pixels.
-  static constexpr int kMaxBackdropHeight = kTitledHeight + kFadeHeight - 1;
+  static constexpr int kMaxBackdropHeight = banner::BackdropHeight(kTitledHeight);
 
   static int Height(const pixoo::Notification &note) {
     return note.title.empty() ? kHeight : kTitledHeight;
   }
 
   static int BackdropHeight(const pixoo::Notification &note) {
-    return Height(note) + kFadeHeight - 1;
+    return banner::BackdropHeight(Height(note));
   }
 
   // Draws the banner for `note` at its visible elapsed time, which drives the

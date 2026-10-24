@@ -1201,6 +1201,7 @@ display:
   - platform: pixoo64_render_test
     id: render_test_panel
     content_controller: render_test_content_controller
+    notification_font: font_8
     equalizer: equalizer_dashboard
     panel_text: render_test_text
     now_playing_source: src_now_playing
@@ -1700,4 +1701,26 @@ display:
       - dashboard: weather_landscape_hail_thunderstorm
         now_ms: 12047
         snapshot: weather_landscape_hail_thunderstorm_active
+      - dashboard: clock_shadow
+        timing: {mode: timer, state: running, value_ms: 271001, minimized: true}
+        now_ms: 0
+      - dashboard: clock_shadow
+        timing: {mode: timer, state: running, value_ms: 271001, minimized: true}
+        now_ms: 1500
+        snapshot: timing_banner_timer_shadow
+      - dashboard: equalizer_bars
+        timing: {mode: stopwatch, state: running, value_ms: 754999, minimized: true}
+        now_ms: 1000
+        snapshot: timing_banner_stopwatch_bars
+      - dashboard: equalizer_waveform
+        timing: {mode: timer, state: paused, value_ms: 271001, minimized: true}
+        now_ms: 2000
+        snapshot: timing_banner_timer_paused_waveform
+      - dashboard: clock_shadow
+        timing: {mode: stopwatch, state: paused, value_ms: 754999, minimized: true}
+        now_ms: 3000
+      - dashboard: clock_shadow
+        timing: {mode: stopwatch, state: paused, value_ms: 754999, minimized: true}
+        now_ms: 4500
+        snapshot: timing_banner_stopwatch_paused_shadow
     output_dir: esphome/tests/render_test/frames

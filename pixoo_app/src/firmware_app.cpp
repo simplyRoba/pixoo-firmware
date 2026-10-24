@@ -78,6 +78,14 @@ bool FirmwareApp::BootRenderDue_(uint32_t now_ms) const {
          DeadlineReached_(now_ms, this->next_boot_render_ms_);
 }
 
+uint32_t FirmwareApp::BaseFrameInterval_() const {
+  if (this->timing_.visible())
+    return this->config_.overlay_frame_interval_ms;
+  if (this->timing_.running() && this->timing_.minimized)
+    return std::min<uint32_t>(this->selected_dashboard_.frame_interval_ms, 1000u);
+  return this->selected_dashboard_.frame_interval_ms;
+}
+
 bool FirmwareApp::BaseRenderDue_(uint32_t now_ms) const {
   return this->base_render_requested_ || !this->base_rendered_ ||
          DeadlineReached_(now_ms, this->next_base_render_ms_);
@@ -356,6 +364,7 @@ void FirmwareApp::AdvanceTiming_(uint32_t now_ms, bool announce_expiry) {
       this->timing_.value_ms += std::min(elapsed, remaining);
       if (elapsed >= remaining) {
         this->timing_.phase = TimingPhase::kPaused;
+        this->base_render_requested_ = true;
         this->RequestVisibleRender_();
       }
     } else if (elapsed >= this->timing_.value_ms) {
@@ -418,12 +427,12 @@ bool FirmwareApp::BaseContentVisible_() const {
   return this->phase_ == Phase::kRunning &&
          (this->logical_light_.on || this->timing_wake_) &&
          (this->overlay_queue_size_ == 0 || this->overlay_saved_light_.on ||
-          this->timing_.visible());
+          this->timing_wake_);
 }
 
 void FirmwareApp::ReconcileMicrophone_() {
   const bool should_enable = this->phase_ == Phase::kRunning &&
-                             this->logical_light_.on &&
+                             (this->logical_light_.on || this->timing_wake_) &&
                              !this->timing_.visible() &&
                              this->selected_dashboard_.requires_microphone &&
                              this->BaseContentVisible_();
@@ -466,8 +475,7 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
     this->base_render_requested_ = false;
     this->next_base_render_ms_ = NextDeadline_(
         now_ms, this->next_base_render_ms_,
-        this->timing_.visible() ? this->config_.overlay_frame_interval_ms :
-            this->selected_dashboard_.frame_interval_ms, reset_base_phase);
+        this->BaseFrameInterval_(), reset_base_phase);
     FrameView frame;
     if (this->frame_metrics_ != nullptr)
       this->frame_metrics_->BeginRegularFrame();
@@ -492,8 +500,7 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
     this->base_render_requested_ = false;
     this->next_base_render_ms_ = NextDeadline_(
         now_ms, this->next_base_render_ms_,
-        this->timing_.visible() ? this->config_.overlay_frame_interval_ms :
-            this->selected_dashboard_.frame_interval_ms, reset_base_phase);
+        this->BaseFrameInterval_(), reset_base_phase);
   }
   if (render_overlay) {
     const bool reset_overlay_phase =
@@ -743,9 +750,9 @@ void FirmwareApp::StepBrightness(uint32_t now_ms) {
   this->ApplyUserLight_(light, now_ms, true);
 }
 
-void FirmwareApp::OpenTiming_(uint32_t now_ms) {
-  if (this->timing_.minimized) {
-    this->timing_.minimized = false;
+void FirmwareApp::OpenTiming_(uint32_t now_ms, bool minimized) {
+  if (this->timing_.minimized != minimized) {
+    this->timing_.minimized = minimized;
     this->brightness_button_context_stale_ = this->brightness_button_pressed_;
     ++this->timing_generation_;
   }
@@ -765,29 +772,17 @@ void FirmwareApp::OpenTiming_(uint32_t now_ms) {
 }
 
 void FirmwareApp::TimingMinimize(uint32_t now_ms) {
-  if (!this->timing_.visible() ||
+  if (!this->timing_.active() ||
       this->timing_.phase == TimingPhase::kFinished)
     return;
   this->AdvanceTiming_(now_ms);
-  if (this->timing_.phase == TimingPhase::kFinished)
+  if (!this->timing_.visible() || this->timing_.phase == TimingPhase::kFinished)
     return;
   this->timing_.minimized = true;
   this->brightness_button_context_stale_ = this->brightness_button_pressed_;
   ++this->timing_generation_;
-  this->timing_wake_ = false;
-  this->renderer_.ReleaseOverlayResources();
   this->base_render_requested_ = true;
   this->RequestVisibleRender_();
-  if (this->overlay_queue_size_ != 0) {
-    this->panel_.SetBrightness(this->logical_light_.on ?
-        this->logical_light_.brightness : 1.0f);
-    if (!this->logical_light_.on)
-      this->renderer_.HideBaseContent(now_ms);
-  } else if (!this->logical_light_.on) {
-    this->renderer_.HideBaseContent(now_ms);
-    this->panel_.SetPower(false);
-    this->phase_ = Phase::kOff;
-  }
   this->ReconcileMicrophone_();
 }
 
@@ -803,7 +798,7 @@ void FirmwareApp::StopwatchStart(uint32_t now_ms) {
   this->timing_ = {TimingKind::kStopwatch, TimingPhase::kRunning, 0, 0};
   this->timing_last_updated_ms_ = now_ms;
   ++this->timing_generation_;
-  this->OpenTiming_(now_ms);
+  this->OpenTiming_(now_ms, true);
 }
 
 bool FirmwareApp::TimerStart(int32_t duration_seconds, uint32_t now_ms) {
@@ -814,7 +809,7 @@ bool FirmwareApp::TimerStart(int32_t duration_seconds, uint32_t now_ms) {
   this->timing_ = {TimingKind::kTimer, TimingPhase::kRunning, duration, duration};
   this->timing_last_updated_ms_ = now_ms;
   ++this->timing_generation_;
-  this->OpenTiming_(now_ms);
+  this->OpenTiming_(now_ms, true);
   return true;
 }
 
@@ -824,6 +819,7 @@ void FirmwareApp::TimingPause(uint32_t now_ms) {
   this->AdvanceTiming_(now_ms);
   if (this->timing_.running())
     this->timing_.phase = TimingPhase::kPaused;
+  this->base_render_requested_ = true;
   this->RequestVisibleRender_();
 }
 
@@ -834,6 +830,7 @@ void FirmwareApp::TimingResume(uint32_t now_ms) {
     return;
   this->timing_.phase = TimingPhase::kRunning;
   this->timing_last_updated_ms_ = now_ms;
+  this->base_render_requested_ = true;
   this->RequestVisibleRender_();
 }
 
@@ -1015,7 +1012,7 @@ void FirmwareApp::PromoteOverlay_() {
   const OverlayTag next_tag = this->CurrentOverlayRequest_().overlay.tag;
   // A promoted reaction and a notification following a reaction must replace
   // the previous overlay artwork with a freshly rendered dashboard.
-  if ((this->overlay_saved_light_.on || this->timing_.visible()) &&
+  if ((this->overlay_saved_light_.on || this->timing_wake_) &&
       (next_tag == OverlayTag::kReaction ||
        (previous_was_reaction && next_tag == OverlayTag::kNotification)))
     this->base_render_requested_ = true;
@@ -1036,7 +1033,7 @@ void FirmwareApp::RestoreOverlaySnapshot_(uint32_t now_ms) {
   this->logical_light_ = restore;
   this->panel_.SetBrightness(restore.brightness);
 
-  if (this->timing_.visible() && (restore.on || this->timing_wake_)) {
+  if (this->timing_.active() && (restore.on || this->timing_wake_)) {
     this->base_render_requested_ = true;
     this->ReconcileMicrophone_();
     return;

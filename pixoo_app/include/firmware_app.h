@@ -271,7 +271,7 @@ class FirmwareApp {
   static bool ElapsedAtLeast_(uint32_t now_ms, uint32_t started_ms,
                               uint32_t duration_ms);
   void AdvanceTiming_(uint32_t now_ms, bool announce_expiry = true);
-  void OpenTiming_(uint32_t now_ms);
+  void OpenTiming_(uint32_t now_ms, bool minimized = false);
   enum class SoundOwner { kNone, kBoot, kOverlay, kTimer };
   void PlaySound_(Sound sound, SoundOwner owner);
   void StopSound_();
@@ -299,6 +299,7 @@ class FirmwareApp {
   void RenderRunning_(uint32_t now_ms);
   bool BaseContentVisible_() const;
   void ReconcileMicrophone_();
+  uint32_t BaseFrameInterval_() const;
   bool BaseRenderDue_(uint32_t now_ms) const;
   bool OverlayRenderDue_(uint32_t now_ms) const;
   bool BootRenderDue_(uint32_t now_ms) const;

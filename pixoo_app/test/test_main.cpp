@@ -2210,6 +2210,8 @@ static void test_timing_precision_pause_fresh_start_cap_and_reveal() {
   app.Tick(3000 + kStopwatchMaximumElapsedMs + 1);
   TEST_ASSERT_EQUAL_UINT32(kStopwatchMaximumElapsedMs, app.timing().value_ms);
   TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
+  TEST_ASSERT_TRUE(app.timing().minimized);
+  TEST_ASSERT_FALSE(app.timing().visible());
   app.TimingResume(3000 + kStopwatchMaximumElapsedMs + 2);
   TEST_ASSERT_FALSE(app.timing().running());
   app.TimingStop(3000 + kStopwatchMaximumElapsedMs + 3);
@@ -2381,6 +2383,7 @@ static void test_timing_brightness_gestures_capture_context() {
                   FirmwareAppConfig{0, 0, 0}, nullptr, nullptr, nullptr, &solar);
   StartRunning(&app);
   app.StopwatchStart(10);
+  app.TimingShow(10);
   app.BrightnessButtonPressed(100);
   app.BrightnessButtonReleased(150);
   TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
@@ -2394,6 +2397,7 @@ static void test_timing_brightness_gestures_capture_context() {
   TEST_ASSERT_TRUE(solar.published.empty());
   app.BrightnessButtonPressed(4300);
   app.TimerStart(5, 4400);
+  app.TimingShow(4400);
   app.BrightnessButtonReleased(6300);
   TEST_ASSERT_TRUE(app.timing().active());
   app.BrightnessButtonPressed(6400);
@@ -2401,11 +2405,13 @@ static void test_timing_brightness_gestures_capture_context() {
   app.BrightnessButtonReleased(8400);
   TEST_ASSERT_TRUE(solar.published.empty());
   app.TimerStart(1, 8500);
+  app.TimingShow(8500);
   app.BrightnessButtonPressed(8600);
   app.Tick(9500);
   app.BrightnessButtonReleased(9550);
   TEST_ASSERT_FALSE(app.timing().active());
   app.StopwatchStart(10000);
+  app.TimingShow(10000);
   app.BrightnessButtonPressed(10100);
   app.BrightnessButtonReleased(12100);
   TEST_ASSERT_FALSE(app.timing().active());
@@ -2466,6 +2472,7 @@ static void test_timing_cadence_microphone_and_overlay_dto() {
                   FirmwareAppConfig{0, 0, 0});
   StartRunning(&app);
   app.StopwatchStart(10);
+  app.TimingShow(10);
   app.Tick(10);
   TEST_ASSERT_FALSE(microphone.calls.back());
   const size_t renders = renderer.render_base_calls.size();
@@ -2644,11 +2651,13 @@ static void test_timing_button_overlay_context_and_no_closed_session_fallthrough
   TEST_ASSERT_TRUE(app.timing().running());
   TEST_ASSERT_TRUE(brightness != app.logical_light().brightness);
   app.ClearOverlayQueue(90);
+  app.TimingShow(90);
   app.BrightnessButtonPressed(100);
   app.TimingStop(101);
   app.BrightnessButtonReleased(2100);
   TEST_ASSERT_TRUE(solar.published.empty());
   app.StopwatchStart(2200);
+  app.TimingShow(2200);
   app.BrightnessButtonPressed(2300);
   app.BrightnessButtonReleased(12300);
   TEST_ASSERT_FALSE(app.timing().active());
@@ -2666,6 +2675,9 @@ static void test_timing_minimize_preserves_session_and_dashboard_policy() {
                     FirmwareAppConfig{0, 0, 0});
     StartRunning(&app);
     if (timer) app.TimerStart(10, 10); else app.StopwatchStart(10);
+    TEST_ASSERT_TRUE(app.timing().minimized);
+    TEST_ASSERT_FALSE(app.timing().visible());
+    app.TimingShow(10);
     app.TimingMinimize(110);
     TEST_ASSERT_TRUE(app.timing().active());
     TEST_ASSERT_TRUE(app.timing().running());
@@ -2744,7 +2756,8 @@ static void test_timing_minimize_idle_and_idempotence() {
   TEST_ASSERT_EQUAL_UINT32(9990, app.timing().value_ms);
   app.TimingMinimize(120);
   app.TimerStart(10, 130);
-  TEST_ASSERT_TRUE(app.timing().visible());
+  TEST_ASSERT_TRUE(app.timing().minimized);
+  TEST_ASSERT_FALSE(app.timing().visible());
   app.TimingStop(140);
   TEST_ASSERT_FALSE(app.timing().visible());
   count = events.size();
@@ -2766,8 +2779,8 @@ static void test_timing_minimize_off_wake_and_overlay_restoration() {
     app.Tick(10);
     app.TimingPause(20);
     app.TimingMinimize(30);
-    TEST_ASSERT_FALSE(panel.power_on);
-    TEST_ASSERT_TRUE(app.phase() == FirmwareApp::Phase::kOff);
+    TEST_ASSERT_TRUE(panel.power_on);
+    TEST_ASSERT_TRUE(app.phase() == FirmwareApp::Phase::kRunning);
     TEST_ASSERT_FALSE(app.logical_light().on);
     app.TimingShow(40);
     app.Tick(40);
@@ -2782,12 +2795,15 @@ static void test_timing_minimize_off_wake_and_overlay_restoration() {
     TEST_ASSERT_TRUE(panel.power_on);
     TEST_ASSERT_EQUAL(powers, panel.power_calls);
     TEST_ASSERT_EQUAL(1, app.overlay_queue_size());
-    TEST_ASSERT_EQUAL_STRING("brightness:100", events.back().c_str());
     app.Tick(60);
-    TEST_ASSERT_FALSE(renderer.base_visible_calls.back());
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    TEST_ASSERT_TRUE(renderer.base_visible_calls.back());
     TEST_ASSERT_FALSE(renderer.last_timing.visible());
     app.ClearOverlayQueue(70);
-    TEST_ASSERT_FALSE(panel.power_on);
+    TEST_ASSERT_TRUE(panel.power_on);
+    app.Tick(70);
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    TEST_ASSERT_TRUE(renderer.last_timing.minimized);
     TEST_ASSERT_FALSE(app.logical_light().on);
     if (reaction) app.React(Reaction::kLove, 80);
     else app.Notify(Request("cover", 1000), 80);
@@ -2853,6 +2869,7 @@ static void test_timing_minimize_button_contexts_and_live_overlays() {
                   FirmwareAppConfig{0, 0, 0});
   StartRunning(&app);
   app.StopwatchStart(10);
+  app.TimingShow(10);
   app.BrightnessButtonPressed(20);
   app.TimingMinimize(30);
   const float brightness = app.logical_light().brightness;
@@ -2892,6 +2909,159 @@ static void test_timing_minimize_button_contexts_and_live_overlays() {
   TEST_ASSERT_TRUE(renderer.render_base_calls.back());
   TEST_ASSERT_TRUE(renderer.render_overlay_calls.back());
   TEST_ASSERT_FALSE(renderer.last_timing.visible());
+}
+
+static void test_default_banner_wake_microphone_and_overlay_transitions() {
+  for (bool timer : {false, true}) {
+    std::vector<std::string> events;
+    RecordingPanel panel(&events);
+    RecordingRenderer renderer(&events);
+    RecordingMicrophone microphone(&events);
+    RecordingLightSink sink;
+    FirmwareApp app(panel, renderer, nullptr, &microphone, &sink,
+                    FirmwareAppConfig{0, 0, 0});
+    TEST_ASSERT_TRUE(app.Start(0, LightState{false, 0.4f}, "equalizer"));
+    if (timer) app.TimerStart(60, 10); else app.StopwatchStart(10);
+    TEST_ASSERT_TRUE(app.timing().minimized);
+    TEST_ASSERT_FALSE(app.timing().visible());
+    app.Tick(10);
+    app.Tick(11);
+    TEST_ASSERT_TRUE(renderer.base_visible_calls.back());
+    TEST_ASSERT_TRUE(microphone.calls.back());
+    TEST_ASSERT_FALSE(app.logical_light().on);
+    const int powers = panel.power_calls;
+    const int initialized = panel.initialize_calls;
+    const int hides = renderer.hide_base_calls;
+    const size_t count = events.size();
+    app.TimingMinimize(12);
+    TEST_ASSERT_EQUAL(count, events.size());
+    app.Notify(Request("live", 10), 20);
+    app.React(Reaction::kLove, 20);
+    app.Notify(Request("after reaction", 10), 20);
+    app.Tick(20);
+    TEST_ASSERT_TRUE(renderer.base_visible_calls.back());
+    TEST_ASSERT_TRUE(microphone.calls.back());
+    app.Tick(30);
+    TEST_ASSERT_TRUE(renderer.base_frozen_calls.back());
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    app.Tick(30 + ReactionVisibleDurationMs(Reaction::kLove));
+    TEST_ASSERT_FALSE(renderer.base_frozen_calls.back());
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    TEST_ASSERT_TRUE(renderer.base_visible_calls.back());
+    app.Tick(40 + ReactionVisibleDurationMs(Reaction::kLove));
+    TEST_ASSERT_EQUAL(0, app.overlay_queue_size());
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    TEST_ASSERT_TRUE(renderer.last_timing.minimized);
+    TEST_ASSERT_TRUE(panel.power_on);
+    app.React(Reaction::kLove, 10000);
+    app.Tick(10000);
+    app.ClearOverlayQueue(10001);
+    app.Tick(10001);
+    TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+    TEST_ASSERT_TRUE(renderer.last_timing.minimized);
+    TEST_ASSERT_EQUAL(powers, panel.power_calls);
+    TEST_ASSERT_EQUAL(initialized, panel.initialize_calls);
+    TEST_ASSERT_EQUAL(hides, renderer.hide_base_calls);
+    TEST_ASSERT_TRUE(sink.published.empty());
+    app.TimingShow(10010);
+    TEST_ASSERT_FALSE(microphone.calls.back());
+    app.TimingMinimize(10020);
+    TEST_ASSERT_TRUE(microphone.calls.back());
+    app.SetUserLight(LightState{false, 0.4f}, 10030);
+    TEST_ASSERT_FALSE(panel.power_on);
+    TEST_ASSERT_FALSE(microphone.calls.back());
+    TEST_ASSERT_TRUE(app.timing().running());
+    app.TimingShow(10040);
+    app.Tick(10040);
+    app.TimingMinimize(10050);
+    TEST_ASSERT_TRUE(panel.power_on);
+    TEST_ASSERT_TRUE(microphone.calls.back());
+    app.TimingStop(10060);
+    TEST_ASSERT_FALSE(panel.power_on);
+    TEST_ASSERT_FALSE(microphone.calls.back());
+  }
+}
+
+static void test_running_banner_caps_slow_dashboard_cadence_only() {
+  for (bool timer : {false, true}) {
+    for (uint32_t interval : {33u, 5000u}) {
+      std::vector<std::string> events;
+      RecordingPanel panel(&events);
+      RecordingRenderer renderer(&events);
+      renderer.catalog = {{"text", false, interval}};
+      FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                      FirmwareAppConfig{0, 0, 0});
+      StartRunning(&app);
+      if (timer) app.TimerStart(60, 10); else app.StopwatchStart(10);
+      app.Tick(10);
+      const uint32_t cadence = std::min(interval, 1000u);
+      size_t renders = renderer.render_base_calls.size();
+      app.Tick(10 + cadence - 1);
+      TEST_ASSERT_EQUAL(renders, renderer.render_base_calls.size());
+      app.Tick(10 + cadence);
+      TEST_ASSERT_EQUAL(renders + 1, renderer.render_base_calls.size());
+      TEST_ASSERT_TRUE(renderer.last_timing.minimized);
+      app.TimingPause(2000);
+      app.Tick(2000);
+      renders = renderer.render_base_calls.size();
+      app.Tick(2000 + interval - 1);
+      TEST_ASSERT_EQUAL(renders, renderer.render_base_calls.size());
+      app.Tick(2000 + interval);
+      TEST_ASSERT_EQUAL(renders + 1, renderer.render_base_calls.size());
+      app.TimingResume(10000);
+      app.Notify(Request("live", 20000), 10000);
+      app.Tick(10000);
+      const auto base_count = std::count(renderer.render_base_calls.begin(),
+                                         renderer.render_base_calls.end(), true);
+      app.Tick(10000 + cadence - 1);
+      TEST_ASSERT_EQUAL(base_count, std::count(renderer.render_base_calls.begin(),
+                                                renderer.render_base_calls.end(), true));
+      app.Tick(10000 + cadence);
+      TEST_ASSERT_EQUAL(base_count + 1, std::count(renderer.render_base_calls.begin(),
+                                                    renderer.render_base_calls.end(), true));
+      app.TimingPause(12000);
+      app.Tick(12000);
+      TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+      app.TimingResume(12010);
+      app.Tick(12010);
+      TEST_ASSERT_TRUE(renderer.render_base_calls.back());
+      const auto resumed_count = std::count(renderer.render_base_calls.begin(),
+                                            renderer.render_base_calls.end(), true);
+      app.Tick(12010 + cadence);
+      TEST_ASSERT_EQUAL(resumed_count + 1,
+                        std::count(renderer.render_base_calls.begin(),
+                                   renderer.render_base_calls.end(), true));
+    }
+  }
+}
+
+static void test_banner_brightness_and_solar_controls_and_stale_replacement() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  RecordingSolarBrightnessSink solar;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0}, nullptr, nullptr, nullptr, &solar);
+  TEST_ASSERT_TRUE(app.Start(0, LightState{false, 0.5f}, "text"));
+  app.TimerStart(60, 10);
+  app.Tick(10);
+  app.BrightnessButtonPressed(20);
+  app.BrightnessButtonReleased(70);
+  TEST_ASSERT_TRUE(app.timing().running());
+  TEST_ASSERT_EQUAL_FLOAT(0.75f, app.logical_light().brightness);
+  TEST_ASSERT_TRUE(panel.power_on);
+  app.BrightnessButtonPressed(100);
+  app.BrightnessButtonReleased(2100);
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  TEST_ASSERT_TRUE(app.timing().running());
+  app.TimingShow(2200);
+  app.BrightnessButtonPressed(2300);
+  app.TimerStart(60, 2310);
+  app.TimingShow(2320);
+  app.BrightnessButtonReleased(2350);
+  TEST_ASSERT_TRUE(app.timing().running());
+  TEST_ASSERT_TRUE(app.solar_brightness_enabled());
+  TEST_ASSERT_EQUAL_FLOAT(0.75f, app.logical_light().brightness);
 }
 
 static void test_light_publication_guard_consumes_only_the_expected_echo() {
@@ -3223,6 +3393,9 @@ int main(int, char **) {
   RUN_TEST(test_logical_off_stops_sound_before_power_off);
   RUN_TEST(test_reboot_uses_typed_system_port);
   RUN_TEST(test_factory_reset_uses_typed_system_port);
+  RUN_TEST(test_default_banner_wake_microphone_and_overlay_transitions);
+  RUN_TEST(test_running_banner_caps_slow_dashboard_cadence_only);
+  RUN_TEST(test_banner_brightness_and_solar_controls_and_stale_replacement);
   RUN_TEST(test_timing_minimize_preserves_session_and_dashboard_policy);
   RUN_TEST(test_timing_minimize_idle_and_idempotence);
   RUN_TEST(test_timing_minimize_off_wake_and_overlay_restoration);

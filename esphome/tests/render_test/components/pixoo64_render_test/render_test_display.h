@@ -22,6 +22,7 @@ class RenderTestDisplay final : public display::Display {
   void set_equalizer_dashboard(pixoo64::dashboard::EqualizerDashboard *eq) {
     this->equalizer_ = eq;
   }
+  void set_notification_font(font::Font *font) { this->notification_font_ = font; }
   void set_panel_text(text::Text *text) { this->text_ = text; }
   void set_now_playing_source(StaticNowPlayingSource *source) {
     this->now_playing_source_ = source;
@@ -70,6 +71,7 @@ class RenderTestDisplay final : public display::Display {
   pixoo64::content::ContentController *content_controller_{nullptr};
   pixoo64::dashboard::EqualizerDashboard *equalizer_{nullptr};
   text::Text *text_{nullptr};
+  font::Font *notification_font_{nullptr};
   StaticNowPlayingSource *now_playing_source_{nullptr};
   pixoo64::dashboard::NowPlayingDashboard *now_playing_dashboard_{nullptr};
   StaticWeatherSource *weather_source_{nullptr};

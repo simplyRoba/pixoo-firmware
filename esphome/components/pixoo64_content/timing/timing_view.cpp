@@ -7,6 +7,7 @@
 #include "esphome/components/pixoo64_content/aa_draw.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "../dashboard/seven_segment.h"
+#include "../notification/banner.h"
 
 namespace esphome::pixoo64::content {
 namespace {
@@ -29,6 +30,52 @@ uint8_t SegmentsFor(uint32_t digit) {
 }
 
 }  // namespace
+
+void TimingView::RenderBanner(display::Display &display,
+                              const pixoo::TimingSnapshot &timing,
+                              font::Font *font) const {
+  if (font == nullptr)
+    return;
+  // Each row stores the icon's leftmost pixel in its highest used bit.
+  static constexpr uint16_t kHourglass[9] = {
+      0x7f, 0x22, 0x22, 0x14, 0x08, 0x14, 0x2a, 0x3e, 0x7f};
+  static constexpr uint16_t kStopwatch[9] = {
+      0x038, 0x012, 0x07c, 0x082, 0x111, 0x119, 0x101, 0x082, 0x07c};
+  const bool timer = timing.kind == pixoo::TimingKind::kTimer;
+  const bool paused = timing.phase == pixoo::TimingPhase::kPaused;
+  const Color accent = timer ? Color(255, 170, 0) : Color(0, 153, 255);
+  banner::DrawBackdrop(display, banner::kHeight, accent, true);
+  const Color icon = paused
+      ? Color((accent.r * 7 + 5) / 10, (accent.g * 7 + 5) / 10,
+              (accent.b * 7 + 5) / 10)
+      : accent;
+  const int width = timer ? 7 : 9;
+  const int left = timer ? 4 : 3;
+  const uint16_t *rows = timer ? kHourglass : kStopwatch;
+  for (int y = 0; y < 9; ++y)
+    for (int x = 0; x < width; ++x)
+      if (rows[y] & (1u << (width - 1 - x)))
+        display.draw_pixel_at(left + x, 2 + y, icon);
+
+  uint32_t seconds = timing.value_ms / 1000u;
+  if (timer && timing.value_ms % 1000u != 0)
+    ++seconds;
+  seconds = std::min<uint32_t>(seconds, 99u * 60u + 59u);
+  const uint32_t minutes = seconds / 60u;
+  seconds %= 60u;
+  const char label[] = {
+      static_cast<char>('0' + minutes / 10u),
+      static_cast<char>('0' + minutes % 10u), ':',
+      static_cast<char>('0' + seconds / 10u),
+      static_cast<char>('0' + seconds % 10u), '\0'};
+  display.print(22, 2, font,
+                paused ? Color(190, 194, 203) : Color(235, 238, 245),
+                display::TextAlign::TOP_LEFT, label);
+  if (paused) {
+    display.filled_rectangle(58, 4, 2, 5, Color(235, 238, 245));
+    display.filled_rectangle(61, 4, 2, 5, Color(235, 238, 245));
+  }
+}
 
 void TimingView::Render(display::Display &display,
                         const pixoo::TimingSnapshot &timing,

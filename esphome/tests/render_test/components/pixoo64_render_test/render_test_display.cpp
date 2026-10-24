@@ -2596,6 +2596,157 @@ void RenderTestDisplay::setup() {
       }
     }
 
+    {
+      struct LiveBase final : pixoo64::dashboard::Dashboard {
+        int ticks{0}, releases{0};
+        bool available() const override { return true; }
+        void Tick(uint32_t) override { ++ticks; }
+        void ReleaseRenderResources() override { ++releases; }
+        void Render(display::Display &display) const override {
+          display.fill(Color(100, 120, 140));
+        }
+      } base;
+      base.set_id("base");
+      pixoo64::content::ContentController controller;
+      controller.add_dashboard(&base);
+      controller.set_default_dashboard("base");
+      controller.set_notification_font(this->notification_font_);
+      pixoo::FrameView frame;
+      pixoo::TimingSnapshot timing{pixoo::TimingKind::kTimer,
+          pixoo::TimingPhase::kRunning, 271001, 300000, true};
+      const auto render = [&](const pixoo::Overlay *overlay = nullptr,
+                              bool draw_base = true, uint32_t elapsed = 0) {
+        return controller.RenderContent(1000, "base", timing, overlay, elapsed,
+            true, overlay != nullptr && overlay->tag == pixoo::OverlayTag::kReaction,
+            draw_base, overlay != nullptr, &frame) && frame.valid();
+      };
+      const auto pixels = [&]() {
+        return std::vector<uint8_t>(frame.data, frame.data + frame.size);
+      };
+      const auto pixel = [&](int x, int y, Color c) {
+        const size_t i = (y * 64 + x) * 3;
+        return frame.data[i] == c.r && frame.data[i + 1] == c.g &&
+               frame.data[i + 2] == c.b;
+      };
+      const auto icon_matches = [&](int left, int width,
+                                    const char *mask, Color ink) {
+        for (int y = 0; y < 9; ++y)
+          for (int x = 0; x < width; ++x)
+            if (!pixel(left + x, 2 + y, mask[y * width + x] == '#'
+                           ? ink : Color(26, 31, 36)))
+              return false;
+        return true;
+      };
+      const auto label_matches = [&](const char *label, Color ink) {
+        const auto actual = pixels();
+        controller.filled_rectangle(22, 2, 34, 9, Color(26, 31, 36));
+        controller.print(22, 2, this->notification_font_, ink,
+                         display::TextAlign::TOP_LEFT, label);
+        return pixels() == actual;
+      };
+      bool valid = this->notification_font_ != nullptr && render();
+      const auto timer = pixels();
+      valid &= pixel(0, 0, Color(255, 170, 0)) &&
+               pixel(4, 2, Color(255, 170, 0)) &&
+               pixel(0, 1, Color(26, 31, 36)) &&
+               pixel(0, 12, Color(27, 32, 38)) &&
+               pixel(0, 23, Color(100, 120, 140)) &&
+               pixel(0, 24, Color(100, 120, 140)) &&
+               icon_matches(4, 7,
+                   "#######" ".#...#." ".#...#." "..#.#.." "...#..."
+                   "..#.#.." ".#.#.#." ".#####." "#######",
+                   Color(255, 170, 0));
+      timing.value_ms = 272000;
+      valid &= render() && pixels() == timer;
+      timing.value_ms = 271999;
+      valid &= render() && pixels() == timer;
+      valid &= render(nullptr, false) && pixels() == timer;
+      valid &= label_matches("04:32", Color(235, 238, 245));
+      timing.value_ms = 271000;
+      valid &= render() && pixels() != timer &&
+               label_matches("04:31", Color(235, 238, 245));
+      timing.kind = pixoo::TimingKind::kStopwatch;
+      timing.value_ms = 754001;
+      valid &= render();
+      const auto stopwatch = pixels();
+      valid &= pixel(0, 0, Color(0, 153, 255)) &&
+               icon_matches(3, 9,
+                   "...###..." "....#..#." "..#####.." ".#.....#."
+                   "#...#...#" "#...##..#" "#.......#" ".#.....#."
+                   "..#####..", Color(0, 153, 255));
+      timing.value_ms = 754999;
+      valid &= render() && pixels() == stopwatch;
+      timing.value_ms = 754000;
+      valid &= render() && pixels() == stopwatch &&
+               label_matches("12:34", Color(235, 238, 245));
+      timing.value_ms = 755000;
+      valid &= render() && pixels() != stopwatch &&
+               label_matches("12:35", Color(235, 238, 245));
+      timing.value_ms = 754999;
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= render() && pixel(6, 2, Color(0, 107, 179)) &&
+               pixel(0, 0, Color(0, 153, 255)) &&
+               pixel(58, 4, Color(235, 238, 245)) &&
+               pixel(62, 8, Color(235, 238, 245));
+      const auto paused = pixels();
+      valid &= label_matches("12:34", Color(190, 194, 203));
+      valid &= render() && pixels() == paused && base.releases == 0;
+      for (int y = 4; y <= 8; ++y)
+        for (int x = 58; x <= 62; ++x)
+          valid &= pixel(x, y, x == 60 ? Color(26, 31, 36)
+                                      : Color(235, 238, 245));
+      timing.kind = pixoo::TimingKind::kTimer;
+      timing.value_ms = 271001;
+      valid &= render() && pixel(0, 0, Color(255, 170, 0)) &&
+               pixel(4, 2, Color(179, 119, 0)) &&
+               label_matches("04:32", Color(190, 194, 203));
+      timing.kind = pixoo::TimingKind::kStopwatch;
+      timing.value_ms = 754999;
+      valid &= render() && pixels() == paused;
+      const int live_ticks = base.ticks;
+      valid &= render(nullptr, false) && pixels() == paused && base.ticks == live_ticks;
+      pixoo::Overlay notification{};
+      notification.tag = pixoo::OverlayTag::kNotification;
+      notification.notification.text = "TEST";
+      notification.notification.severity = pixoo::Severity::kWarning;
+      valid &= render(&notification, false);
+      const auto note = pixels();
+      valid &= base.ticks == live_ticks + 1;
+      valid &= render(&notification, false) && pixels() == note;
+      controller.ReleaseOverlayResources();
+      timing.phase = pixoo::TimingPhase::kIdle;
+      valid &= render(&notification);
+      valid &= pixels() == note;
+      controller.ReleaseOverlayResources();
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= render() && pixels() == paused;
+      pixoo::Overlay reaction{};
+      reaction.tag = pixoo::OverlayTag::kReaction;
+      reaction.reaction = pixoo::Reaction::kCelebrate;
+      valid &= render(&reaction, false);
+      valid &= render(&reaction, false, 250);
+      const auto reaction_frame = pixels();
+      valid &= base.releases > 0;
+      controller.ReleaseOverlayResources();
+      timing.phase = pixoo::TimingPhase::kIdle;
+      valid &= render(&reaction, true);
+      valid &= render(&reaction, false, 250) && pixels() == reaction_frame;
+      controller.ReleaseOverlayResources();
+      timing.phase = pixoo::TimingPhase::kPaused;
+      valid &= render() && pixels() == paused;
+      timing.minimized = false;
+      valid &= render();
+      const auto full = pixels();
+      controller.set_notification_font(nullptr);
+      valid &= render() && pixels() == full;
+      if (!valid) {
+        std::printf("render test: FAILED timing banner pixels, live base, or overlay precedence\n");
+        ++failures;
+      } else {
+        std::printf("render test: ok timing banner pixels, live base, and overlay precedence\n");
+      }
+    }
+
 #ifdef USE_PIXOO64_NOW_PLAYING
     failures += RunNowPlayingAdapterTests();
 #endif
@@ -2667,7 +2818,8 @@ bool RenderTestDisplay::run_animation_frame_(const AnimationFrame &frame) {
 bool RenderTestDisplay::has_animation_frames_(
     const std::string &dashboard_id) const {
   for (const AnimationFrame &frame : this->animation_frames_) {
-    if (!frame.dashboard_id.empty() && frame.dashboard_id == dashboard_id)
+    if (!frame.timing.minimized && !frame.dashboard_id.empty() &&
+        frame.dashboard_id == dashboard_id)
       return true;
   }
   return false;

@@ -621,6 +621,14 @@ bool ContentController::RenderContent(
   const uint32_t started_us =
       this->render_budget_us_ == 0 ? 0 : micros();
 
+  const bool timing_banner = timing.active() && timing.minimized &&
+      overlay == nullptr && base_visible && !base_frozen;
+  // Overlay backing and reaction capture must start from an uncomposited base.
+  if (this->timing_banner_drawn_ && !timing_banner && base_visible)
+    render_base = true;
+  if (render_base || !base_visible)
+    this->timing_banner_drawn_ = false;
+
   const bool previous_fallback = this->notification_fallback_active_;
   this->notification_fallback_active_ = false;
   const bool notification = overlay != nullptr &&
@@ -711,6 +719,11 @@ bool ContentController::RenderContent(
     }
   } else if (!base_visible) {
     this->framebuffer_.Clear();
+  }
+
+  if (timing_banner && render_base && this->timing_banner_font_ != nullptr) {
+    this->timing_view_.RenderBanner(*this, timing, this->timing_banner_font_);
+    this->timing_banner_drawn_ = true;
   }
 
   if (reaction) {
