@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.1.0...v3.0.0) (2026-10-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* per-kind pause, resume, stop, minimize, and show actions and buttons are replaced by timing_pause, timing_resume, timing_stop, timing_minimize, and timing_show. The timing configuration requires the shared controls and a visible binary sensor.
+
+### Features
+
+* consolidate timing controls and publish visibility ([ceaec4a](https://github.com/simplyRoba/pixoo-firmware/commit/ceaec4ad5b339cf19ccecbc179589e97f2cde9e2))
+* show timer and stopwatch banners by default ([6da5e1e](https://github.com/simplyRoba/pixoo-firmware/commit/6da5e1e58093daf13ee65c76e9fed4bff330f2c8))
+
 ## [2.1.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.0.0...v2.1.0) (2026-10-23)
 
 
