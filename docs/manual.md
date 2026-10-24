@@ -106,9 +106,8 @@ The configured Home Assistant/native-API surface includes:
 - `notify` (message, optional title, severity, duration, optional sound),
   `reaction`, `clear_overlay_queue`, `now_playing_configure` (`entity_id`,
   `home_assistant_url`), `now_playing_clear`, `stopwatch_start`,
-  `stopwatch_pause`, `stopwatch_resume`, `stopwatch_stop`, `stopwatch_minimize`,
-  `stopwatch_show`, `timer_start` (`duration_seconds`, 1–5,999), `timer_pause`,
-  `timer_resume`, `timer_stop`, `timer_minimize`, `timer_show`, and `reboot` API
+  `timer_start` (`duration_seconds`, integer seconds, 1–5,999), `timing_pause`,
+  `timing_resume`, `timing_stop`, `timing_minimize`, `timing_show`, and `reboot` API
   actions. `reboot` safely restarts the device
   without clearing persisted preferences. An empty notification title keeps the
   one-line banner; a title adds a line above the message. Notifications
@@ -164,9 +163,11 @@ binary clock, digital clock, shadow clock, and DDP. Weather needs configured
 location and network access; equalizer views use the panel microphone.
 Notifications, reactions, and sound are exposed through the native API.
 
-Timer and stopwatch Minimize buttons/actions restore the selected dashboard or
-off display while retaining the running or paused session. Show reopens its view.
-Timer completion opens the view and sounds the alarm.
+Timing Pause, Resume, Stop, Minimize, and Show buttons/actions control the active
+timer or stopwatch. Minimize restores the selected dashboard or off display while
+retaining the running or paused session; Show reopens its view. Timer completion
+opens the view and sounds the alarm. `Timing Visible` is on for an active,
+non-minimized session, independent of panel power or covering notifications.
 
 Select `ddp` to display images from a DDP sender. Configure the sender with the
 display's IPv4 address, UDP port 4048, destination ID 1, and 4,096 RGB pixels

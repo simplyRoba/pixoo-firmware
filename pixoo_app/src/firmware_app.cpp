@@ -689,13 +689,13 @@ void FirmwareApp::BrightnessButtonReleased(uint32_t now_ms) {
         (IsDurationInRange(duration_ms, kShortPressMinimumMs,
                            kBrightnessShortPressMaximumMs) &&
          this->timing_.phase == TimingPhase::kFinished)) {
-      this->StopTiming_(captured, now_ms);
+      this->TimingStop(now_ms);
     } else if (IsDurationInRange(duration_ms, kShortPressMinimumMs,
                                  kBrightnessShortPressMaximumMs)) {
       if (this->timing_.running())
-        this->PauseTiming_(captured, now_ms);
+        this->TimingPause(now_ms);
       else
-        this->ResumeTiming_(captured, now_ms);
+        this->TimingResume(now_ms);
     }
     return;
   }
@@ -764,8 +764,8 @@ void FirmwareApp::OpenTiming_(uint32_t now_ms) {
   this->ReconcileMicrophone_();
 }
 
-void FirmwareApp::MinimizeTiming_(TimingKind kind, uint32_t now_ms) {
-  if (this->timing_.kind != kind || !this->timing_.visible() ||
+void FirmwareApp::TimingMinimize(uint32_t now_ms) {
+  if (!this->timing_.visible() ||
       this->timing_.phase == TimingPhase::kFinished)
     return;
   this->AdvanceTiming_(now_ms);
@@ -791,27 +791,11 @@ void FirmwareApp::MinimizeTiming_(TimingKind kind, uint32_t now_ms) {
   this->ReconcileMicrophone_();
 }
 
-void FirmwareApp::ShowTiming_(TimingKind kind, uint32_t now_ms) {
-  if (this->timing_.kind != kind || !this->timing_.active())
+void FirmwareApp::TimingShow(uint32_t now_ms) {
+  if (!this->timing_.active())
     return;
   this->AdvanceTiming_(now_ms);
   this->OpenTiming_(now_ms);
-}
-
-void FirmwareApp::StopwatchMinimize(uint32_t now_ms) {
-  this->MinimizeTiming_(TimingKind::kStopwatch, now_ms);
-}
-
-void FirmwareApp::StopwatchShow(uint32_t now_ms) {
-  this->ShowTiming_(TimingKind::kStopwatch, now_ms);
-}
-
-void FirmwareApp::TimerMinimize(uint32_t now_ms) {
-  this->MinimizeTiming_(TimingKind::kTimer, now_ms);
-}
-
-void FirmwareApp::TimerShow(uint32_t now_ms) {
-  this->ShowTiming_(TimingKind::kTimer, now_ms);
 }
 
 void FirmwareApp::StopwatchStart(uint32_t now_ms) {
@@ -834,8 +818,8 @@ bool FirmwareApp::TimerStart(int32_t duration_seconds, uint32_t now_ms) {
   return true;
 }
 
-void FirmwareApp::PauseTiming_(TimingKind kind, uint32_t now_ms) {
-  if (this->timing_.kind != kind || !this->timing_.running())
+void FirmwareApp::TimingPause(uint32_t now_ms) {
+  if (!this->timing_.running())
     return;
   this->AdvanceTiming_(now_ms);
   if (this->timing_.running())
@@ -843,9 +827,9 @@ void FirmwareApp::PauseTiming_(TimingKind kind, uint32_t now_ms) {
   this->RequestVisibleRender_();
 }
 
-void FirmwareApp::ResumeTiming_(TimingKind kind, uint32_t now_ms) {
-  if (this->timing_.kind != kind || this->timing_.phase != TimingPhase::kPaused ||
-      (kind == TimingKind::kStopwatch &&
+void FirmwareApp::TimingResume(uint32_t now_ms) {
+  if (this->timing_.phase != TimingPhase::kPaused ||
+      (this->timing_.kind == TimingKind::kStopwatch &&
        this->timing_.value_ms == kStopwatchMaximumElapsedMs))
     return;
   this->timing_.phase = TimingPhase::kRunning;
@@ -853,8 +837,8 @@ void FirmwareApp::ResumeTiming_(TimingKind kind, uint32_t now_ms) {
   this->RequestVisibleRender_();
 }
 
-void FirmwareApp::StopTiming_(TimingKind kind, uint32_t now_ms) {
-  if (this->timing_.kind != kind || !this->timing_.active())
+void FirmwareApp::TimingStop(uint32_t now_ms) {
+  if (!this->timing_.active())
     return;
   this->AdvanceTiming_(now_ms, false);
   this->timing_.phase = TimingPhase::kIdle;
@@ -870,30 +854,6 @@ void FirmwareApp::StopTiming_(TimingKind kind, uint32_t now_ms) {
     this->phase_ = Phase::kOff;
   }
   this->ReconcileMicrophone_();
-}
-
-void FirmwareApp::StopwatchPause(uint32_t now_ms) {
-  this->PauseTiming_(TimingKind::kStopwatch, now_ms);
-}
-
-void FirmwareApp::StopwatchResume(uint32_t now_ms) {
-  this->ResumeTiming_(TimingKind::kStopwatch, now_ms);
-}
-
-void FirmwareApp::StopwatchStop(uint32_t now_ms) {
-  this->StopTiming_(TimingKind::kStopwatch, now_ms);
-}
-
-void FirmwareApp::TimerPause(uint32_t now_ms) {
-  this->PauseTiming_(TimingKind::kTimer, now_ms);
-}
-
-void FirmwareApp::TimerResume(uint32_t now_ms) {
-  this->ResumeTiming_(TimingKind::kTimer, now_ms);
-}
-
-void FirmwareApp::TimerStop(uint32_t now_ms) {
-  this->StopTiming_(TimingKind::kTimer, now_ms);
 }
 
 void FirmwareApp::SelectDashboard(const std::string &dashboard_id) {

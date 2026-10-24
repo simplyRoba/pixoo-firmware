@@ -89,10 +89,7 @@ void FirmwareAppComponent::setup() {
     this->timing_buttons_[i]->add_on_press_callback([this, i]() {
       switch (i) {
         case 0: StopwatchStart(); break;
-        case 1: StopwatchPause(); break;
-        case 2: StopwatchResume(); break;
-        case 3: StopwatchStop(); break;
-        case 4: {
+        case 1: {
           const float seconds = timer_duration_ != nullptr ? timer_duration_->state : 300.0f;
           if (std::isfinite(seconds) && seconds >= 1.0f && seconds <= 5999.0f &&
               std::floor(seconds) == seconds)
@@ -101,13 +98,11 @@ void FirmwareAppComponent::setup() {
             ESP_LOGW(TAG, "Timer duration must be a whole number between 1 and 5999 seconds");
           break;
         }
-        case 5: TimerPause(); break;
-        case 6: TimerResume(); break;
-        case 7: TimerStop(); break;
-        case 8: TimerMinimize(); break;
-        case 9: TimerShow(); break;
-        case 10: StopwatchMinimize(); break;
-        case 11: StopwatchShow(); break;
+        case 2: TimingPause(); break;
+        case 3: TimingResume(); break;
+        case 4: TimingStop(); break;
+        case 5: TimingMinimize(); break;
+        case 6: TimingShow(); break;
       }
     });
   }
@@ -264,16 +259,11 @@ void FirmwareAppComponent::BeginFirmwareUpdate() {
                        before.value_ms != after.value_ms || before.duration_ms != after.duration_ms); \
   }
 PIXOO_TIMING_COMMAND(StopwatchStart)
-PIXOO_TIMING_COMMAND(StopwatchPause)
-PIXOO_TIMING_COMMAND(StopwatchResume)
-PIXOO_TIMING_COMMAND(StopwatchStop)
-PIXOO_TIMING_COMMAND(TimerPause)
-PIXOO_TIMING_COMMAND(TimerResume)
-PIXOO_TIMING_COMMAND(TimerStop)
-PIXOO_TIMING_COMMAND(TimerMinimize)
-PIXOO_TIMING_COMMAND(TimerShow)
-PIXOO_TIMING_COMMAND(StopwatchMinimize)
-PIXOO_TIMING_COMMAND(StopwatchShow)
+PIXOO_TIMING_COMMAND(TimingPause)
+PIXOO_TIMING_COMMAND(TimingResume)
+PIXOO_TIMING_COMMAND(TimingStop)
+PIXOO_TIMING_COMMAND(TimingMinimize)
+PIXOO_TIMING_COMMAND(TimingShow)
 #undef PIXOO_TIMING_COMMAND
 
 bool FirmwareAppComponent::TimerStart(int32_t duration_seconds) {
@@ -292,7 +282,12 @@ void FirmwareAppComponent::PublishTiming_(uint32_t now_ms, bool force) {
     if (timing_mode_ != nullptr) timing_mode_->publish_state(pixoo::TimingKindName(snapshot.kind));
     if (timing_state_ != nullptr) timing_state_->publish_state(pixoo::TimingPhaseName(snapshot.phase));
   }
-  if (force || transition || (snapshot.running() && now_ms - timing_published_ms_ >= 1000)) {
+  const bool visibility_changed = !timing_published_ ||
+                                  snapshot.visible() != published_timing_.visible();
+  if (visibility_changed && timing_visible_ != nullptr)
+    timing_visible_->publish_state(snapshot.visible());
+  if (force || transition || visibility_changed ||
+      (snapshot.running() && now_ms - timing_published_ms_ >= 1000)) {
     if (stopwatch_elapsed_ != nullptr)
       stopwatch_elapsed_->publish_state(snapshot.kind == pixoo::TimingKind::kStopwatch ? snapshot.value_ms / 1000.0f : 0.0f);
     if (timer_remaining_ != nullptr)

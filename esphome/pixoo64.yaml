@@ -190,15 +190,6 @@ api:
     - action: stopwatch_start
       then:
         - pixoo64.stopwatch_start: pixoo_firmware
-    - action: stopwatch_pause
-      then:
-        - pixoo64.stopwatch_pause: pixoo_firmware
-    - action: stopwatch_resume
-      then:
-        - pixoo64.stopwatch_resume: pixoo_firmware
-    - action: stopwatch_stop
-      then:
-        - pixoo64.stopwatch_stop: pixoo_firmware
     - action: timer_start
       variables:
         duration_seconds: int
@@ -214,27 +205,21 @@ api:
               - api.respond:
                   success: false
                   error_message: Duration must be between 1 and 5999 seconds
-    - action: timer_pause
+    - action: timing_pause
       then:
-        - pixoo64.timer_pause: pixoo_firmware
-    - action: timer_resume
+        - pixoo64.timing_pause: pixoo_firmware
+    - action: timing_resume
       then:
-        - pixoo64.timer_resume: pixoo_firmware
-    - action: timer_stop
+        - pixoo64.timing_resume: pixoo_firmware
+    - action: timing_stop
       then:
-        - pixoo64.timer_stop: pixoo_firmware
-    - action: timer_minimize
+        - pixoo64.timing_stop: pixoo_firmware
+    - action: timing_minimize
       then:
-        - pixoo64.timer_minimize: pixoo_firmware
-    - action: timer_show
+        - pixoo64.timing_minimize: pixoo_firmware
+    - action: timing_show
       then:
-        - pixoo64.timer_show: pixoo_firmware
-    - action: stopwatch_minimize
-      then:
-        - pixoo64.stopwatch_minimize: pixoo_firmware
-    - action: stopwatch_show
-      then:
-        - pixoo64.stopwatch_show: pixoo_firmware
+        - pixoo64.timing_show: pixoo_firmware
     - action: now_playing_configure
       variables:
         entity_id: string
@@ -341,32 +326,24 @@ pixoo64:
     timer_duration: timing_timer_duration
     stopwatch_start:
       name: Stopwatch Start
-    stopwatch_pause:
-      name: Stopwatch Pause
-    stopwatch_resume:
-      name: Stopwatch Resume
-    stopwatch_stop:
-      name: Stopwatch Stop
     timer_start:
       name: Timer Start
-    timer_pause:
-      name: Timer Pause
-    timer_resume:
-      name: Timer Resume
-    timer_stop:
-      name: Timer Stop
-    timer_minimize:
-      name: Timer Minimize
-    timer_show:
-      name: Timer Show
-    stopwatch_minimize:
-      name: Stopwatch Minimize
-    stopwatch_show:
-      name: Stopwatch Show
+    timing_pause:
+      name: Timing Pause
+    timing_resume:
+      name: Timing Resume
+    timing_stop:
+      name: Timing Stop
+    timing_minimize:
+      name: Timing Minimize
+    timing_show:
+      name: Timing Show
     mode:
       name: Timing Mode
     state:
       name: Timing State
+    visible:
+      name: Timing Visible
     stopwatch_elapsed:
       name: Stopwatch Elapsed
     timer_remaining:

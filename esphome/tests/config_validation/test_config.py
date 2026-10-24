@@ -466,9 +466,8 @@ for field in ('options', 'legacy_options'):
         self.assertIn("        duration_seconds: int\n      supports_response: status\n", text)
         self.assertEqual(text.count("TimerStart(duration_seconds)"), 1)
         self.assertIn("                  success: false\n", text)
-        actions = [f"{kind}_{verb}" for kind in ("stopwatch", "timer")
-                   for verb in ("start", "pause", "resume", "stop")]
-        actions += ["timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show"]
+        actions = ["stopwatch_start", "timer_start", "timing_pause", "timing_resume",
+                   "timing_stop", "timing_minimize", "timing_show"]
         for action in actions:
             self.assertEqual(text.count(f"    - action: {action}\n"), 1)
             name = action.replace("_", " ").title()
@@ -476,8 +475,11 @@ for field in ('options', 'legacy_options'):
             if action != "timer_start":
                 self.assertIn(f"    - action: {action}\n      then:\n"
                               f"        - pixoo64.{action}: pixoo_firmware\n", text)
-        for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start"):
+        old_actions = [f"{kind}_{verb}" for kind in ("stopwatch", "timer")
+                       for verb in ("pause", "resume", "stop", "minimize", "show")]
+        for old in (*old_actions, "stopwatch_reset", "timer_set", "timer_reset", "timing_start"):
             self.assertNotIn(old, text)
+        self.assertIn("    visible:\n      name: Timing Visible\n", text)
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
             cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
@@ -485,15 +487,17 @@ for field in ('options', 'legacy_options'):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
         for statement in (
-            "pixoo64::DashboardSelect();", "pixoo64::StopwatchPauseAction<>",
+            "pixoo64::DashboardSelect();", "pixoo64::TimingPauseAction<>",
             "pixoo_firmware->set_timer_duration(timing_timer_duration);",
             "pixoo_firmware->set_timing_mode(", "pixoo_firmware->set_timing_state(",
+            "pixoo_firmware->set_timing_visible(",
             "pixoo_firmware->set_stopwatch_elapsed(", "pixoo_firmware->set_timer_remaining(",
         ):
             self.assertIn(statement, generated)
-        self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 12)
-        adapter = (self.fixture / "esphome/components/pixoo64/firmware_app_component.cpp").read_text()
-        header = (self.fixture / "esphome/components/pixoo64/firmware_app_component.h").read_text()
+        self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 7)
+        visible = re.search(r"pixoo_firmware->set_timing_visible\((\w+)\);", generated)
+        self.assertIsNotNone(visible)
+        self.assertIn(f'App.register_binary_sensor({visible.group(1)}, "Timing Visible",', generated)
         for index, action in enumerate(actions):
             with self.subTest(action=action):
                 binding = re.search(
@@ -503,19 +507,17 @@ for field in ('options', 'legacy_options'):
                 command = "".join(word.title() for word in action.split("_"))
                 if action != "timer_start":
                     self.assertIn(f"pixoo64::{command}Action<>(pixoo_firmware);", generated)
-                if index >= 8:
-                    self.assertIn(f"case {index}: {command}(); break;", adapter)
-                    self.assertIn(f"PIXOO_TIMING_COMMAND({command})", adapter)
-                    self.assertIn(f"PIXOO_TIMING_ACTION({command})", header)
+
         self.assertNotIn("SelectDashboard(x)", generated)
 
-    def test_timing_visibility_buttons_required(self):
-        for action in ("timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show"):
+    def test_timing_controls_and_visible_required(self):
+        for action in ("stopwatch_start", "timer_start", "timing_pause", "timing_resume",
+                       "timing_stop", "timing_minimize", "timing_show", "visible"):
             with self.subTest(action=action), tempfile.TemporaryDirectory() as tempdir:
                 repo = Path(tempdir) / "repo"
                 shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
                 path = repo / "esphome/pixoo64.yaml"
-                name = action.replace("_", " ").title()
+                name = "Timing Visible" if action == "visible" else action.replace("_", " ").title()
                 path.write_text(path.read_text().replace(
                     f"    {action}:\n      name: {name}\n", "", 1))
                 result = self.run_config(repo)
@@ -525,18 +527,22 @@ for field in ('options', 'legacy_options'):
     def test_timing_action_validation(self):
         cases = [
             (f"        - pixoo64.{old}: pixoo_firmware\n", "Unable to find action")
-            for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start")
+            for old in ("stopwatch_reset", "timer_set", "timer_reset", "timing_start",
+                        *(f"{kind}_{verb}" for kind in ("stopwatch", "timer")
+                          for verb in ("pause", "resume", "stop", "minimize", "show")))
         ]
         cases += [
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n", "'duration_seconds' is a required option"),
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_ms: 1000\n", "duration_ms"),
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 0\n", "at least 1"),
             ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 6000\n", "at most 5999"),
+            ("        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 1.5\n", "integer"),
         ]
         cases += [
             (f"        - pixoo64.{action}:\n            id: pixoo_firmware\n"
              "            duration_seconds: 300\n", "duration_seconds")
-            for action in ("timer_minimize", "timer_show", "stopwatch_minimize", "stopwatch_show")
+            for action in ("stopwatch_start", "timing_pause", "timing_resume", "timing_stop",
+                           "timing_minimize", "timing_show")
         ]
         for replacement, message in cases:
             with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as tempdir:
@@ -544,24 +550,42 @@ for field in ('options', 'legacy_options'):
                 shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
                 path = repo / "esphome/pixoo64.yaml"
                 path.write_text(path.read_text().replace(
-                    "        - pixoo64.timer_pause: pixoo_firmware\n", replacement, 1))
+                    "        - pixoo64.timing_pause: pixoo_firmware\n", replacement, 1))
                 result = self.run_config(repo)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(message, result.stdout + result.stderr)
-        with tempfile.TemporaryDirectory() as tempdir:
-            repo = Path(tempdir) / "repo"
-            shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
-            path = repo / "esphome/pixoo64.yaml"
-            path.write_text(path.read_text().replace(
-                "        - pixoo64.timer_pause: pixoo_firmware\n",
-                "        - pixoo64.timer_start:\n            id: pixoo_firmware\n            duration_seconds: 300\n", 1))
-            result = subprocess.run(
-                [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
-                cwd=repo, text=True, capture_output=True, timeout=60, check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            generated = (repo / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
-            self.assertRegex(generated, r"->set_duration_seconds\(\[\]\(\) -> int32_t \{\s*return 300;")
+        for duration in ("1", "5999", "!lambda return 300;"):
+            with self.subTest(duration=duration), tempfile.TemporaryDirectory() as tempdir:
+                repo = Path(tempdir) / "repo"
+                shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
+                path = repo / "esphome/pixoo64.yaml"
+                path.write_text(path.read_text().replace(
+                    "        - pixoo64.timing_pause: pixoo_firmware\n",
+                    "        - pixoo64.timer_start:\n            id: pixoo_firmware\n"
+                    f"            duration_seconds: {duration}\n", 1))
+                result = subprocess.run(
+                    [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+                    cwd=repo, text=True, capture_output=True, timeout=60, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                generated = (repo / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+                expected = "300" if duration.startswith("!lambda") else duration
+                self.assertRegex(generated, rf"->set_duration_seconds\(\[\]\(\) -> int32_t \{{[^}}]*return {expected};")
+
+    def test_timing_rejects_per_kind_control_keys(self):
+        for kind in ("stopwatch", "timer"):
+            for verb in ("pause", "resume", "stop", "minimize", "show"):
+                old = f"{kind}_{verb}"
+                with self.subTest(key=old), tempfile.TemporaryDirectory() as tempdir:
+                    repo = Path(tempdir) / "repo"
+                    shutil.copytree(self.fixture, repo, ignore=shutil.ignore_patterns(".esphome"))
+                    path = repo / "esphome/pixoo64.yaml"
+                    anchor = "    timer_duration: timing_timer_duration\n"
+                    path.write_text(path.read_text().replace(
+                        anchor, anchor + f"    {old}:\n      name: Old Control\n", 1))
+                    result = self.run_config(repo)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"[{old}] is an invalid option", result.stdout + result.stderr)
 
     def test_production_config_has_all_clock_faces(self):
         text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")

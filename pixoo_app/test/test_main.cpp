@@ -2197,23 +2197,24 @@ static void test_timing_precision_pause_fresh_start_cap_and_reveal() {
   app.Tick(1234);
   TEST_ASSERT_EQUAL_UINT32(1134, app.timing().value_ms);
   TEST_ASSERT_EQUAL_UINT32(1134, renderer.last_timing.value_ms);
-  app.StopwatchPause(1240);
+  app.TimingPause(1240);
   app.Tick(2000);
   TEST_ASSERT_TRUE(app.timing().active());
   TEST_ASSERT_FALSE(app.timing().running());
   TEST_ASSERT_EQUAL_UINT32(1140, app.timing().value_ms);
-  app.StopwatchResume(2000);
-  app.StopwatchPause(2055);
+  app.TimingResume(2000);
+  app.TimingPause(2055);
   TEST_ASSERT_EQUAL_UINT32(1195, app.timing().value_ms);
   app.StopwatchStart(3000);
   TEST_ASSERT_EQUAL_UINT32(0, app.timing().value_ms);
   app.Tick(3000 + kStopwatchMaximumElapsedMs + 1);
   TEST_ASSERT_EQUAL_UINT32(kStopwatchMaximumElapsedMs, app.timing().value_ms);
   TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
-  app.StopwatchResume(3000 + kStopwatchMaximumElapsedMs + 2);
+  app.TimingResume(3000 + kStopwatchMaximumElapsedMs + 2);
   TEST_ASSERT_FALSE(app.timing().running());
-  app.StopwatchStop(3000 + kStopwatchMaximumElapsedMs + 3);
+  app.TimingStop(3000 + kStopwatchMaximumElapsedMs + 3);
   TEST_ASSERT_FALSE(app.timing().active());
+  TEST_ASSERT_FALSE(app.timing().visible());
   TEST_ASSERT_TRUE(app.timing().kind == TimingKind::kStopwatch);
   TEST_ASSERT_EQUAL_UINT32(kStopwatchMaximumElapsedMs, app.timing().value_ms);
   TEST_ASSERT_EQUAL(hides, renderer.hide_base_calls);
@@ -2243,16 +2244,16 @@ static void test_timing_temporary_wake_user_override_and_off_wrap() {
   app.TogglePower(0x31u);
   TEST_ASSERT_TRUE(app.logical_light().on);
   app.Tick(0x31u);
-  app.StopwatchStop(0x40u);
+  app.TimingStop(0x40u);
   TEST_ASSERT_TRUE(panel.power_on);
   app.SetUserLight(LightState{false, 0.5f}, 100);
   app.StopwatchStart(110);
   app.Tick(110);
-  app.StopwatchStop(120);
+  app.TimingStop(120);
   TEST_ASSERT_FALSE(panel.power_on);
 }
 
-static void test_timing_replacement_matching_kind_invalid_and_restart() {
+static void test_timing_replacement_shared_controls_invalid_and_restart() {
   std::vector<std::string> events;
   RecordingPanel panel(&events);
   RecordingRenderer renderer(&events);
@@ -2264,29 +2265,27 @@ static void test_timing_replacement_matching_kind_invalid_and_restart() {
   TEST_ASSERT_FALSE(app.TimerStart(6000, 100));
   TEST_ASSERT_FALSE(app.TimerStart(-1, 100));
   TEST_ASSERT_EQUAL_UINT32(40, app.timing().value_ms);
-  app.TimerPause(100);
-  app.TimerResume(100);
-  app.TimerStop(100);
-  TEST_ASSERT_EQUAL_UINT32(40, app.timing().value_ms);
+  app.TimingPause(100);
+  TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
+  TEST_ASSERT_EQUAL_UINT32(90, app.timing().value_ms);
+  app.TimingResume(100);
+  TEST_ASSERT_TRUE(app.timing().running());
   TEST_ASSERT_TRUE(app.TimerStart(2, 100));
   app.Tick(600);
   TEST_ASSERT_EQUAL_UINT32(1500, app.timing().value_ms);
-  app.StopwatchPause(700);
-  app.StopwatchStop(700);
-  TEST_ASSERT_EQUAL_UINT32(1500, app.timing().value_ms);
-  app.TimerPause(700);
+  app.TimingPause(700);
   app.Tick(900);
   TEST_ASSERT_EQUAL_UINT32(1400, app.timing().value_ms);
-  app.TimerResume(1000);
+  app.TimingResume(1000);
   app.Tick(1101);
   TEST_ASSERT_EQUAL_UINT32(1299, app.timing().value_ms);
   app.TimerStart(2, 1200);
   TEST_ASSERT_EQUAL_UINT32(2000, app.timing().value_ms);
-  app.TimerStop(1300);
+  app.TimingStop(1300);
   TEST_ASSERT_EQUAL_UINT32(1900, app.timing().value_ms);
   TEST_ASSERT_EQUAL_UINT32(2000, app.timing().duration_ms);
   TEST_ASSERT_FALSE(app.timing().active());
-  app.TimerResume(1400);
+  app.TimingResume(1400);
   TEST_ASSERT_FALSE(app.timing().active());
   app.StopwatchStart(1500);
   TEST_ASSERT_EQUAL_UINT32(0, app.timing().duration_ms);
@@ -2331,7 +2330,7 @@ static void test_timer_expiry_preempts_overlay_wakes_latches_and_bounds_alarm() 
   TEST_ASSERT_EQUAL(bounded_plays, sound.played.size());
   TEST_ASSERT_EQUAL(stops, sound.stop_calls);
   TEST_ASSERT_TRUE(app.timing().active());
-  app.TimerStop(60985u);
+  app.TimingStop(60985u);
   TEST_ASSERT_FALSE(app.timing().active());
   TEST_ASSERT_FALSE(panel.power_on);
 }
@@ -2398,7 +2397,7 @@ static void test_timing_brightness_gestures_capture_context() {
   app.BrightnessButtonReleased(6300);
   TEST_ASSERT_TRUE(app.timing().active());
   app.BrightnessButtonPressed(6400);
-  app.TimerStop(6500);
+  app.TimingStop(6500);
   app.BrightnessButtonReleased(8400);
   TEST_ASSERT_TRUE(solar.published.empty());
   app.TimerStart(1, 8500);
@@ -2453,7 +2452,7 @@ static void test_timing_wake_brightness_and_overlay_do_not_reinitialize() {
   TEST_ASSERT_FALSE(app.solar_brightness_enabled());
   app.SetUserLight(LightState{true, 0.6f}, 17);
   TEST_ASSERT_EQUAL(powers, panel.power_calls);
-  app.StopwatchStop(18);
+  app.TimingStop(18);
   TEST_ASSERT_TRUE(panel.power_on);
 }
 
@@ -2478,10 +2477,10 @@ static void test_timing_cadence_microphone_and_overlay_dto() {
   app.Tick(44);
   TEST_ASSERT_TRUE(renderer.last_timing.kind == TimingKind::kStopwatch);
   TEST_ASSERT_EQUAL_UINT32(34, renderer.last_timing.value_ms);
-  app.StopwatchPause(45);
+  app.TimingPause(45);
   app.Tick(45);
   TEST_ASSERT_TRUE(renderer.last_timing.phase == TimingPhase::kPaused);
-  app.StopwatchStop(46);
+  app.TimingStop(46);
   app.Tick(46);
   TEST_ASSERT_TRUE(microphone.calls.back());
   TEST_ASSERT_FALSE(renderer.last_timing.active());
@@ -2501,9 +2500,9 @@ static void test_timer_alarm_full_repeat_window_and_matching_sound_owner() {
   app.TimerStart(1, 10);
   app.Tick(1010);
   const int stops = sound.stop_calls;
-  app.StopwatchStop(1011);
-  app.TimerPause(1011);
-  app.TimerResume(1011);
+  app.TimingPause(1011);
+  app.TimingResume(1011);
+  TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kFinished);
   TEST_ASSERT_EQUAL(stops, sound.stop_calls);
   for (uint32_t now = 4010; now < 31010; now += 3000)
     app.Tick(now);
@@ -2565,7 +2564,7 @@ static void test_overdue_timer_stop_does_not_wake_or_announce_expiry() {
         app.SetUserLight(LightState{false, 0.4f}, 20);
       const auto power_ons = std::count(events.begin(), events.end(), "power:on");
       const size_t plays = sound.played.size();
-      app.TimerStop(1011);
+      app.TimingStop(1011);
       TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kIdle);
       TEST_ASSERT_EQUAL_UINT32(0, app.timing().value_ms);
       TEST_ASSERT_EQUAL(power_ons, std::count(events.begin(), events.end(), "power:on"));
@@ -2596,7 +2595,7 @@ static void test_timer_hidden_expiry_wakes_without_sound_player() {
   TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kFinished);
   app.Tick(1101);
   TEST_ASSERT_TRUE(renderer.last_timing.phase == TimingPhase::kFinished);
-  app.TimerStop(1200);
+  app.TimingStop(1200);
   TEST_ASSERT_FALSE(panel.power_on);
 }
 
@@ -2646,7 +2645,7 @@ static void test_timing_button_overlay_context_and_no_closed_session_fallthrough
   TEST_ASSERT_TRUE(brightness != app.logical_light().brightness);
   app.ClearOverlayQueue(90);
   app.BrightnessButtonPressed(100);
-  app.StopwatchStop(101);
+  app.TimingStop(101);
   app.BrightnessButtonReleased(2100);
   TEST_ASSERT_TRUE(solar.published.empty());
   app.StopwatchStart(2200);
@@ -2666,14 +2665,8 @@ static void test_timing_minimize_preserves_session_and_dashboard_policy() {
     FirmwareApp app(panel, renderer, nullptr, &microphone, nullptr,
                     FirmwareAppConfig{0, 0, 0});
     StartRunning(&app);
-    const auto minimize = [&](uint32_t now) {
-      if (timer) app.TimerMinimize(now); else app.StopwatchMinimize(now);
-    };
-    const auto show = [&](uint32_t now) {
-      if (timer) app.TimerShow(now); else app.StopwatchShow(now);
-    };
     if (timer) app.TimerStart(10, 10); else app.StopwatchStart(10);
-    minimize(110);
+    app.TimingMinimize(110);
     TEST_ASSERT_TRUE(app.timing().active());
     TEST_ASSERT_TRUE(app.timing().running());
     TEST_ASSERT_FALSE(app.timing().visible());
@@ -2686,29 +2679,36 @@ static void test_timing_minimize_preserves_session_and_dashboard_policy() {
     TEST_ASSERT_EQUAL(renders, renderer.render_base_calls.size());
     app.Tick(1210);
     TEST_ASSERT_EQUAL(renders + 1, renderer.render_base_calls.size());
-    show(1220);
+    app.TimingShow(1220);
     app.Tick(1220);
     TEST_ASSERT_TRUE(app.timing().visible());
     TEST_ASSERT_FALSE(microphone.calls.back());
     TEST_ASSERT_EQUAL_UINT32(timer ? 8790 : 1210, app.timing().value_ms);
-    if (timer) app.TimerPause(1230); else app.StopwatchPause(1230);
+    app.TimingPause(1230);
     const uint32_t paused = app.timing().value_ms;
-    minimize(1240);
+    app.TimingMinimize(1240);
     app.SelectDashboard("other");
     app.Tick(1300);
     TEST_ASSERT_FALSE(microphone.calls.back());
     TEST_ASSERT_EQUAL_STRING("other", app.selected_dashboard().id.c_str());
-    show(1400);
+    app.TimingShow(1400);
     TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
     TEST_ASSERT_EQUAL_UINT32(paused, app.timing().value_ms);
-    minimize(1500);
+    app.TimingMinimize(1500);
     app.Tick(1600);
     TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
     TEST_ASSERT_EQUAL_UINT32(paused, app.timing().value_ms);
+    app.TimingResume(1610);
+    app.Tick(1620);
+    TEST_ASSERT_TRUE(app.timing().running());
+    TEST_ASSERT_EQUAL_UINT32(timer ? paused - 10 : paused + 10,
+                             app.timing().value_ms);
+    app.TimingStop(1630);
+    TEST_ASSERT_FALSE(app.timing().visible());
   }
 }
 
-static void test_timing_minimize_kind_idle_and_idempotence() {
+static void test_timing_minimize_idle_and_idempotence() {
   std::vector<std::string> events;
   RecordingPanel panel(&events);
   RecordingRenderer renderer(&events);
@@ -2716,37 +2716,40 @@ static void test_timing_minimize_kind_idle_and_idempotence() {
                   FirmwareAppConfig{0, 0, 0});
   StartRunning(&app);
   size_t count = events.size();
-  app.TimerMinimize(1); app.TimerShow(1);
-  app.StopwatchMinimize(1); app.StopwatchShow(1);
+  app.TimingPause(1); app.TimingResume(1); app.TimingStop(1);
+  app.TimingMinimize(1); app.TimingShow(1);
   TEST_ASSERT_EQUAL(count, events.size());
   app.StopwatchStart(10);
+  app.TimingMinimize(20); app.TimingShow(20);
+  TEST_ASSERT_TRUE(app.timing().visible());
+  TEST_ASSERT_EQUAL_UINT32(10, app.timing().value_ms);
+  app.TimingMinimize(30);
   count = events.size();
-  app.TimerMinimize(20); app.TimerShow(20);
+  app.TimingMinimize(40);
   TEST_ASSERT_EQUAL(count, events.size());
-  TEST_ASSERT_EQUAL_UINT32(0, app.timing().value_ms);
-  app.StopwatchMinimize(30);
-  count = events.size();
-  app.StopwatchMinimize(40);
-  TEST_ASSERT_EQUAL(count, events.size());
-  app.StopwatchShow(50);
+  app.TimingShow(50);
   const int initializes = panel.initialize_calls;
-  app.StopwatchShow(60);
+  app.TimingShow(60);
   TEST_ASSERT_EQUAL(initializes, panel.initialize_calls);
   TEST_ASSERT_EQUAL_UINT32(50, app.timing().value_ms);
-  app.StopwatchStop(70);
+  app.TimingStop(70);
+  TEST_ASSERT_FALSE(app.timing().visible());
   count = events.size();
-  app.StopwatchShow(80); app.StopwatchMinimize(80);
+  app.TimingPause(80); app.TimingResume(80); app.TimingStop(80);
+  app.TimingShow(80); app.TimingMinimize(80);
   TEST_ASSERT_EQUAL(count, events.size());
   app.TimerStart(10, 100);
-  count = events.size();
-  app.StopwatchMinimize(110); app.StopwatchShow(110);
-  TEST_ASSERT_EQUAL(count, events.size());
-  app.TimerMinimize(120);
+  app.TimingMinimize(110); app.TimingShow(110);
+  TEST_ASSERT_TRUE(app.timing().visible());
+  TEST_ASSERT_EQUAL_UINT32(9990, app.timing().value_ms);
+  app.TimingMinimize(120);
   app.TimerStart(10, 130);
   TEST_ASSERT_TRUE(app.timing().visible());
-  app.TimerStop(140);
+  app.TimingStop(140);
+  TEST_ASSERT_FALSE(app.timing().visible());
   count = events.size();
-  app.TimerShow(150); app.TimerMinimize(150);
+  app.TimingPause(150); app.TimingResume(150); app.TimingStop(150);
+  app.TimingShow(150); app.TimingMinimize(150);
   TEST_ASSERT_EQUAL(count, events.size());
 }
 
@@ -2761,12 +2764,12 @@ static void test_timing_minimize_off_wake_and_overlay_restoration() {
     TEST_ASSERT_TRUE(app.Start(0, LightState{false, 0.4f}, "text"));
     app.StopwatchStart(10);
     app.Tick(10);
-    app.StopwatchPause(20);
-    app.StopwatchMinimize(30);
+    app.TimingPause(20);
+    app.TimingMinimize(30);
     TEST_ASSERT_FALSE(panel.power_on);
     TEST_ASSERT_TRUE(app.phase() == FirmwareApp::Phase::kOff);
     TEST_ASSERT_FALSE(app.logical_light().on);
-    app.StopwatchShow(40);
+    app.TimingShow(40);
     app.Tick(40);
     TEST_ASSERT_TRUE(panel.power_on);
     TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kPaused);
@@ -2775,7 +2778,7 @@ static void test_timing_minimize_off_wake_and_overlay_restoration() {
     else app.Notify(Request("cover", 1000), 50);
     app.Tick(50);
     const int powers = panel.power_calls;
-    app.StopwatchMinimize(60);
+    app.TimingMinimize(60);
     TEST_ASSERT_TRUE(panel.power_on);
     TEST_ASSERT_EQUAL(powers, panel.power_calls);
     TEST_ASSERT_EQUAL(1, app.overlay_queue_size());
@@ -2791,14 +2794,14 @@ static void test_timing_minimize_off_wake_and_overlay_restoration() {
     app.Tick(80);
     app.Tick(81);
     const int initialized = panel.initialize_calls;
-    app.StopwatchShow(90);
+    app.TimingShow(90);
     TEST_ASSERT_EQUAL(initialized, panel.initialize_calls);
     TEST_ASSERT_EQUAL(0, app.overlay_queue_size());
     TEST_ASSERT_TRUE(panel.power_on);
     TEST_ASSERT_EQUAL_STRING("brightness:40", events.back().c_str());
     TEST_ASSERT_TRUE(sink.published.empty());
     app.SetUserLight(LightState{true, 0.4f}, 100);
-    app.StopwatchMinimize(110);
+    app.TimingMinimize(110);
     TEST_ASSERT_TRUE(panel.power_on);
     TEST_ASSERT_TRUE(app.logical_light().on);
   }
@@ -2815,11 +2818,11 @@ static void test_minimized_timer_completion_foreground_and_alarm() {
     TEST_ASSERT_TRUE(app.Start(0, LightState{initially_on, 0.4f}, "text"));
     app.TimerStart(1, 10);
     app.Tick(10);
-    app.TimerMinimize(20);
+    app.TimingMinimize(20);
     app.Notify(Request("cover", 10000), 30);
     app.Tick(30);
     app.Tick(31);
-    app.TimerMinimize(1010);
+    app.TimingMinimize(1010);
     app.Tick(1010);
     TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kFinished);
     TEST_ASSERT_TRUE(app.timing().visible());
@@ -2827,15 +2830,16 @@ static void test_minimized_timer_completion_foreground_and_alarm() {
     TEST_ASSERT_EQUAL(0, app.overlay_queue_size());
     TEST_ASSERT_TRUE(sound.played.back() == Sound::kAlarm1);
     const size_t count = events.size();
-    app.TimerMinimize(1020);
+    app.TimingMinimize(1020);
     TEST_ASSERT_EQUAL(count, events.size());
     app.Tick(4010);
     TEST_ASSERT_EQUAL(2, std::count(sound.played.begin(), sound.played.end(), Sound::kAlarm1));
-    app.TimerStop(4020);
+    app.TimingStop(4020);
+    TEST_ASSERT_FALSE(app.timing().visible());
     TEST_ASSERT_EQUAL(initially_on, panel.power_on);
     // A minimize command at the deadline must not hide completion either.
     app.TimerStart(1, 5000);
-    app.TimerMinimize(6000);
+    app.TimingMinimize(6000);
     TEST_ASSERT_TRUE(app.timing().visible());
     TEST_ASSERT_TRUE(app.timing().phase == TimingPhase::kFinished);
   }
@@ -2850,7 +2854,7 @@ static void test_timing_minimize_button_contexts_and_live_overlays() {
   StartRunning(&app);
   app.StopwatchStart(10);
   app.BrightnessButtonPressed(20);
-  app.StopwatchMinimize(30);
+  app.TimingMinimize(30);
   const float brightness = app.logical_light().brightness;
   app.BrightnessButtonReleased(80);
   TEST_ASSERT_TRUE(app.timing().running());
@@ -2861,18 +2865,18 @@ static void test_timing_minimize_button_contexts_and_live_overlays() {
   TEST_ASSERT_TRUE(brightness != app.logical_light().brightness);
   const float adjusted = app.logical_light().brightness;
   app.BrightnessButtonPressed(200);
-  app.StopwatchShow(210);
+  app.TimingShow(210);
   app.BrightnessButtonReleased(250);
   TEST_ASSERT_TRUE(app.timing().running());
   TEST_ASSERT_EQUAL_FLOAT(adjusted, app.logical_light().brightness);
   app.BrightnessButtonPressed(300);
-  app.StopwatchMinimize(310);
-  app.StopwatchShow(320);
+  app.TimingMinimize(310);
+  app.TimingShow(320);
   app.BrightnessButtonReleased(350);
   TEST_ASSERT_TRUE(app.timing().running());
   app.React(Reaction::kLove, 400);
   app.Tick(400);
-  app.StopwatchMinimize(410);
+  app.TimingMinimize(410);
   app.Tick(410);
   TEST_ASSERT_TRUE(renderer.render_base_calls.back());
   TEST_ASSERT_TRUE(renderer.base_visible_calls.back());
@@ -2880,10 +2884,10 @@ static void test_timing_minimize_button_contexts_and_live_overlays() {
   TEST_ASSERT_EQUAL(1, app.overlay_queue_size());
   app.ClearOverlayQueue(420);
   app.Notify(Request("cover", 1000), 430);
-  app.StopwatchShow(440);
+  app.TimingShow(440);
   app.Notify(Request("cover", 1000), 450);
   app.Tick(450);
-  app.StopwatchMinimize(460);
+  app.TimingMinimize(460);
   app.Tick(460);
   TEST_ASSERT_TRUE(renderer.render_base_calls.back());
   TEST_ASSERT_TRUE(renderer.render_overlay_calls.back());
@@ -3220,12 +3224,12 @@ int main(int, char **) {
   RUN_TEST(test_reboot_uses_typed_system_port);
   RUN_TEST(test_factory_reset_uses_typed_system_port);
   RUN_TEST(test_timing_minimize_preserves_session_and_dashboard_policy);
-  RUN_TEST(test_timing_minimize_kind_idle_and_idempotence);
+  RUN_TEST(test_timing_minimize_idle_and_idempotence);
   RUN_TEST(test_timing_minimize_off_wake_and_overlay_restoration);
   RUN_TEST(test_minimized_timer_completion_foreground_and_alarm);
   RUN_TEST(test_timing_minimize_button_contexts_and_live_overlays);
   RUN_TEST(test_timing_precision_pause_fresh_start_cap_and_reveal);
-  RUN_TEST(test_timing_replacement_matching_kind_invalid_and_restart);
+  RUN_TEST(test_timing_replacement_shared_controls_invalid_and_restart);
   RUN_TEST(test_timing_temporary_wake_user_override_and_off_wrap);
   RUN_TEST(test_timer_expiry_preempts_overlay_wakes_latches_and_bounds_alarm);
   RUN_TEST(test_timing_boot_suppression_and_overlay_restore);

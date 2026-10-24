@@ -229,17 +229,12 @@ class FirmwareApp {
 
   void SelectDashboard(const std::string &dashboard_id);
   void StopwatchStart(uint32_t now_ms);
-  void StopwatchPause(uint32_t now_ms);
-  void StopwatchResume(uint32_t now_ms);
-  void StopwatchStop(uint32_t now_ms);
-  void StopwatchMinimize(uint32_t now_ms);
-  void StopwatchShow(uint32_t now_ms);
   bool TimerStart(int32_t duration_seconds, uint32_t now_ms);
-  void TimerPause(uint32_t now_ms);
-  void TimerResume(uint32_t now_ms);
-  void TimerStop(uint32_t now_ms);
-  void TimerMinimize(uint32_t now_ms);
-  void TimerShow(uint32_t now_ms);
+  void TimingPause(uint32_t now_ms);
+  void TimingResume(uint32_t now_ms);
+  void TimingStop(uint32_t now_ms);
+  void TimingMinimize(uint32_t now_ms);
+  void TimingShow(uint32_t now_ms);
   const TimingSnapshot &timing() const { return this->timing_; }
   // Renders and force-presents the update frame synchronously before OTA
   // proceeds. Returns false while the panel is not ready or presentation fails.
@@ -277,11 +272,6 @@ class FirmwareApp {
                               uint32_t duration_ms);
   void AdvanceTiming_(uint32_t now_ms, bool announce_expiry = true);
   void OpenTiming_(uint32_t now_ms);
-  void MinimizeTiming_(TimingKind kind, uint32_t now_ms);
-  void ShowTiming_(TimingKind kind, uint32_t now_ms);
-  void StopTiming_(TimingKind kind, uint32_t now_ms);
-  void PauseTiming_(TimingKind kind, uint32_t now_ms);
-  void ResumeTiming_(TimingKind kind, uint32_t now_ms);
   enum class SoundOwner { kNone, kBoot, kOverlay, kTimer };
   void PlaySound_(Sound sound, SoundOwner owner);
   void StopSound_();
