@@ -1,6 +1,7 @@
 <h1 align="center">Pixoo64 replacement firmware</h1>
 
 <p align="center">
+  <a href="https://conventionalcommits.org"><img src="https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg" alt="Conventional Commits" /></a>
   <img src="https://img.shields.io/github/license/simplyRoba/pixoo-firmware?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Fblob%2Fmain%2FLICENSE" alt="GitHub License" />
   <img src="https://img.shields.io/github/actions/workflow/status/simplyRoba/pixoo-firmware/firmware-ci.yml?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Factions%2Fworkflows%2Ffirmware-ci.yml%3Fquery%3Dbranch%253Amain" alt="GitHub Workflow Status" />
   <a href="https://github.com/simplyRoba/pixoo-firmware/issues"><img src="https://img.shields.io/github/issues/simplyRoba/pixoo-firmware?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Fissues" alt="GitHub issues" /></a>
