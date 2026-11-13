@@ -1,4 +1,4 @@
-# Pixoo64 replacement firmware
+<h1 align="center">Pixoo64 replacement firmware</h1>
 
 <p align="center">
   <img src="https://img.shields.io/github/license/simplyRoba/pixoo-firmware?link=https%3A%2F%2Fgithub.com%2FsimplyRoba%2Fpixoo-firmware%2Fblob%2Fmain%2FLICENSE" alt="GitHub License" />
