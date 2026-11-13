@@ -149,6 +149,8 @@ api:
   id: panel_api
   reboot_timeout: 0s
   homeassistant_states: true
+  on_client_connected:
+    - lambda: id(panel_now_playing).OnApiClientConnected(client_info);
   encryption:
     key: !secret api_encryption_key
   actions:

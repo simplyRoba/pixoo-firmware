@@ -26,6 +26,9 @@ namespace esphome::pixoo64::adapters {
 namespace {
 const char *const TAG = "pixoo64.now_playing";
 constexpr uint32_t kInitialConnectedGraceMs = 5000;
+constexpr uint32_t kInitialSnapshotQuietMs =
+    pixoo::now_playing::NowPlayingMetadataPolicy::kQuietWindowMs;
+constexpr uint32_t kInitialSnapshotMaxDelayMs = 5000;
 constexpr int64_t kTimestampFutureToleranceSeconds = 5;
 constexpr int64_t kTimestampOldLimitSeconds = 7 * 24 * 60 * 60;
 constexpr uint64_t kArtworkIdentityDomain = 0x415254574f524b55ull; // ARTWORKU
@@ -376,6 +379,8 @@ void HomeAssistantMediaSource::ResetState_(uint32_t now_ms) {
   this->initial_root_seen_ = false;
   this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
   this->initial_fields_seen_ = 0;
+  this->initial_root_received_ms_ = 0;
+  this->initial_last_update_ms_ = 0;
   this->ClearDesiredArtwork_();
   this->ClearPositionTracking_();
   this->content_id_observed_ = false;
@@ -444,21 +449,30 @@ void HomeAssistantMediaSource::RegisterSubscriptions_() {
   this->subscriptions_registered_ = true;
 }
 
+void HomeAssistantMediaSource::OnApiClientConnected(
+    const std::string &client_info) {
+  if (client_info == "Home Assistant" ||
+      client_info.compare(0, 15, "Home Assistant ") == 0)
+    this->SetTransportConnected_(false, millis());
+}
+
 void HomeAssistantMediaSource::BeginInitialSnapshot_() {
   if (!this->configured_)
     return;
   const uint32_t now_ms = millis();
   this->SetTransportConnected_(true, now_ms);
+  if (this->initial_snapshot_started_ || this->initial_snapshot_complete_)
+    return;
   this->initial_snapshot_started_ = true;
-  this->initial_snapshot_complete_ = false;
-  this->initial_root_seen_ = false;
-  this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
-  this->initial_fields_seen_ = 0;
+  this->initial_last_update_ms_ = now_ms;
 }
 
 void HomeAssistantMediaSource::MarkInitialField_(InitialField field) {
-  if (this->initial_snapshot_started_ && !this->initial_snapshot_complete_)
+  this->BeginInitialSnapshot_();
+  if (this->initial_snapshot_started_ && !this->initial_snapshot_complete_) {
     this->initial_fields_seen_ |= static_cast<uint8_t>(field);
+    this->initial_last_update_ms_ = millis();
+  }
 }
 
 void HomeAssistantMediaSource::CompleteInitialSnapshot_() {
@@ -507,6 +521,8 @@ void HomeAssistantMediaSource::SetTransportConnected_(bool connected,
     this->initial_root_seen_ = false;
     this->initial_root_state_ = pixoo::now_playing::PlaybackState::kUnknown;
     this->initial_fields_seen_ = 0;
+    this->initial_root_received_ms_ = 0;
+    this->initial_last_update_ms_ = 0;
   }
   this->connected_grace_active_ = this->configured_ && connected;
   this->connected_since_ms_ = now_ms;
@@ -518,6 +534,10 @@ void HomeAssistantMediaSource::loop() {
       this->api_server_ != nullptr &&
       this->api_server_->is_connected_with_state_subscription();
   this->SetTransportConnected_(connected, now_ms);
+  if (this->initial_snapshot_started_ && this->initial_root_seen_ &&
+      (now_ms - this->initial_last_update_ms_ >= kInitialSnapshotQuietMs ||
+       now_ms - this->initial_root_received_ms_ >= kInitialSnapshotMaxDelayMs))
+    this->CompleteInitialSnapshot_();
   if (this->connected_grace_active_ &&
       now_ms - this->connected_since_ms_ >= kInitialConnectedGraceMs) {
     this->connected_grace_active_ = false;
@@ -994,10 +1014,15 @@ bool HomeAssistantMediaSource::FetchArtwork_(const char *url, size_t url_size,
 }
 
 void HomeAssistantMediaSource::OnSubscriptionRoot_(StringRef value) {
+  this->BeginInitialSnapshot_();
   if (this->initial_snapshot_started_) {
+    const uint32_t now_ms = millis();
     this->initial_root_state_ =
         pixoo::now_playing::ParsePlaybackState(value.c_str(), value.size());
+    if (!this->initial_root_seen_)
+      this->initial_root_received_ms_ = now_ms;
     this->initial_root_seen_ = true;
+    this->initial_last_update_ms_ = now_ms;
     return;
   }
   this->OnRoot_(value);

@@ -53,6 +53,7 @@ public:
   bool Configure(const std::string &entity_id,
                  const std::string &home_assistant_url);
   bool Clear();
+  void OnApiClientConnected(const std::string &client_info);
 
   pixoo::now_playing::NowPlayingData Data() const override;
   bool SnapshotSettled() const override;
@@ -136,6 +137,8 @@ protected:
   uint8_t initial_fields_seen_{0};
   pixoo::now_playing::PlaybackState initial_root_state_{
       pixoo::now_playing::PlaybackState::kUnknown};
+  uint32_t initial_root_received_ms_{0};
+  uint32_t initial_last_update_ms_{0};
   uint32_t connected_since_ms_{0};
   uint32_t config_revision_{0};
   uint64_t desired_artwork_identity_{0};

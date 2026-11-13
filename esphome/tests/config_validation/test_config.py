@@ -206,6 +206,16 @@ for field in ('options', 'legacy_options'):
             (build / "sdkconfig.pixoo64.esphomeinternal").read_text(),
         )
 
+    def test_now_playing_api_session_callback_codegen(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
+            cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        generated = (self.fixture / "esphome/.esphome/build/pixoo64/src/main.cpp").read_text()
+        self.assertIn("panel_now_playing->OnApiClientConnected(client_info);", generated)
+        self.assertIn("panel_api->get_client_connected_trigger()", generated)
+
     def test_pixel_operator_glyph_inventory_matches_fonts_and_sanitizer(self):
         inventory_path = self.fixture / "esphome/fonts/pixel_operator_glyphs.yaml"
         inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
