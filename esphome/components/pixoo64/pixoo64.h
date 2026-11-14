@@ -1,7 +1,11 @@
 #pragma once
 
 #include <driver/spi_master.h>
+#include <esp_attr.h>
 
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <cstddef>
 #include <cstdint>
 
@@ -20,6 +24,9 @@ class Pixoo64Panel final : public Component, public pixoo::PanelPort {
 
   void setup() override;
   void loop() override;
+  bool WorkerSetup();
+  void WorkerLoop();
+  void WorkerShutdown();
   void on_shutdown() override;
   bool teardown() override;
   void on_powerdown() override;
@@ -29,24 +36,24 @@ class Pixoo64Panel final : public Component, public pixoo::PanelPort {
   }
 
   void set_power_output(output::FloatOutput *power_output) {
-    this->power_output_ = power_output;
+    if (this->CanConfigure_()) this->power_output_ = power_output;
   }
-  void set_spi_mosi_pin(int pin) { this->spi_mosi_pin_ = pin; }
-  void set_spi_sclk_pin(int pin) { this->spi_sclk_pin_ = pin; }
-  void set_spi_cs_pin(int pin) { this->spi_cs_pin_ = pin; }
-  void set_uart_rx_pin(int pin) { this->uart_rx_pin_ = pin; }
-  void set_spi_clock_hz(uint32_t clock_hz) { this->spi_clock_hz_ = clock_hz; }
-  void set_uart_baud(uint32_t baud) { this->uart_baud_ = baud; }
+  void set_spi_mosi_pin(int pin) { if (this->CanConfigure_()) this->spi_mosi_pin_ = pin; }
+  void set_spi_sclk_pin(int pin) { if (this->CanConfigure_()) this->spi_sclk_pin_ = pin; }
+  void set_spi_cs_pin(int pin) { if (this->CanConfigure_()) this->spi_cs_pin_ = pin; }
+  void set_uart_rx_pin(int pin) { if (this->CanConfigure_()) this->uart_rx_pin_ = pin; }
+  void set_spi_clock_hz(uint32_t clock_hz) { if (this->CanConfigure_()) this->spi_clock_hz_ = clock_hz; }
+  void set_uart_baud(uint32_t baud) { if (this->CanConfigure_()) this->uart_baud_ = baud; }
   void set_soft_start_duration_ms(uint32_t duration_ms) {
-    this->soft_start_duration_ms_ = duration_ms;
+    if (this->CanConfigure_()) this->soft_start_duration_ms_ = duration_ms;
   }
   void set_soft_start_period_ms(uint32_t period_ms) {
-    this->soft_start_period_ms_ = period_ms;
+    if (this->CanConfigure_()) this->soft_start_period_ms_ = period_ms;
   }
 
   void SetPower(bool on) override;
   uint32_t LastPowerOnDelayMs() const override {
-    return this->last_power_on_delay_ms_;
+    return this->OnOwnerTask_() ? this->last_power_on_delay_ms_ : 0;
   }
   bool Initialize() override;
   void SetBrightness(float brightness) override;
@@ -64,6 +71,24 @@ class Pixoo64Panel final : public Component, public pixoo::PanelPort {
     kFailed,
   };
 
+  bool CanConfigure_() const {
+    return this->owner_task_.load(std::memory_order_acquire) == nullptr;
+  }
+  bool OnOwnerTask_() const {
+    const auto owner = this->owner_task_.load(std::memory_order_acquire);
+    return owner != nullptr && owner == xTaskGetCurrentTaskHandle();
+  }
+  static void IRAM_ATTR spi_post_callback_(spi_transaction_t *transaction);
+  bool queue_frame_();
+  bool reap_frame_(bool wait);
+  [[noreturn]] void transport_fatal_();
+  std::atomic<TaskHandle_t> owner_task_{nullptr};
+  std::atomic<bool> resources_released_{true};
+  std::atomic<bool> worker_failed_{false};
+  spi_transaction_t *transactions_{nullptr};
+  size_t queued_{0};
+  size_t reaped_{0};
+  esp_err_t completion_gpio_error_{ESP_OK};
   bool IsOperational_() const;
   void FailSetup_(const char *operation, esp_err_t error);
   void StopOperations_();

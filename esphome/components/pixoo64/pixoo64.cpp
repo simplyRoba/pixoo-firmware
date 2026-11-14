@@ -5,6 +5,7 @@
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <utility>
@@ -47,12 +48,11 @@ void LogIdfFailure(const char *operation, esp_err_t error) {
 }  // namespace
 
 Pixoo64Panel::~Pixoo64Panel() {
-  this->StopOperations_();
-  this->ReleaseResources_();
+  if (!this->resources_released_.load(std::memory_order_acquire)) this->transport_fatal_();
 }
 
 bool Pixoo64Panel::IsOperational_() const {
-  return this->lifecycle_state_ == LifecycleState::kReady && !this->is_failed();
+  return this->lifecycle_state_ == LifecycleState::kReady;
 }
 
 void Pixoo64Panel::FailSetup_(const char *operation, esp_err_t error) {
@@ -60,10 +60,12 @@ void Pixoo64Panel::FailSetup_(const char *operation, esp_err_t error) {
   this->StopOperations_();
   this->ReleaseResources_();
   this->lifecycle_state_ = LifecycleState::kFailed;
-  this->mark_failed();
+  this->worker_failed_.store(true, std::memory_order_release);
 }
 
 void Pixoo64Panel::StopOperations_() {
+  if (!this->OnOwnerTask_()) return;
+  this->reap_frame_(true);
   if (this->lifecycle_state_ != LifecycleState::kFailed &&
       this->lifecycle_state_ != LifecycleState::kReleased) {
     this->lifecycle_state_ = LifecycleState::kStopping;
@@ -75,6 +77,7 @@ void Pixoo64Panel::StopOperations_() {
 }
 
 void Pixoo64Panel::ReleaseResources_() {
+  if (!this->OnOwnerTask_()) return;
   this->StopOperations_();
 
   bool spi_device_released = !this->spi_device_added_;
@@ -113,6 +116,9 @@ void Pixoo64Panel::ReleaseResources_() {
       !this->uart_driver_installed_ && !this->transfer_storage_acquired_) {
     this->lifecycle_state_ = LifecycleState::kReleased;
   }
+  if (!this->spi_device_added_ && !this->spi_bus_initialized_ &&
+      !this->uart_driver_installed_ && !this->transfer_storage_acquired_)
+    this->resources_released_.store(true, std::memory_order_release);
 }
 
 bool Pixoo64Panel::allocate_transfer_buffers_() {
@@ -123,7 +129,8 @@ bool Pixoo64Panel::allocate_transfer_buffers_() {
       heap_caps_malloc(this->full_transaction_size_, kPanelDmaCaps));
   this->continuation_ = static_cast<uint8_t *>(
       heap_caps_malloc(this->continuation_size_, kPanelDmaCaps));
-  if (this->full_transaction_ == nullptr || this->continuation_ == nullptr ||
+  this->transactions_ = static_cast<spi_transaction_t *>(heap_caps_calloc(5, sizeof(spi_transaction_t), kPanelDmaCaps));
+  if (this->transactions_ == nullptr || this->full_transaction_ == nullptr || this->continuation_ == nullptr ||
       !IsDmaAligned(this->full_transaction_) ||
       !IsDmaAligned(this->continuation_) ||
       !this->output_.ConfigureCapacity(pixoo::kFramePayloadBytes)) {
@@ -135,6 +142,9 @@ bool Pixoo64Panel::allocate_transfer_buffers_() {
 }
 
 void Pixoo64Panel::release_transfer_buffers_() {
+  if (this->queued_ != this->reaped_) this->transport_fatal_();
+  heap_caps_free(this->transactions_);
+  this->transactions_ = nullptr;
   if (this->full_transaction_ != nullptr)
     heap_caps_free(this->full_transaction_);
   if (this->continuation_ != nullptr)
@@ -148,18 +158,18 @@ void Pixoo64Panel::release_transfer_buffers_() {
   this->transfer_storage_acquired_ = false;
 }
 
-void Pixoo64Panel::setup() {
-  if (this->lifecycle_state_ != LifecycleState::kNew) {
-    ESP_LOGW(TAG, "panel setup requested outside construction state");
-    if (this->lifecycle_state_ == LifecycleState::kFailed)
-      this->mark_failed();
-    return;
-  }
+void Pixoo64Panel::setup() {}
+
+bool Pixoo64Panel::WorkerSetup() {
+  TaskHandle_t current = xTaskGetCurrentTaskHandle();
+  TaskHandle_t expected = nullptr;
+  if (current == nullptr || !this->owner_task_.compare_exchange_strong(expected, current, std::memory_order_acq_rel)) return false;
+  this->resources_released_.store(false, std::memory_order_release);
   this->lifecycle_state_ = LifecycleState::kSettingUp;
 
   if (this->power_output_ == nullptr) {
     this->FailSetup_("resolve panel power output", ESP_ERR_INVALID_ARG);
-    return;
+    return false;
   }
   this->set_power_rail_(false);
 
@@ -170,24 +180,24 @@ void Pixoo64Panel::setup() {
   esp_err_t error = gpio_set_level(static_cast<gpio_num_t>(this->spi_cs_pin_), 1);
   if (error != ESP_OK) {
     this->FailSetup_("latch panel SPI CS inactive", error);
-    return;
+    return false;
   }
   error = gpio_set_direction(static_cast<gpio_num_t>(this->spi_cs_pin_),
                              GPIO_MODE_OUTPUT);
   if (error != ESP_OK) {
     this->FailSetup_("configure panel SPI CS GPIO", error);
-    return;
+    return false;
   }
   this->cs_gpio_configured_ = true;
   if (!this->set_cs_inactive_()) {
     this->FailSetup_("drive panel SPI CS inactive", ESP_FAIL);
-    return;
+    return false;
   }
 
   if (!this->allocate_transfer_buffers_()) {
     this->FailSetup_("allocate retained panel transfer storage",
                      ESP_ERR_NO_MEM);
-    return;
+    return false;
   }
 
   spi_bus_config_t bus_config = {};
@@ -200,7 +210,7 @@ void Pixoo64Panel::setup() {
   error = spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO);
   if (error != ESP_OK) {
     this->FailSetup_("initialize panel SPI bus", error);
-    return;
+    return false;
   }
   this->spi_bus_initialized_ = true;
 
@@ -208,11 +218,12 @@ void Pixoo64Panel::setup() {
   device_config.clock_speed_hz = static_cast<int>(this->spi_clock_hz_);
   device_config.mode = 0;
   device_config.spics_io_num = -1;
-  device_config.queue_size = 1;
+  device_config.queue_size = 5;
+  device_config.post_cb = &Pixoo64Panel::spi_post_callback_;
   error = spi_bus_add_device(SPI2_HOST, &device_config, &this->panel_spi_);
   if (error != ESP_OK) {
     this->FailSetup_("add panel SPI device", error);
-    return;
+    return false;
   }
   this->spi_device_added_ = true;
 
@@ -226,20 +237,20 @@ void Pixoo64Panel::setup() {
   error = uart_driver_install(kPanelUartPort, 256, 0, 0, nullptr, 0);
   if (error != ESP_OK) {
     this->FailSetup_("install panel UART driver", error);
-    return;
+    return false;
   }
   this->uart_driver_installed_ = true;
 
   error = uart_param_config(kPanelUartPort, &uart_config);
   if (error != ESP_OK) {
     this->FailSetup_("configure panel UART", error);
-    return;
+    return false;
   }
   error = uart_set_pin(kPanelUartPort, UART_PIN_NO_CHANGE, this->uart_rx_pin_,
                        UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
   if (error != ESP_OK) {
     this->FailSetup_("set panel UART RX pin", error);
-    return;
+    return false;
   }
 
   this->power_on_ = false;
@@ -247,23 +258,21 @@ void Pixoo64Panel::setup() {
   this->panel_version_seen_ = false;
   this->lifecycle_state_ = LifecycleState::kReady;
   ESP_LOGI(TAG, "panel transport ready");
+  return true;
 }
 
 void Pixoo64Panel::loop() {
-  if (!this->IsOperational_() || !this->uart_driver_installed_)
-    return;
-  this->poll_panel_uart_();
+  if (this->worker_failed_.load(std::memory_order_acquire) && !this->is_failed()) this->mark_failed();
 }
-
-void Pixoo64Panel::on_shutdown() { this->StopOperations_(); }
-
-bool Pixoo64Panel::teardown() {
-  this->ReleaseResources_();
-  return !this->spi_device_added_ && !this->spi_bus_initialized_ &&
-         !this->uart_driver_installed_ && !this->transfer_storage_acquired_;
+void Pixoo64Panel::WorkerLoop() {
+  if (!this->OnOwnerTask_()) return;
+  this->reap_frame_(false);
+  if (this->IsOperational_() && this->uart_driver_installed_) this->poll_panel_uart_();
 }
-
-void Pixoo64Panel::on_powerdown() { this->StopOperations_(); }
+void Pixoo64Panel::on_shutdown() {}
+bool Pixoo64Panel::teardown() { return this->resources_released_.load(std::memory_order_acquire); }
+void Pixoo64Panel::on_powerdown() {}
+void Pixoo64Panel::WorkerShutdown() { if (this->OnOwnerTask_()) this->ReleaseResources_(); }
 
 void Pixoo64Panel::poll_panel_uart_() {
   uint8_t byte;
@@ -285,7 +294,7 @@ void Pixoo64Panel::poll_panel_uart_() {
 }
 
 void Pixoo64Panel::SetPower(bool on) {
-  if (!this->IsOperational_())
+  if (!this->OnOwnerTask_() || !this->IsOperational_())
     return;
 
   if (on == this->power_on_) {
@@ -293,6 +302,7 @@ void Pixoo64Panel::SetPower(bool on) {
     return;
   }
 
+  if (!on && !this->reap_frame_(true)) return;
   if (on) {
     if (!this->soft_start_rail_())
       return;
@@ -307,9 +317,9 @@ void Pixoo64Panel::SetPower(bool on) {
 }
 
 bool Pixoo64Panel::Initialize() {
-  if (!this->IsOperational_() || this->panel_spi_ == nullptr ||
+  if (!this->OnOwnerTask_() || !this->IsOperational_() || this->panel_spi_ == nullptr ||
       !this->power_on_ || this->full_transaction_ == nullptr ||
-      this->continuation_ == nullptr) {
+      this->continuation_ == nullptr || !this->reap_frame_(true)) {
     return false;
   }
   const uint8_t init_payload[] = {0x00};
@@ -327,7 +337,7 @@ bool Pixoo64Panel::Initialize() {
 }
 
 void Pixoo64Panel::SetBrightness(float brightness) {
-  if (!this->IsOperational_())
+  if (!this->OnOwnerTask_() || !this->IsOperational_())
     return;
 
   if (!std::isfinite(brightness) || brightness < 0.0f)
@@ -338,12 +348,13 @@ void Pixoo64Panel::SetBrightness(float brightness) {
 }
 
 bool Pixoo64Panel::Present(pixoo::FrameView frame, bool force) {
-  if (!this->IsOperational_() || this->panel_spi_ == nullptr ||
+  if (!this->OnOwnerTask_() || !this->IsOperational_() || this->panel_spi_ == nullptr ||
       !this->power_on_ || this->full_transaction_ == nullptr ||
       this->continuation_ == nullptr || frame.data == nullptr ||
       frame.size != static_cast<size_t>(pixoo::kFramePayloadBytes))
     return false;
 
+  if (!this->reap_frame_(force) || this->queued_ != this->reaped_) return false;
   uint8_t *const payload = this->full_transaction_ + 4;
   if (!this->output_.Prepare(frame.data, frame.size, this->brightness_,
                              millis(), kMaxFrameIntervalMs, payload,
@@ -356,9 +367,9 @@ bool Pixoo64Panel::Present(pixoo::FrameView frame, bool force) {
   const size_t continuation_size = pixoo::EncodeContinuationTo(
       transaction_size, true, this->continuation_, this->continuation_size_);
   const bool presented =
-      transaction_size != 0 && continuation_size != 0 &&
-      this->send_transaction_(this->full_transaction_, transaction_size,
-                              this->continuation_, continuation_size);
+      transaction_size == this->full_transaction_size_ &&
+      continuation_size == this->continuation_size_ && this->queue_frame_() &&
+      (!force || this->reap_frame_(true));
   if (!presented)
     this->output_.Reset();
   return presented;
@@ -423,6 +434,85 @@ void Pixoo64Panel::dump_config() {
   ESP_LOGCONFIG(TAG, "  Panel power rail: hardware PWM output");
 }
 
+void IRAM_ATTR Pixoo64Panel::spi_post_callback_(spi_transaction_t *transaction) {
+  auto *self = static_cast<Pixoo64Panel *>(transaction->user);
+  if (self != nullptr)
+    self->completion_gpio_error_ = gpio_set_level(static_cast<gpio_num_t>(self->spi_cs_pin_), 1);
+}
+
+[[noreturn]] void Pixoo64Panel::transport_fatal_() {
+  ESP_LOGE(TAG, "panel SPI ownership lost; restarting");
+  esp_restart();
+  std::abort();
+}
+
+bool Pixoo64Panel::reap_frame_(bool wait) {
+  while (this->reaped_ < this->queued_) {
+    spi_transaction_t *result = nullptr;
+    const esp_err_t error = spi_device_get_trans_result(
+        this->panel_spi_, &result, wait ? pdMS_TO_TICKS(1000) : 0);
+    if (error == ESP_ERR_TIMEOUT && !wait) return true;
+    if (error != ESP_OK || result != &this->transactions_[this->reaped_]) this->transport_fatal_();
+    ++this->reaped_;
+  }
+  if (this->queued_ == 5) {
+    this->queued_ = this->reaped_ = 0;
+    if (this->completion_gpio_error_ != ESP_OK) {
+      this->set_cs_inactive_();
+      this->power_on_ = false;
+      this->set_power_rail_(false);
+      this->output_.Reset();
+      this->lifecycle_state_ = LifecycleState::kFailed;
+      this->worker_failed_.store(true, std::memory_order_release);
+      return false;
+    }
+  }
+  return true;
+}
+
+bool Pixoo64Panel::queue_frame_() {
+  const uint8_t *const buffers[] = {this->full_transaction_, this->full_transaction_ + 4096,
+      this->full_transaction_ + 8192, this->full_transaction_ + 12288, this->continuation_};
+  const size_t sizes[] = {4096, 4096, 4096, 5, 240};
+  this->queued_ = this->reaped_ = 0;
+  this->completion_gpio_error_ = ESP_OK;
+  const esp_err_t select_error = gpio_set_level(static_cast<gpio_num_t>(this->spi_cs_pin_), 0);
+  if (select_error != ESP_OK) {
+    LogIdfFailure("assert panel SPI CS", select_error);
+    if (!this->set_cs_inactive_()) {
+      this->power_on_ = false;
+      this->set_power_rail_(false);
+      this->lifecycle_state_ = LifecycleState::kFailed;
+      this->worker_failed_.store(true, std::memory_order_release);
+    }
+    return false;
+  }
+  for (size_t i = 0; i < 5; ++i) {
+    auto &transaction = this->transactions_[i];
+    transaction = {};
+    transaction.flags = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL;
+    transaction.length = sizes[i] * 8;
+    transaction.tx_buffer = buffers[i];
+    transaction.user = i == 4 ? this : nullptr;
+    const esp_err_t error = spi_device_queue_trans(this->panel_spi_, &transaction, 0);
+    if (error != ESP_OK) {
+      LogIdfFailure("queue panel SPI bytes", error);
+      this->reap_frame_(true);
+      this->queued_ = this->reaped_ = 0;
+      if (!this->set_cs_inactive_()) {
+        this->power_on_ = false;
+        this->set_power_rail_(false);
+        this->lifecycle_state_ = LifecycleState::kFailed;
+        this->worker_failed_.store(true, std::memory_order_release);
+      }
+      this->output_.Reset();
+      return false;
+    }
+    ++this->queued_;
+  }
+  return true;
+}
+
 bool Pixoo64Panel::send_bytes_(const uint8_t *bytes, size_t size) {
   if (!this->IsOperational_() || this->panel_spi_ == nullptr)
     return false;
@@ -454,6 +544,11 @@ bool Pixoo64Panel::send_transaction_(const uint8_t *frame, size_t frame_size,
   if (select_error != ESP_OK) {
     LogIdfFailure("assert panel SPI CS", select_error);
     this->set_cs_inactive_();
+    this->power_on_ = false;
+    this->set_power_rail_(false);
+    this->output_.Reset();
+    this->lifecycle_state_ = LifecycleState::kFailed;
+    this->worker_failed_.store(true, std::memory_order_release);
     return false;
   }
   const bool sent = this->send_bytes_(frame, frame_size) &&
@@ -462,13 +557,20 @@ bool Pixoo64Panel::send_transaction_(const uint8_t *frame, size_t frame_size,
   const bool deselected = this->set_cs_inactive_();
   if (!sent)
     ESP_LOGW(TAG, "panel SPI transfer failed");
+  if (!deselected) {
+    this->power_on_ = false;
+    this->set_power_rail_(false);
+    this->output_.Reset();
+    this->lifecycle_state_ = LifecycleState::kFailed;
+    this->worker_failed_.store(true, std::memory_order_release);
+  }
   return sent && deselected;
 }
 
 bool Pixoo64Panel::send_control_transaction_(pixoo::Cmd cmd,
                                              const uint8_t *payload,
                                              size_t payload_size) {
-  if (!this->IsOperational_())
+  if (!this->IsOperational_() || !this->reap_frame_(true))
     return false;
   const size_t frame_size =
       pixoo::EncodeFrameTo(cmd, payload, payload_size, this->full_transaction_,

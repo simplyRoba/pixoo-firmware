@@ -161,10 +161,6 @@ FirmwareAppComponent = pixoo64_ns.class_(
     "FirmwareAppComponent",
     cg.PollingComponent,
     LightRemoteValuesListener,
-    LightStateSink,
-    SolarBrightnessStateSink,
-    SystemPort,
-    FrameMetricsPort,
 )
 ShowNotificationAction = pixoo64_ns.class_(
     "ShowNotificationAction", automation.Action
@@ -820,6 +816,7 @@ FINAL_VALIDATE_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    cg.add_build_flag("-Wl,--wrap=xTaskCreateStaticPinnedToCore")
     cg.add_global(
         cg.RawStatement('#include "esphome/components/pixoo64/http_request_gate.h"')
     )

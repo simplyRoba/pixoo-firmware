@@ -1,7 +1,7 @@
 #pragma once
 
 #include <array>
-#include <optional>
+#include <memory>
 #include <string>
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -19,6 +19,7 @@
 #include "esphome/core/preferences.h"
 #include "firmware_app.h"
 #include "light_state_publication_guard.h"
+#include "render_worker.h"
 
 namespace esphome::pixoo64 {
 
@@ -28,16 +29,15 @@ class TimingButton final : public button::Button {
 };
 
 class FirmwareAppComponent final : public PollingComponent,
-                                   public light::LightRemoteValuesListener,
-                                   public pixoo::LightStateSink,
-                                   public pixoo::SolarBrightnessStateSink,
-                                   public pixoo::SystemPort,
-                                   public pixoo::FrameMetricsPort {
+                                   public light::LightRemoteValuesListener {
  public:
-  ~FirmwareAppComponent() override;
+  ~FirmwareAppComponent();
   void setup() override;
   void update() override;
   void dump_config() override;
+  void on_shutdown() override;
+  void on_powerdown() override;
+  bool teardown() override;
   float get_setup_priority() const override {
     return setup_priority::DATA - 2.0f;
   }
@@ -101,6 +101,7 @@ class FirmwareAppComponent final : public PollingComponent,
   void ShowReaction(const std::string &reaction);
   void ClearOverlayQueue();
   void BeginFirmwareUpdate();
+  void EndFirmwareUpdate();
   void StopwatchStart();
   bool TimerStart(int32_t duration_seconds);
   void TimingPause();
@@ -117,12 +118,10 @@ class FirmwareAppComponent final : public PollingComponent,
   void set_timing_button(uint8_t index, button::Button *value) { timing_buttons_[index] = value; }
   void RequestReboot();
 
-  void Publish(pixoo::LightState state, bool persistent) override;
-  void PublishSolarBrightnessEnabled(bool enabled) override;
-  void Reboot() override;
-  void FactoryReset() override;
-  void BeginRegularFrame() override;
-  void EndRegularFrame() override;
+  void Publish(pixoo::LightState state, bool persistent);
+  void PublishSolarBrightnessEnabled(bool enabled);
+  void Reboot();
+  void FactoryReset();
 
  protected:
   void PublishTiming_(uint32_t now_ms, bool force = false);
@@ -140,7 +139,10 @@ class FirmwareAppComponent final : public PollingComponent,
   pixoo::LightState ReadLight_() const;
   pixoo::SolarBrightnessConfig ReadSolarBrightness_() const;
   void RefreshSolarElevation_(uint32_t now_ms, bool force);
-  void PublishFrameMetrics_(uint32_t now_ms);
+  bool Submit_(WorkerCommand command, uint32_t *sequence = nullptr);
+  void DrainOutputs_(bool allow_reboot = true);
+  void StopWorker_();
+  void PublishFrameMetrics_();
 
   pixoo::PanelPort *panel_{nullptr};
   Component *panel_component_{nullptr};
@@ -157,16 +159,24 @@ class FirmwareAppComponent final : public PollingComponent,
   sun::Sun *solar_sun_{nullptr};
   pixoo::LightStatePublicationGuard light_publication_guard_;
   bool solar_refresh_requested_{false};
+  bool publishing_solar_{false};
   sensor::Sensor *frame_average_sensor_{nullptr};
   sensor::Sensor *frame_max_sensor_{nullptr};
   sensor::Sensor *rendered_fps_sensor_{nullptr};
   uint32_t frame_metrics_window_ms_{0};
-  uint32_t frame_started_us_{0};
-  bool frame_timing_active_{false};
-  pixoo::FrameMetricsWindow frame_metrics_window_;
-  // This precedes app_ so application destruction cannot outlive its queue.
-  pixoo::OverlayQueueStorage *overlay_queue_storage_{nullptr};
-  std::optional<pixoo::FirmwareApp> app_;
+  std::unique_ptr<RenderWorker> worker_;
+  WorkerState worker_state_{};
+  uint32_t sequence_{0};
+  uint32_t latest_light_sequence_{0};
+  uint32_t latest_solar_sequence_{0};
+  uint32_t pending_elevation_sequence_{0};
+  uint32_t metrics_generation_{0};
+  bool pending_light_{false};
+  bool pending_solar_{false};
+  bool pending_elevation_{false};
+  bool pending_reboot_{false};
+  bool pending_factory_reset_{false};
+  bool stopping_{false};
   bool started_{false};
 };
 

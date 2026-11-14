@@ -113,6 +113,9 @@ esp32:
       CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: "y"
       # UDP socket mailboxes accommodate nine-datagram DDP image bursts.
       CONFIG_LWIP_UDP_RECVMBOX_SIZE: "32"
+      CONFIG_LWIP_TCPIP_TASK_AFFINITY_NO_AFFINITY: "n"
+      CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0: "y"
+      CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU1: "n"
 
 # External PSRAM on the WROVER-IE module: quad chip at 40 MHz.
 psram:
@@ -243,6 +246,8 @@ ota:
     password: !secret ota_password
     on_begin:
       - pixoo64.begin_firmware_update: pixoo_firmware
+    on_error:
+      - lambda: id(pixoo_firmware).EndFirmwareUpdate();
 
 # TLS certificate verification is off: no root CA bundle is bundled on this
 # build. The shared transport is serialized by panel_http_gate.
