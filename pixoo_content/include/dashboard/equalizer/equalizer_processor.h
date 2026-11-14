@@ -39,8 +39,18 @@ class EqualizerLevelsSink {
 // anchors silence to an empty bar. Framework-independent and host-tested.
 class EqualizerProcessor {
  public:
+  static constexpr int kRing = 4;
+  struct CaptureStorage {
+    float windows[kRing][kFftSize];
+  };
+
   EqualizerProcessor();
-  bool ready() const { return this->history_ != nullptr; }
+  explicit EqualizerProcessor(CaptureStorage *external);
+  bool ready() const { return this->history_ != nullptr && this->capture_ != nullptr; }
+
+  // Call before the producer starts; borrowed storage must outlive its use.
+  // Null disables capture.
+  void SetCaptureStorage(CaptureStorage *external);
 
   // Copies `count` 32-bit I2S sample words into the window (24-bit sample in the
   // high bits). Ignored while a completed window awaits Poll.
@@ -78,8 +88,8 @@ class EqualizerProcessor {
   // fixed gap sits between Polls. If the producer laps the consumer (Poll fell
   // behind by more than the ring), the consumer skips to the most recent whole
   // ring, keeping the newest audio. One producer, one consumer.
-  static constexpr int kRing = 4;
-  float window_[kRing][kFftSize];
+  std::unique_ptr<CaptureStorage> owned_capture_;
+  CaptureStorage *capture_ = nullptr;
   int fill_ = 0;                       // producer-only: samples in current window
   std::atomic<uint32_t> written_{0};   // published completed-window count
   uint32_t read_ = 0;                  // consumer-only: consumed-window count

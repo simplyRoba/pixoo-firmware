@@ -29,6 +29,8 @@ class WeatherDashboard : public Dashboard {
   }
   void set_face(WeatherFace *face) { this->face_ = face; }
 
+  void CaptureInputs() override { this->weather_.CaptureTime(); }
+
   bool available() const override {
     return this->fonts_.small != nullptr && this->fonts_.big != nullptr &&
            this->face_ != nullptr;

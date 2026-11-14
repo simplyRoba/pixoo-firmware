@@ -41,6 +41,7 @@ def method(text, name):
 
 
 PREAMBLE = r'''
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -49,6 +50,7 @@ PREAMBLE = r'''
 #include <string>
 #include <vector>
 #include "metadata_policy.h"
+#include "now_playing_source.h"
 #include "now_playing_presentation.h"
 using namespace pixoo::now_playing;
 static uint32_t now_ms = 0;
@@ -90,7 +92,13 @@ HARNESS = r'''
   void BeginInitialSnapshot_();
   void CompleteInitialSnapshot_(); void MarkInitialField_(InitialField);
   void SetTransportConnected_(bool, uint32_t); void ResetState_(uint32_t);
-  void loop(); bool SnapshotSettled() const;
+  void loop(); bool SnapshotSettled() const; void UpdateSettled_();
+  void ConsumeArtworkVisibility_() {}
+  NowPlayingSnapshot current_snapshot_{};
+  bool setup_complete_{false};
+  struct Buffer { NowPlayingSnapshot value{}; void Publish(const NowPlayingSnapshot &v) { value = v; } NowPlayingSnapshot Get() const { return value; } } snapshot_;
+  NowPlayingSnapshot ReadSnapshot() const { return snapshot_.Get(); }
+  void MarkUnsettled_();
   void OnSubscriptionRoot_(StringRef); void OnRoot_(StringRef);
   void OnRootState_(PlaybackState, uint32_t);
   void OnContentId_(StringRef v) { policy_.OnContentId(v.c_str(), v.size(), millis()); }
@@ -103,7 +111,7 @@ HARNESS = r'''
   }
   void ClearPositionTracking_() {} void ClearDesiredArtwork_() {}
   void ObserveArtworkCompletion_(uint32_t) {} void ScheduleArtwork_(uint32_t) {}
-  void Publish_(const NowPlayingData &d) { published = d; }
+  void Publish_(const NowPlayingData &d) { published = d; current_snapshot_.data = d; snapshot_.Publish(current_snapshot_); }
   void artwork_ready() {
     policy_.OnArtworkIdentity(true, 42, millis());
     NowPlayingData d;
@@ -126,7 +134,7 @@ static void available(FakeAPI &api) {
     {"entity_picture", "/synthetic-art"}};
 }
 static void init(HomeAssistantMediaSource &s, FakeAPI &api) {
-  now_ms = 0; s.api_server_ = &api; s.configured_ = true;
+  now_ms = 0; s.api_server_ = &api; s.configured_ = true; s.setup_complete_ = true;
   s.transport_connected_ = true; s.ResetState_(0); s.RegisterSubscriptions_();
   assert(api.requests.size() == 10);
   assert(api.requests.front().attr == "friendly_name" && api.requests.front().once);
@@ -152,6 +160,21 @@ static void normal() {
   assert(!NowPlayingPresentation::ReadyToShow(d, true));
   d.artwork_availability = ArtworkAvailability::kFailed;
   assert(NowPlayingPresentation::ReadyToShow(d, true));
+}
+static void pending_invalidates_immediately() {
+  FakeAPI api; HomeAssistantMediaSource s; available(api); init(s,api);
+  api.sweep(); ready_art(s); gate(s, true);
+  const auto before = s.ReadSnapshot();
+  s.OnTitle_("Changed");
+  const auto staged = s.ReadSnapshot();
+  assert(before.settled && !staged.settled);
+  assert(std::string(staged.data.title.bytes) == std::string(before.data.title.bytes));
+  assert(!s.SnapshotSettled());
+  now_ms += kInitialSnapshotQuietMs;
+  s.loop();
+  gate(s, true);
+  const auto after = s.ReadSnapshot();
+  assert(after.settled && std::string(after.data.title.bytes) == "Changed");
 }
 static void absent_then_reconnect() {
   FakeAPI api; HomeAssistantMediaSource s; init(s,api); api.sweep();
@@ -290,6 +313,14 @@ static void unavailable() {
   api.root_state = "playing"; api.live(); ready_art(s); gate(s,true);
 }
 int main(int argc, char **argv) {
+  assert(!NowPlayingSnapshot{}.settled);
+  HomeAssistantMediaSource unpublished;
+  assert(!unpublished.ReadSnapshot().settled);
+  unpublished.ResetState_(0);
+  assert(!unpublished.ReadSnapshot().settled);
+  unpublished.setup_complete_ = true;
+  unpublished.UpdateSettled_();
+  assert(unpublished.ReadSnapshot().settled);
   assert(argc == 2); std::string name = argv[1];
   if (name == "normal") normal();
   else if (name == "absent") absent_then_reconnect();
@@ -297,6 +328,7 @@ int main(int argc, char **argv) {
   else if (name == "end") missing("supported_features");
   else if (name == "both") missing("both");
   else if (name == "late_begin") root_before_begin();
+  else if (name == "pending") pending_invalidates_immediately();
   else if (name == "early_end") end_before_root();
   else if (name == "no_root") no_root();
   else if (name == "deadline") deadline();
@@ -331,8 +363,8 @@ class InitialSnapshotTest(unittest.TestCase):
         methods = ['RegisterSubscriptions_', 'OnApiClientConnected', 'BeginInitialSnapshot_',
                    'CompleteInitialSnapshot_',
                    'MarkInitialField_', 'SetTransportConnected_', 'ResetState_', 'loop',
-                   'OnSubscriptionRoot_', 'OnRoot_', 'OnRootState_', 'SnapshotSettled',
-                   'OnTitle_', 'OnArtist_']
+                   'OnSubscriptionRoot_', 'OnRoot_', 'OnRootState_', 'SnapshotSettled', 'UpdateSettled_',
+                   'OnTitle_', 'OnArtist_', 'MarkUnsettled_']
         constants = '\n'.join(unique(r'^constexpr uint32_t ' + name + r'\s*=\s*[^;]+;', cpp).group()
                               for name in ('kInitialConnectedGraceMs', 'kInitialSnapshotQuietMs',
                                            'kInitialSnapshotMaxDelayMs'))
@@ -357,6 +389,7 @@ class InitialSnapshotTest(unittest.TestCase):
         subprocess.run([str(self.binary), name], check=True)
 
     def test_normal_fast(self): self.scenario('normal')
+    def test_pending_invalidates_immediately(self): self.scenario('pending')
     def test_absent_then_reconnect_sparse(self): self.scenario('absent')
     def test_missing_begin(self): self.scenario('begin')
     def test_missing_end(self): self.scenario('end')

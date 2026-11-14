@@ -46,10 +46,12 @@ bool WriteFile(const std::string &path, const std::vector<uint8_t> &data) {
 bool CheckBlendSpans() {
   class Probe : public pixoo64::content::ContentController {
    public:
-    auto &pixels() { return this->framebuffer_.payload(); }
+    auto &pixels() { return this->framebuffer_->payload(); }
   };
   Probe reference;
   Probe spans;
+  reference.setup();
+  spans.setup();
   float alphas[21] = {
       0.0f, 1.0f, 0.74f, 0.5f, std::nextafter(0.5f, 0.0f),
       std::nextafter(0.5f, 1.0f), std::nextafter(1.0f, 0.0f),
@@ -112,7 +114,7 @@ bool CheckBlendSpans() {
 bool CheckGrayscaleSpans() {
   class ProbeController : public pixoo64::content::ContentController {
    public:
-    const auto &pixels() const { return this->framebuffer_.payload(); }
+    const auto &pixels() const { return this->framebuffer_->payload(); }
   };
   class DefaultCanvas : public pixoo64::content::BlendCanvas {
    public:
@@ -131,6 +133,8 @@ bool CheckGrayscaleSpans() {
   };
   ProbeController reference;
   ProbeController spans;
+  reference.setup();
+  spans.setup();
   uint8_t source[256];
   size_t cases = 0;
   size_t mismatches = 0;
@@ -328,6 +332,47 @@ bool CheckShadowSecondContinuity() {
   return true;
 }
 
+bool CheckInputCapture() {
+  class CaptureDashboard final : public pixoo64::dashboard::Dashboard {
+   public:
+    void CaptureInputs() override { ++captures; }
+    bool available() const override { return true; }
+    void Render(display::Display &display) const override {
+      display.fill(Color(0, 0, 0));
+    }
+    unsigned captures{0};
+  } first, second, hidden;
+  first.set_id("first");
+  second.set_id("second");
+  hidden.set_id("hidden");
+  pixoo64::content::ContentController controller;
+  controller.setup();
+  controller.add_dashboard(&first);
+  controller.add_dashboard(&second);
+  controller.add_dashboard(&hidden);
+  controller.set_default_dashboard("first");
+  controller.CaptureInputs("second");
+  bool valid = first.captures == 0 && second.captures == 1;
+  pixoo::DashboardSelection selection;
+  valid &= controller.ResolveDashboard("first", &selection);
+  controller.loop();
+  valid &= first.captures == 1 && second.captures == 1;
+  pixoo::FrameView frame;
+  valid &= controller.RenderContent(0, "first", {}, nullptr, 0, true,
+                                    false, true, false, &frame) && frame.valid();
+  valid &= controller.ResolveDashboard("second", &selection);
+  controller.loop();
+  valid &= first.captures == 2 && second.captures == 2;
+  controller.HideBaseContent(1);
+  controller.loop();
+  valid &= first.captures == 2 && second.captures == 3;
+  controller.CaptureInputs("missing");
+  valid &= first.captures == 3 && second.captures == 3 && hidden.captures == 0;
+  std::printf("render test: %s requested/visible input capture\n",
+              valid ? "ok" : "FAILED");
+  return valid;
+}
+
 }  // namespace
 
 void RenderTestDisplay::setup() {
@@ -335,6 +380,7 @@ void RenderTestDisplay::setup() {
     const bool update = std::getenv("PIXOO_UPDATE_SNAPSHOTS") != nullptr;
     int failures = CheckBlendSpans() ? 0 : 1;
     failures += CheckGrayscaleSpans() ? 0 : 1;
+    failures += CheckInputCapture() ? 0 : 1;
     std::map<std::string, std::vector<uint8_t>> now_playing_frames;
     auto check = [&](const std::string &id) {
       if (id.rfind("now_playing_", 0) == 0)
@@ -910,6 +956,7 @@ void RenderTestDisplay::setup() {
       auto render_dashboard_text = [&](const std::string &value, uint32_t now_ms,
                                        const char *dashboard_id) {
         this->text_->publish_state(value);
+        this->content_controller_->loop();
         return this->render_frame_(now_ms, dashboard_id, nullptr, 0, true);
       };
       auto render_text = [&](const std::string &value, uint32_t now_ms) {
@@ -1040,6 +1087,7 @@ void RenderTestDisplay::setup() {
       // Restore the fixture used by the established dashboard and notification
       // snapshots below.
       this->text_->publish_state("Hello");
+      this->content_controller_->loop();
     }
 
     const struct {
@@ -1671,7 +1719,7 @@ void RenderTestDisplay::setup() {
         DdpDashboard::OnHide(this->clock_ms_);
       }
       void loop() override { this->Service_(this->clock_ms_); }
-      void on_shutdown() override { this->Stop_(); }
+      void on_shutdown() override { DdpDashboard::on_shutdown(); }
       void Render(display::Display &display) const override {
         ++this->render_calls;
         DdpDashboard::Render(display);
@@ -1927,8 +1975,8 @@ void RenderTestDisplay::setup() {
         bool powered{false};
         bool initialize_ok{true};
         bool valid_frames{true};
-        bool expect_closed{false};
-        bool closed_at_present{false};
+        bool expect_hidden{false};
+        bool hidden_at_present{false};
         bool forced{false};
         float brightness{0};
         size_t brightness_calls{0};
@@ -1943,7 +1991,7 @@ void RenderTestDisplay::setup() {
         bool Present(pixoo::FrameView frame, bool force) override {
           ++presents;
           forced = force;
-          if (expect_closed) closed_at_present = !ddp.active() && ddp.fd() == -1;
+          if (expect_hidden) hidden_at_present = !ddp.active();
           if (frame.data == nullptr || frame.size != pixoo::ddp::kFrameBytes) {
             valid_frames = false;
             return false;
@@ -1969,7 +2017,7 @@ void RenderTestDisplay::setup() {
             : real(renderer), ddp(dashboard) {}
         pixoo::RenderPort &real;
         TestDdpDashboard &ddp;
-        bool closed_before_update{false};
+        bool hidden_before_update{false};
         bool ResolveDashboard(const std::string &id,
                               pixoo::DashboardSelection *selection) override {
           return real.ResolveDashboard(id, selection);
@@ -1978,7 +2026,7 @@ void RenderTestDisplay::setup() {
           return real.RenderBootAnimation(elapsed);
         }
         pixoo::FrameView RenderFirmwareUpdate() override {
-          closed_before_update = !ddp.active() && ddp.fd() == -1;
+          hidden_before_update = !ddp.active();
           return real.RenderFirmwareUpdate();
         }
         uint32_t NotificationMinVisibleMs(const pixoo::Notification &note) override {
@@ -2099,9 +2147,21 @@ void RenderTestDisplay::setup() {
         check_app(app.overlay_queue_size() == 0 && panel.pixels == app_expected,
                   "notification to base has no stale queue");
 
+        const auto hidden_black = [&]() {
+          ddp.Render(*this);
+          return std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                             [](uint8_t value) { return value == 0; });
+        };
+        const auto queue_tail = [&]() {
+          const auto datagram = packet(tail, first_rgb, 3, true);
+          check_app(send_packet(datagram.data(), datagram.size()), "queued UDP send");
+        };
+        queue_tail();
         app.SelectDashboard("__lifecycle_first");
         tick();
-        check_app(!ddp.active() && ddp.fd() == -1, "switch away closes listener");
+        check_app(!ddp.active() && hidden_black(), "switch away hides and clears published image");
+        ddp.loop();
+        check_app(ddp.fd() == -1 && hidden_black(), "switch away main service closes listener without publishing queued image");
         app.SelectDashboard("__ddp");
         tick();
         check_app(ddp.active() && black_panel() && ddp.fd() == -1,
@@ -2112,10 +2172,13 @@ void RenderTestDisplay::setup() {
         tick(33);
         check_app(tail_matches(), "reentry receives live pixels");
 
+        queue_tail();
         app.SetUserLight({false, 0.25f}, ddp.now());
         count = panel.presents;
         check_app(app.phase() == pixoo::FirmwareApp::Phase::kOff && !panel.powered &&
-                      !ddp.active() && ddp.fd() == -1, "off closes listener");
+                      !ddp.active() && hidden_black(), "off hides and clears published image");
+        ddp.loop();
+        check_app(ddp.fd() == -1 && hidden_black(), "off main service closes listener without publishing queued image");
         tick(33);
         check_app(panel.presents == count, "off suppresses presentation");
         check_app(app.Notify(note, ddp.now()), "off notification wake");
@@ -2148,11 +2211,16 @@ void RenderTestDisplay::setup() {
         push_tail(latest_rgb);
         tick(33);
 
-        panel.expect_closed = true;
+        queue_tail();
+        panel.expect_hidden = true;
         count = panel.presents;
         check_app(app.BeginFirmwareUpdate(ddp.now()) && panel.presents == count + 1 &&
-                      panel.forced && panel.closed_at_present && renderer.closed_before_update,
-                  "update closes listener before rendering and force-presents");
+                      panel.forced && panel.hidden_at_present && renderer.hidden_before_update &&
+                      hidden_black(),
+                  "update hides receiver before rendering and force-presents");
+        ddp.loop();
+        check_app(ddp.fd() == -1 && hidden_black(),
+                  "update main service closes listener without publishing queued image");
         const auto update_frame = this->content_controller_->RenderFirmwareUpdate();
         check_app(update_frame.data != nullptr && update_frame.size == panel.pixels.size() &&
                       std::equal(panel.pixels.begin(), panel.pixels.end(), update_frame.data) &&
@@ -2160,7 +2228,7 @@ void RenderTestDisplay::setup() {
                   "application presents the real update frame");
         check_app(app.phase() == pixoo::FirmwareApp::Phase::kRunning,
                   "update preserves existing lifecycle phase");
-        panel.expect_closed = false;
+        panel.expect_hidden = false;
         tick();
         check_app(ddp.active() && black_panel(), "post-update tick rebuilds base");
       }
@@ -2470,6 +2538,7 @@ void RenderTestDisplay::setup() {
       pixoo64::content::ContentController controller;
       controller.add_dashboard(&base);
       controller.set_default_dashboard("base");
+      controller.setup();
       pixoo::FrameView frame;
       const auto render = [&](uint32_t now, pixoo::TimingSnapshot timing,
                               const pixoo::Overlay *overlay = nullptr,
@@ -2543,6 +2612,7 @@ void RenderTestDisplay::setup() {
       pixoo64::content::ContentController preparing;
       preparing.add_dashboard(&pending);
       preparing.set_default_dashboard("pending");
+      preparing.setup();
       valid &= preparing.RenderContent(2000, "pending", {}, nullptr, 0,
           true, false, true, false, &frame);
       timing.phase = pixoo::TimingPhase::kPaused;
@@ -2611,6 +2681,7 @@ void RenderTestDisplay::setup() {
       controller.add_dashboard(&base);
       controller.set_default_dashboard("base");
       controller.set_notification_font(this->notification_font_);
+      controller.setup();
       pixoo::FrameView frame;
       pixoo::TimingSnapshot timing{pixoo::TimingKind::kTimer,
           pixoo::TimingPhase::kRunning, 271001, 300000, true};
@@ -2764,6 +2835,7 @@ bool RenderTestDisplay::render_frame_(
     return false;
   StaticWeatherSource::SetCurrentRenderTime(now_ms);
   StaticNowPlayingSource::SetCurrentRenderTime(now_ms);
+  this->content_controller_->CaptureInputs(dashboard_id);
   pixoo::Overlay overlay;
   const pixoo::Overlay *overlay_ptr = nullptr;
   if (notification != nullptr) {

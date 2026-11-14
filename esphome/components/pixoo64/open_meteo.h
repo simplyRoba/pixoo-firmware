@@ -23,7 +23,7 @@ class HttpRequestGate;
 // connectivity, and in-flight state.
 //
 // The fetch (HTTP GET + JSON parse) runs on a background task, so it never
-// blocks the render loop. The worker hands completion to the render task, which
+// blocks the render loop. The worker hands completion to the main task, which
 // applies refresh policy and publishes accepted WeatherData snapshots. All
 // FreeRTOS state is held behind an opaque impl pointer so this header stays
 // usable in the host render-test build, which has no FreeRTOS.
@@ -33,6 +33,7 @@ class OpenMeteoSource : public Component, public pixoo::WeatherSource {
   ~OpenMeteoSource();
 
   void setup() override;
+  void loop() override;
   void on_shutdown() override;
   bool teardown() override;
   float get_setup_priority() const override {
@@ -52,14 +53,15 @@ class OpenMeteoSource : public Component, public pixoo::WeatherSource {
   void RequestRefresh() override;
   bool HasData() const override;
   pixoo::WeatherData Data() const override;
+  pixoo::WeatherSnapshot ReadSnapshot() const override;
 
  protected:
   // Runs on the background task: performs the blocking fetch + parse and
   // reports a completion. Snapshot publication and policy mutation stay on the
-  // render task.
+  // main task.
   void FetchJob_();
   void ConsumeCompletion_(uint32_t now);
-  // The render task compares persisted location values on demand. The first
+  // The main task compares persisted location values on demand. The first
   // observation establishes a baseline; later changes invalidate before a
   // request is begun.
   void ObserveLocation_(float latitude, float longitude);
@@ -67,7 +69,7 @@ class OpenMeteoSource : public Component, public pixoo::WeatherSource {
               uint32_t generation);
 
   // Current refresh interval in ms, read from the refresh_interval_ number
-  // entity (minutes) each RequestRefresh(); falls back to 30 min if unset.
+  // entity (minutes) each service pass; falls back to 30 min if unset.
   uint32_t refresh_interval_ms_() const;
 
   http_request::HttpRequestComponent *http_{nullptr};

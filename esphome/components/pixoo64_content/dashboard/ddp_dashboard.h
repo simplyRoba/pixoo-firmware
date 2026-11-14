@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 
 #include "dashboard.h"
 #include "ddp_frame.h"
@@ -18,7 +19,7 @@ class DdpDashboard : public Dashboard, public Component {
   void OnHide(uint32_t now_ms) override;
   void loop() override;
   void on_shutdown() override;
-  bool active() const { return this->active_; }
+  bool active() const { std::lock_guard<std::mutex> lock(this->handoff_mutex_); return this->desired_active_; }
 
  protected:
   void Service_(uint32_t now_ms);
@@ -26,6 +27,13 @@ class DdpDashboard : public Dashboard, public Component {
   std::unique_ptr<socket::Socket> listener_;
 
  private:
+  struct HandoffStorage {
+    std::array<uint8_t, pixoo::ddp::kFrameBytes> published{};
+    std::array<uint8_t, pixoo::ddp::kFrameBytes> render_scratch{};
+  };
+  struct HandoffStorageDeleter {
+    void operator()(HandoffStorage *storage) const;
+  };
   struct FrameStorageDeleter {
     void operator()(pixoo::ddp::FrameBuffer *storage) const;
   };
@@ -33,7 +41,12 @@ class DdpDashboard : public Dashboard, public Component {
   bool OpenListener_(uint32_t now_ms);
   void ListenerFailed_(uint32_t now_ms);
   void CloseListener_();
-  // Visibility, socket reads, and frame publication share the ESPHome main loop.
+  mutable std::mutex handoff_mutex_;
+  bool desired_active_{false};
+  uint32_t generation_{0};
+  uint32_t applied_generation_{0};
+  std::unique_ptr<HandoffStorage, HandoffStorageDeleter> handoff_;
+  // Socket and assembly state belong to the main loop.
   bool active_{false};
   bool retry_pending_{false};
   uint32_t failed_at_ms_{0};

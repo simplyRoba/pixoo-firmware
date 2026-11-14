@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <new>
+#include <limits>
 #include <utility>
 
 #ifdef ESP_PLATFORM
@@ -21,6 +22,33 @@ static const char *const TAG = "pixoo64.content";
 
 }  // namespace
 
+void ContentController::FrameBufferDeleter::operator()(
+    pixoo::Framebuffer *framebuffer) const {
+#ifdef ESP_PLATFORM
+  framebuffer->~Framebuffer();
+  heap_caps_free(framebuffer);
+#else
+  delete framebuffer;
+#endif
+}
+
+void ContentController::setup() {
+  if (this->framebuffer_ != nullptr || this->is_failed())
+    return;
+#ifdef ESP_PLATFORM
+  void *memory = heap_caps_malloc(sizeof(pixoo::Framebuffer),
+                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (memory != nullptr)
+    this->framebuffer_.reset(new (memory) pixoo::Framebuffer{});
+#else
+  this->framebuffer_.reset(new (std::nothrow) pixoo::Framebuffer{});
+#endif
+  if (this->framebuffer_ == nullptr) {
+    ESP_LOGE(TAG, "framebuffer allocation failed");
+    this->mark_failed();
+  }
+}
+
 void ContentController::add_dashboard(Dashboard *dashboard) {
   this->dashboards_.push_back(dashboard);
 }
@@ -37,9 +65,17 @@ std::vector<std::string> ContentController::dashboard_ids() const {
   return ids;
 }
 
+void ContentController::CaptureInputs(const std::string &requested_id) {
+  Dashboard *dashboard = this->find_(requested_id);
+  if (dashboard == nullptr)
+    dashboard = this->find_(this->default_dashboard_id_);
+  if (dashboard != nullptr)
+    dashboard->CaptureInputs();
+}
+
 bool ContentController::ResolveDashboard(
     const std::string &requested_id, pixoo::DashboardSelection *selection) {
-  if (selection == nullptr)
+  if (selection == nullptr || this->framebuffer_ == nullptr)
     return false;
 
   Dashboard *dashboard = this->find_(requested_id);
@@ -53,20 +89,93 @@ bool ContentController::ResolveDashboard(
   *selection = pixoo::DashboardSelection{dashboard->id(),
                                          dashboard->requires_microphone(),
                                          dashboard->frame_interval_ms()};
+  this->capture_requested_.store(dashboard, std::memory_order_release);
   if (dashboard->id() != requested_id)
     ESP_LOGW(TAG, "unknown dashboard ID: %s, using default: %s",
              requested_id.c_str(), dashboard->id().c_str());
   return true;
 }
 
+void ContentController::LevelStorageDeleter::operator()(
+    LevelStorage *storage) const {
+#ifdef ESP_PLATFORM
+  storage->~LevelStorage();
+  heap_caps_free(storage);
+#else
+  delete storage;
+#endif
+}
+
 void ContentController::SetLevels(const float levels[pixoo::kBands]) {
-  for (Dashboard *dashboard : this->dashboards_) {
-    if (pixoo::EqualizerLevelsSink *sink = dashboard->levels_sink())
-      sink->SetLevels(levels);
+  // The main task is the only producer; the worker reads storage under the mutex.
+  if (!this->levels_allocation_attempted_) {
+    this->levels_allocation_attempted_ = true;
+#ifdef ESP_PLATFORM
+    void *memory = heap_caps_malloc(sizeof(LevelStorage),
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    LevelStorage *storage = memory == nullptr ? nullptr : new (memory) LevelStorage;
+#else
+    LevelStorage *storage = new (std::nothrow) LevelStorage;
+#endif
+    if (storage == nullptr) {
+      ESP_LOGE(TAG, "equalizer level storage allocation failed; equalizer remains black");
+      return;
+    }
+    std::lock_guard<std::mutex> lock(this->levels_mutex_);
+    this->levels_storage_.reset(storage);
+  }
+  std::lock_guard<std::mutex> lock(this->levels_mutex_);
+  if (this->levels_storage_ == nullptr)
+    return;
+  auto &storage = *this->levels_storage_;
+  if (this->levels_count_ == storage.queue.size() ||
+      this->levels_overflow_count_ != 0) {
+    std::copy_n(levels, pixoo::kBands, storage.latest.begin());
+    if (this->levels_overflow_count_ != std::numeric_limits<uint32_t>::max())
+      ++this->levels_overflow_count_;
+    return;
+  }
+  auto &slot = storage.queue[(this->levels_head_ + this->levels_count_) % storage.queue.size()];
+  std::copy_n(levels, pixoo::kBands, slot.begin());
+  ++this->levels_count_;
+}
+
+void ContentController::DrainLevels_() {
+  // Bound both queues so a producer cannot monopolize the render worker.
+  for (size_t i = 0; i < kLevelQueueSize; ++i) {
+    std::array<float, pixoo::kBands> levels;
+    {
+      std::lock_guard<std::mutex> lock(this->levels_mutex_);
+      if (this->levels_storage_ == nullptr || this->levels_count_ == 0)
+        break;
+      const auto &queue = this->levels_storage_->queue;
+      levels = queue[this->levels_head_];
+      this->levels_head_ = (this->levels_head_ + 1) % queue.size();
+      --this->levels_count_;
+    }
+    for (Dashboard *dashboard : this->dashboards_)
+      if (auto *sink = dashboard->levels_sink())
+        sink->SetLevels(levels.data());
+  }
+  for (size_t i = 0; i < kLevelQueueSize; ++i) {
+    std::array<float, pixoo::kBands> levels;
+    {
+      std::lock_guard<std::mutex> lock(this->levels_mutex_);
+      if (this->levels_storage_ == nullptr || this->levels_count_ != 0 ||
+          this->levels_overflow_count_ == 0)
+        break;
+      levels = this->levels_storage_->latest;
+      --this->levels_overflow_count_;
+    }
+    for (Dashboard *dashboard : this->dashboards_)
+      if (auto *sink = dashboard->levels_sink())
+        sink->SetLevels(levels.data());
   }
 }
 
 pixoo::FrameView ContentController::RenderBootAnimation(uint32_t elapsed_ms) {
+  if (this->framebuffer_ == nullptr)
+    return {};
   constexpr int kSize = pixoo::kWidth;         // 64
   constexpr int kPerimeter = 4 * kSize;        // 256, continuous around the ring
   constexpr int kSpotCount = 6;
@@ -164,7 +273,7 @@ pixoo::FrameView ContentController::RenderBootAnimation(uint32_t elapsed_ms) {
                                      kBreathePeriodMs);
   const int breathe = 192 + 63 * (cos_deg_(phase) + 255) / 510;
 
-  this->framebuffer_.Clear();
+  this->framebuffer_->Clear();
   for (int y = 0; y < kSize; ++y) {
     for (int x = 0; x < kSize; ++x) {
       const int d_top = y;
@@ -207,7 +316,7 @@ pixoo::FrameView ContentController::RenderBootAnimation(uint32_t elapsed_ms) {
       // Hue is the level-weighted blend of the contributing edges; brightness is
       // their sum (clamped), so corners get brighter without washing to white.
       const int bright = std::min(level_sum, 255);
-      this->framebuffer_.SetPixel(
+      this->framebuffer_->SetPixel(
           x, y,
           pixoo::Rgb{
               static_cast<uint8_t>(color_r / level_sum * bright / 255),
@@ -218,7 +327,7 @@ pixoo::FrameView ContentController::RenderBootAnimation(uint32_t elapsed_ms) {
 
   DrawBootWordmark(elapsed_ms);
 
-  const auto &payload = this->framebuffer_.payload();
+  const auto &payload = this->framebuffer_->payload();
   return pixoo::FrameView{payload.data(), payload.size()};
 }
 
@@ -259,7 +368,7 @@ void ContentController::DrawBootWordmark(uint32_t elapsed_ms) {
       for (int gy = 0; gy < kGlyphH; ++gy) {
         for (int gx = 0; gx < kGlyphW; ++gx) {
           if (glyphs[i][gy] & (1 << (kGlyphW - 1 - gx)))
-            this->framebuffer_.SetPixel(lx + gx, y0 + gy, ink);
+            this->framebuffer_->SetPixel(lx + gx, y0 + gy, ink);
         }
       }
     }
@@ -303,11 +412,13 @@ int ContentController::cos_deg_(int degrees) {
 }
 
 pixoo::FrameView ContentController::RenderFirmwareUpdate() {
+  if (this->framebuffer_ == nullptr)
+    return {};
   const Color kMark(0x28, 0x1B, 0x00);
   const Color kAmber(0xFF, 0xB3, 0x00);
   const Color kWhite(0xF4, 0xF4, 0xF4);
 
-  this->framebuffer_.Clear();
+  this->framebuffer_->Clear();
 
   // The shape and lighting are mirrored around x=32. Its sub-pixel triangle
   // coverage blends the diagonal boundary into black instead of stair-stepping
@@ -344,7 +455,7 @@ pixoo::FrameView ContentController::RenderFirmwareUpdate() {
                 display::TextAlign::TOP_CENTER, "KEEP POWER ON");
   }
 
-  const auto &payload = this->framebuffer_.payload();
+  const auto &payload = this->framebuffer_->payload();
   return pixoo::FrameView{payload.data(), payload.size()};
 }
 
@@ -359,6 +470,7 @@ void ContentController::HideVisible_(uint32_t now_ms) {
   this->visible_->OnHide(now_ms);
   this->visible_->ReleaseRenderResources();
   this->visible_ = nullptr;
+  this->capture_visible_.store(nullptr, std::memory_order_release);
 }
 
 void ContentController::CancelPending_(uint32_t now_ms) {
@@ -402,7 +514,7 @@ void ContentController::DrawLoading_(uint32_t now_ms) {
       static_cast<int>((now_ms % 1800u) * 360u / 1800u);
   const int breathe = 224 + (cos_deg_(breathe_phase) + 255) * 31 / 510;
 
-  this->framebuffer_.Clear();
+  this->framebuffer_->Clear();
   for (size_t index = 0; index < sizeof(kSegments) / sizeof(kSegments[0]);
        ++index) {
     int distance = std::abs(static_cast<int>(index) * kSegmentUnits - head);
@@ -435,6 +547,7 @@ void ContentController::ReleaseOverlayResources() {
 }
 
 void ContentController::RecordRender_(uint32_t elapsed_us) {
+  std::lock_guard<std::mutex> lock(this->render_metrics_mutex_);
   ++this->render_frames_;
   this->render_total_us_ += elapsed_us;
   this->render_max_us_ = std::max(this->render_max_us_, elapsed_us);
@@ -443,18 +556,25 @@ void ContentController::RecordRender_(uint32_t elapsed_us) {
 }
 
 void ContentController::PublishRenderWindow_() {
-  const float average_ms =
-      this->render_frames_ == 0
-          ? 0.0f
-          : static_cast<float>(this->render_total_us_) /
-                static_cast<float>(this->render_frames_) / 1000.0f;
+  uint32_t frames, max_us, over_budget;
+  uint64_t total_us;
+  {
+    std::lock_guard<std::mutex> lock(this->render_metrics_mutex_);
+    frames = this->render_frames_;
+    max_us = this->render_max_us_;
+    over_budget = this->render_over_budget_;
+    total_us = this->render_total_us_;
+    this->ResetRenderWindow_();
+  }
+  const float average_ms = frames == 0 ? 0.0f :
+      static_cast<float>(total_us) / static_cast<float>(frames) / 1000.0f;
   if (this->render_average_sensor_ != nullptr)
     this->render_average_sensor_->publish_state(average_ms);
   if (this->render_max_sensor_ != nullptr)
-    this->render_max_sensor_->publish_state(this->render_max_us_ / 1000.0f);
+    this->render_max_sensor_->publish_state(max_us / 1000.0f);
   if (this->render_over_budget_sensor_ != nullptr)
     this->render_over_budget_sensor_->publish_state(
-        static_cast<float>(this->render_over_budget_));
+        static_cast<float>(over_budget));
 }
 
 void ContentController::ResetRenderWindow_() {
@@ -464,11 +584,19 @@ void ContentController::ResetRenderWindow_() {
   this->render_total_us_ = 0;
 }
 
+void ContentController::loop() {
+  Dashboard *requested = this->capture_requested_.load(std::memory_order_acquire);
+  Dashboard *visible = this->capture_visible_.load(std::memory_order_acquire);
+  if (requested != nullptr)
+    requested->CaptureInputs();
+  if (visible != nullptr && visible != requested)
+    visible->CaptureInputs();
+}
+
 void ContentController::update() {
   if (this->render_budget_us_ == 0)
     return;
   this->PublishRenderWindow_();
-  this->ResetRenderWindow_();
 }
 
 void ContentController::ReactionBackgroundDeleter::operator()(
@@ -544,9 +672,9 @@ bool ContentController::EnsureNotificationBackground_() {
 }
 
 void ContentController::RestoreNotificationBackground_() {
-  if (this->notification_background_height_ == 0)
+  if (this->notification_background_height_ == 0 || this->framebuffer_ == nullptr)
     return;
-  std::memcpy(this->framebuffer_.PixelBytes(0, 0),
+  std::memcpy(this->framebuffer_->PixelBytes(0, 0),
               this->notification_background_.get(),
               this->notification_background_height_ * pixoo::kWidth * 3);
   this->notification_background_height_ = 0;
@@ -565,7 +693,7 @@ bool ContentController::CaptureReactionBackground_() {
   constexpr int kBlurRadius = 3;
   constexpr int kDarkenPercent = 42;
   pixoo::Framebuffer &background = *this->reaction_background_;
-  const auto &source = this->framebuffer_.payload();
+  const auto &source = this->framebuffer_->payload();
 
   // A box blur separates into horizontal and vertical passes. This produces
   // the same 7x7 kernel with 14 samples per output pixel instead of 49, keeping
@@ -597,7 +725,7 @@ bool ContentController::CaptureReactionBackground_() {
         for (int channel = 0; channel < 3; ++channel)
           channels[channel] += horizontal[offset + channel];
       }
-      this->framebuffer_.SetPixel(
+      this->framebuffer_->SetPixel(
           x, y,
           pixoo::Rgb{
               static_cast<uint8_t>(channels[0] * kDarkenPercent / 700),
@@ -605,7 +733,7 @@ bool ContentController::CaptureReactionBackground_() {
               static_cast<uint8_t>(channels[2] * kDarkenPercent / 700)});
     }
   }
-  background = this->framebuffer_;
+  background = *this->framebuffer_;
   return true;
 }
 
@@ -616,8 +744,9 @@ bool ContentController::RenderContent(
     uint32_t overlay_visible_elapsed_ms,
     bool base_visible, bool base_frozen, bool render_base, bool render_overlay,
     pixoo::FrameView *frame) {
-  if (frame == nullptr)
+  if (frame == nullptr || this->framebuffer_ == nullptr)
     return false;
+  this->DrainLevels_();
   const uint32_t started_us =
       this->render_budget_us_ == 0 ? 0 : micros();
 
@@ -680,7 +809,7 @@ bool ContentController::RenderContent(
   }
 
   if (base_visible && render_base && timing.visible()) {
-    this->framebuffer_.Clear();
+    this->framebuffer_->Clear();
     this->timing_view_.Render(*this, timing, this->firmware_update_detail_font_);
   } else if (base_visible && render_base) {
     if (this->visible_ != nullptr && !this->visible_->HasPresentation()) {
@@ -697,10 +826,11 @@ bool ContentController::RenderContent(
       this->pending_ = nullptr;
       this->HideVisible_(now_ms);
       this->visible_ = ready;
+      this->capture_visible_.store(ready, std::memory_order_release);
       this->visible_->OnShow(now_ms);
     }
 
-    this->framebuffer_.Clear();
+    this->framebuffer_->Clear();
     if (this->visible_ != nullptr) {
       this->visible_->Tick(now_ms);
       if (this->visible_->HasPresentation()) {
@@ -718,7 +848,7 @@ bool ContentController::RenderContent(
       this->DrawLoading_(now_ms);
     }
   } else if (!base_visible) {
-    this->framebuffer_.Clear();
+    this->framebuffer_->Clear();
   }
 
   if (timing_banner && render_base && this->timing_banner_font_ != nullptr) {
@@ -736,7 +866,7 @@ bool ContentController::RenderContent(
       if (base_visible)
         this->CaptureReactionBackground_();
       else
-        this->framebuffer_.Clear();
+        this->framebuffer_->Clear();
       this->reaction_snapshot_active_ = true;
       this->reaction_overlay_ = overlay;
     }
@@ -746,9 +876,9 @@ bool ContentController::RenderContent(
       // pixels as it moves. If allocation failed, a black fallback remains
       // valid without dereferencing absent background storage.
       if (this->reaction_background_ != nullptr)
-        this->framebuffer_ = *this->reaction_background_;
+        *this->framebuffer_ = *this->reaction_background_;
       else
-        this->framebuffer_.Clear();
+        this->framebuffer_->Clear();
       this->reaction_renderer_.Render(*this, overlay->reaction,
                                       overlay_visible_elapsed_ms);
     }
@@ -760,7 +890,7 @@ bool ContentController::RenderContent(
           NotificationRenderer::BackdropHeight(overlay->notification));
       if (this->notification_background_height_ > restored_notification_height)
         std::memcpy(this->notification_background_.get(),
-                    this->framebuffer_.payload().data(),
+                    this->framebuffer_->payload().data(),
                     this->notification_background_height_ * pixoo::kWidth * 3);
     }
     this->notification_renderer_.Render(*this, overlay->notification,
@@ -774,17 +904,19 @@ bool ContentController::RenderContent(
     this->visible_->ReleaseRenderResources();
   if (this->render_budget_us_ != 0)
     this->RecordRender_(micros() - started_us);
-  const auto &payload = this->framebuffer_.payload();
+  const auto &payload = this->framebuffer_->payload();
   *frame = pixoo::FrameView{payload.data(), payload.size()};
   return true;
 }
 
 void ContentController::fill(Color color) {
+  if (this->framebuffer_ == nullptr)
+    return;
   if (this->is_clipping()) {
     display::Display::fill(color);
     return;
   }
-  this->framebuffer_.Fill(pixoo::Rgb{color.r, color.g, color.b});
+  this->framebuffer_->Fill(pixoo::Rgb{color.r, color.g, color.b});
 }
 
 // A face composites thousands of pixels per frame, so both pixel paths resolve
@@ -793,7 +925,9 @@ void ContentController::fill(Color color) {
 // this renderer knows statically; the clipping rectangle it also checks is set
 // only while the notification banner draws, so it is consulted only then.
 void ContentController::draw_pixel_at(int x, int y, Color color) {
-  uint8_t *pixel = this->framebuffer_.PixelBytes(x, y);
+  if (this->framebuffer_ == nullptr)
+    return;
+  uint8_t *pixel = this->framebuffer_->PixelBytes(x, y);
   if (pixel == nullptr)
     return;
   if (this->is_clipping() && !this->get_clipping().inside(x, y))
@@ -804,9 +938,9 @@ void ContentController::draw_pixel_at(int x, int y, Color color) {
 }
 
 void ContentController::BlendPixel(int x, int y, Color color, float alpha) {
-  if (alpha <= 0.0f)
+  if (this->framebuffer_ == nullptr || alpha <= 0.0f)
     return;
-  uint8_t *pixel = this->framebuffer_.PixelBytes(x, y);
+  uint8_t *pixel = this->framebuffer_->PixelBytes(x, y);
   if (pixel == nullptr)
     return;
   if (this->is_clipping() && !this->get_clipping().inside(x, y))
@@ -829,7 +963,8 @@ void ContentController::BlendPixel(int x, int y, Color color, float alpha) {
 
 void ContentController::WriteGrayscaleSpan(int x, int y, int length,
                                             const uint8_t *gray) {
-  if (gray == nullptr || length <= 0 || y < 0 || y >= pixoo::kHeight)
+  if (this->framebuffer_ == nullptr || gray == nullptr || length <= 0 ||
+      y < 0 || y >= pixoo::kHeight)
     return;
   const int64_t begin = std::max<int64_t>(x, 0);
   const int64_t end = std::min<int64_t>(
@@ -842,7 +977,7 @@ void ContentController::WriteGrayscaleSpan(int x, int y, int length,
                                     static_cast<int>(end - begin), gray);
     return;
   }
-  uint8_t *pixel = this->framebuffer_.PixelBytes(static_cast<int>(begin), y);
+  uint8_t *pixel = this->framebuffer_->PixelBytes(static_cast<int>(begin), y);
   for (int64_t px = begin; px < end; ++px, pixel += 3) {
     const uint8_t value = *gray++;
     pixel[0] = value;
@@ -853,7 +988,7 @@ void ContentController::WriteGrayscaleSpan(int x, int y, int length,
 
 void ContentController::BlendSpan(int x, int y, int length, Color color,
                                   float alpha) {
-  if (length <= 0 || alpha <= 0.0f)
+  if (this->framebuffer_ == nullptr || length <= 0 || alpha <= 0.0f)
     return;
   if (this->is_clipping()) {
     BlendCanvas::BlendSpan(x, y, length, color, alpha);
@@ -866,7 +1001,7 @@ void ContentController::BlendSpan(int x, int y, int length, Color color,
   x = std::max(x, 0);
   if (x >= end)
     return;
-  uint8_t *pixel = this->framebuffer_.PixelBytes(x, y);
+  uint8_t *pixel = this->framebuffer_->PixelBytes(x, y);
   if (alpha >= 1.0f) {
     for (; x < end; ++x, pixel += 3) {
       pixel[0] = color.r;

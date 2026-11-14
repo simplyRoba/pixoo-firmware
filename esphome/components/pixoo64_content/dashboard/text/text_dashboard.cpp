@@ -1,4 +1,6 @@
 #include "text_dashboard.h"
+#include <algorithm>
+#include <string_view>
 
 #include <algorithm>
 #include <cstring>
@@ -115,11 +117,22 @@ void TextDashboard::Render(display::Display &display) const {
   }
 }
 
+void TextDashboard::CaptureInputs() {
+  TextInput input{};
+  if (this->text_ != nullptr) {
+    const auto &state = this->text_->state;
+    input.length = std::min(state.size(), kMaximumTextBytes);
+    std::copy_n(state.data(), input.length, input.bytes.data());
+  }
+  this->text_snapshot_.Publish(input);
+}
+
 bool TextDashboard::CopyText_() {
   if (!this->EnsureLayoutStorage_())
     return false;
   LayoutStorage &layout = *this->layout_;
-  const std::string &state = this->text_->state;
+  const TextInput input = this->text_snapshot_.Get();
+  const std::string_view state(input.bytes.data(), input.length);
   char sanitized[kMaximumTextBytes + 1];
   size_t length = 0;
   for (size_t position = 0;

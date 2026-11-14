@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <ctime>
 
+#include "esphome/components/pixoo64_content/input_snapshot.h"
 #include "analog_face.h"
 #include "binary_face.h"
 #include "digital_face.h"
@@ -28,8 +29,21 @@ class ClockDashboard : public Dashboard {
   void set_fixed_time(time_t epoch) {
     this->fixed_epoch_ = epoch;
     this->has_fixed_time_ = true;
+    this->CaptureInputs();
   }
   void set_face(WatchFace *face) { this->face_ = face; }
+
+  void CaptureInputs() override {
+    ESPTime now{};
+    if (this->has_fixed_time_)
+      now = ESPTime::from_epoch_utc(this->fixed_epoch_);
+    else if (this->time_ != nullptr)
+      now = this->time_->now();
+    ClockTime value{};
+    if (now.is_valid())
+      value = ClockTime{now.hour, now.minute, now.second, true};
+    this->time_snapshot_.Publish(value);
+  }
 
   bool available() const override { return this->face_ != nullptr; }
 
@@ -54,18 +68,10 @@ class ClockDashboard : public Dashboard {
 
  protected:
   ClockTime resolve_time_() const {
-    ESPTime now{};
-    if (this->has_fixed_time_)
-      now = ESPTime::from_epoch_utc(this->fixed_epoch_);
-    else if (this->time_ != nullptr)
-      now = this->time_->now();
-    else
-      return ClockTime{};
-    if (!now.is_valid())
-      return ClockTime{};
-    return ClockTime{now.hour, now.minute, now.second, true};
+    return this->time_snapshot_.Get();
   }
 
+  content::InputSnapshot<ClockTime> time_snapshot_;
   time::RealTimeClock *time_{nullptr};
   time_t fixed_epoch_{0};
   bool has_fixed_time_{false};

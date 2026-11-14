@@ -21,6 +21,7 @@ class Dashboard {
     this->frame_interval_ms_ = interval_ms;
   }
   uint32_t frame_interval_ms() const { return this->frame_interval_ms_; }
+  virtual void CaptureInputs() {}
   virtual bool available() const = 0;
   virtual bool requires_microphone() const { return false; }
   // Non-null for a dashboard that consumes microphone spectrum levels, letting

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 
 #include "shadow_clock.h"
 #include "watch_face.h"
@@ -18,24 +17,15 @@ uint8_t ShadowSecondCoverage(int along, int across);
 class ShadowFace : public WatchFace {
  public:
   ShadowFace();
-  ~ShadowFace() override;
 
   void Tick(const ClockTime &time, uint32_t now_ms) override;
   void OnShow(uint32_t now_ms) override;
-  void ReleaseRenderResources() override;
   void Render(display::Display &display) const override;
 
  protected:
   pixoo::clock::ShadowClockModel model_;
   bool load_pending_{false};
 
- private:
-  struct RenderState;
-  struct RenderStateDeleter {
-    void operator()(RenderState *state) const;
-  };
-  mutable std::unique_ptr<RenderState, RenderStateDeleter> render_state_;
-  mutable bool render_state_attempted_{false};
 };
 
 }  // namespace esphome::pixoo64::clockface

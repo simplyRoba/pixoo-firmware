@@ -204,6 +204,7 @@ struct HomeAssistantMediaSource::Impl {
     uint64_t identity{0};
     uint32_t revision{0};
     uint32_t generation{0};
+    uint32_t cancellation_generation{0};
   };
   struct Completion {
     Request request{};
@@ -242,6 +243,9 @@ struct HomeAssistantMediaSource::Impl {
   std::atomic<bool> in_flight{false};
   std::atomic<bool> eligible{false};
   std::atomic<uint32_t> generation{1};
+  bool requested_visible{false};
+  bool visibility_dirty{false};
+  bool hide_pending{false};
   Request handoff_request{};
   uint8_t *handoff_encoded{nullptr};
   size_t handoff_encoded_size{0};
@@ -290,6 +294,15 @@ void HomeAssistantMediaSource::setup() {
     this->mark_failed();
     return;
   }
+  if (!this->impl_->request.Initialize() || !this->impl_->completion.Initialize() ||
+      !this->snapshot_.Initialize()) {
+    ESP_LOGE(TAG, "failed to allocate media snapshots in PSRAM");
+    this->impl_->fetch_worker.RequestStop();
+    this->impl_->decode_worker.RequestStop();
+    this->mark_failed();
+    return;
+  }
+  this->snapshot_.Publish(this->current_snapshot_);
   if (global_preferences != nullptr) {
     this->preference_ =
         global_preferences->make_preference<now_playing_config::ConfigRecord>(
@@ -304,6 +317,7 @@ void HomeAssistantMediaSource::setup() {
   }
   this->transport_connected_ =
       this->api_server_->is_connected_with_state_subscription();
+  this->setup_complete_ = true;
   this->ResetState_(millis());
   if (this->configured_)
     this->RegisterSubscriptions_();
@@ -364,16 +378,18 @@ void HomeAssistantMediaSource::ClearDesiredArtwork_() {
               sizeof(this->desired_artwork_url_));
   this->desired_artwork_url_size_ = 0;
   this->desired_artwork_identity_ = 0;
+  const uint32_t old_generation = this->artwork_fetch_policy_.generation();
   this->artwork_fetch_policy_.SetDesired(0);
   if (this->impl_ != nullptr) {
     taskENTER_CRITICAL(&this->impl_->artwork_mux);
-    this->impl_->generation.store(this->artwork_fetch_policy_.generation(),
-                                  std::memory_order_release);
+    if (old_generation != this->artwork_fetch_policy_.generation())
+      this->impl_->generation.fetch_add(1, std::memory_order_acq_rel);
     taskEXIT_CRITICAL(&this->impl_->artwork_mux);
   }
 }
 
 void HomeAssistantMediaSource::ResetState_(uint32_t now_ms) {
+  this->MarkUnsettled_();
   this->initial_snapshot_started_ = false;
   this->initial_snapshot_complete_ = false;
   this->initial_root_seen_ = false;
@@ -396,6 +412,7 @@ void HomeAssistantMediaSource::ResetState_(uint32_t now_ms) {
   this->policy_.Reset(this->configured_, this->config_revision_,
                       this->transport_connected_, now_ms, &data);
   this->Publish_(data);
+  this->UpdateSettled_();
 }
 
 void HomeAssistantMediaSource::RegisterSubscriptions_() {
@@ -500,12 +517,14 @@ void HomeAssistantMediaSource::CompleteInitialSnapshot_() {
   this->initial_fields_seen_ = kAllInitialFields;
   this->initial_snapshot_complete_ = true;
   this->initial_snapshot_started_ = false;
+  this->UpdateSettled_();
 }
 
 void HomeAssistantMediaSource::SetTransportConnected_(bool connected,
                                                        uint32_t now_ms) {
   if (connected == this->transport_connected_)
     return;
+  this->MarkUnsettled_();
   this->transport_connected_ = connected;
   pixoo::now_playing::NowPlayingData data;
   if (this->policy_.SetTransportConnected(connected, now_ms, &data))
@@ -526,6 +545,7 @@ void HomeAssistantMediaSource::SetTransportConnected_(bool connected,
   }
   this->connected_grace_active_ = this->configured_ && connected;
   this->connected_since_ms_ = now_ms;
+  this->UpdateSettled_();
 }
 
 void HomeAssistantMediaSource::loop() {
@@ -550,38 +570,81 @@ void HomeAssistantMediaSource::loop() {
     this->raw_position_pending_content_id_ = false;
     this->Publish_(data);
   }
+  this->ConsumeArtworkVisibility_();
   this->ObserveArtworkCompletion_(now_ms);
   this->ScheduleArtwork_(now_ms);
+  this->UpdateSettled_();
 }
 
 void HomeAssistantMediaSource::Publish_(
     const pixoo::now_playing::NowPlayingData &data) {
-  this->snapshot_.Publish(data);
+  this->current_snapshot_.data = data;
+  this->snapshot_.Publish(this->current_snapshot_);
+}
+
+pixoo::now_playing::NowPlayingSnapshot HomeAssistantMediaSource::ReadSnapshot() const {
+  return this->snapshot_.Get();
 }
 
 pixoo::now_playing::NowPlayingData HomeAssistantMediaSource::Data() const {
-  return this->snapshot_.has_value() ? this->snapshot_.Get()
-                                     : this->policy_.Data();
+  return this->ReadSnapshot().data;
+}
+
+void HomeAssistantMediaSource::UpdateSettled_() {
+  const bool settled = this->setup_complete_ && (!this->configured_ ||
+      (this->transport_connected_ && this->initial_snapshot_complete_ &&
+       !this->policy_.HasPendingPublication()));
+  if (settled != this->current_snapshot_.settled) {
+    this->current_snapshot_.settled = settled;
+    this->snapshot_.Publish(this->current_snapshot_);
+  }
+}
+
+void HomeAssistantMediaSource::MarkUnsettled_() {
+  if (this->current_snapshot_.settled) {
+    this->current_snapshot_.settled = false;
+    this->snapshot_.Publish(this->current_snapshot_);
+  }
 }
 
 bool HomeAssistantMediaSource::SnapshotSettled() const {
-  if (!this->configured_)
-    return true;
-  return this->transport_connected_ && this->initial_snapshot_complete_ &&
-         !this->policy_.HasPendingPublication();
+  return this->ReadSnapshot().settled;
 }
 
 void HomeAssistantMediaSource::SetArtworkEligible(bool eligible, uint32_t) {
-  this->artwork_fetch_policy_.SetVisible(eligible);
-  if (this->impl_ != nullptr) {
-    // Visibility/generation and slot publication use the same lock. If OnHide
-    // obtains it first, the worker's final checkpoint cannot publish; if the
-    // worker obtains it first, publication completed while still visible.
-    taskENTER_CRITICAL(&this->impl_->artwork_mux);
-    this->impl_->eligible.store(eligible, std::memory_order_release);
-    this->impl_->generation.store(this->artwork_fetch_policy_.generation(),
-                                  std::memory_order_release);
-    taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+  if (this->impl_ == nullptr)
+    return;
+  taskENTER_CRITICAL(&this->impl_->artwork_mux);
+  if (this->impl_->requested_visible != eligible) {
+    this->impl_->requested_visible = eligible;
+    this->impl_->visibility_dirty = true;
+    if (!eligible) {
+      this->impl_->hide_pending = true;
+      this->impl_->eligible.store(false, std::memory_order_release);
+      this->impl_->generation.fetch_add(1, std::memory_order_acq_rel);
+    }
+  }
+  taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+}
+
+void HomeAssistantMediaSource::ConsumeArtworkVisibility_() {
+  if (this->impl_ == nullptr)
+    return;
+  bool dirty, hidden, visible;
+  taskENTER_CRITICAL(&this->impl_->artwork_mux);
+  dirty = this->impl_->visibility_dirty;
+  hidden = this->impl_->hide_pending;
+  visible = this->impl_->requested_visible;
+  if (dirty) {
+    this->impl_->eligible.store(visible, std::memory_order_release);
+    this->impl_->hide_pending = false;
+    this->impl_->visibility_dirty = false;
+  }
+  taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+  if (dirty) {
+    if (hidden)
+      this->artwork_fetch_policy_.SetVisible(false);
+    this->artwork_fetch_policy_.SetVisible(visible);
   }
 }
 
@@ -628,19 +691,37 @@ void HomeAssistantMediaSource::ObserveArtworkCompletion_(uint32_t now_ms) {
       !this->impl_->completion_ready.exchange(false, std::memory_order_acq_rel))
     return;
   const Impl::Completion completion = this->impl_->completion.Get();
+  this->ConsumeArtworkVisibility_();
   if (!this->artwork_fetch_policy_.Accepts(completion.request.generation,
                                            completion.request.identity))
     return;
 
+  auto candidate = this->policy_;
   pixoo::now_playing::NowPlayingData data;
-  if (this->policy_.CompleteArtwork(completion.request.identity,
-                                    completion.request.revision,
-                                    completion.succeeded, now_ms, &data)) {
+  const bool changed = candidate.CompleteArtwork(
+      completion.request.identity, completion.request.revision,
+      completion.succeeded, now_ms, &data);
+  this->ConsumeArtworkVisibility_();
+  taskENTER_CRITICAL(&this->impl_->artwork_mux);
+  const bool current = this->impl_->eligible.load(std::memory_order_acquire) &&
+      this->impl_->generation.load(std::memory_order_acquire) ==
+          completion.request.cancellation_generation;
+  if (current && changed) {
+    this->current_snapshot_.data = data;
+    this->current_snapshot_.settled = !this->configured_ ||
+        (this->transport_connected_ && this->initial_snapshot_complete_ &&
+         !candidate.HasPendingPublication());
+    this->snapshot_.Publish(this->current_snapshot_);
+  }
+  taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+  if (!current)
+    return;
+  if (changed) {
+    this->policy_ = candidate;
     if (completion.succeeded)
       this->artwork_fetch_policy_.Succeeded();
     else
       this->artwork_fetch_policy_.Failed(now_ms);
-    this->Publish_(data);
   } else if (!completion.succeeded) {
     this->artwork_fetch_policy_.Failed(now_ms);
   }
@@ -672,29 +753,61 @@ void HomeAssistantMediaSource::ScheduleArtwork_(uint32_t now_ms) {
   if (complete) {
     if (data.artwork_availability ==
         pixoo::now_playing::ArtworkAvailability::kPending) {
+      uint32_t generation;
+      taskENTER_CRITICAL(&this->impl_->artwork_mux);
+      generation = this->impl_->generation.load(std::memory_order_acquire);
+      const bool eligible = this->impl_->eligible.load(std::memory_order_acquire);
+      taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+      if (!eligible)
+        return;
+      auto candidate = this->policy_;
       pixoo::now_playing::NowPlayingData ready;
-      if (this->policy_.CompleteArtwork(data.artwork_identity,
+      const bool changed = candidate.CompleteArtwork(data.artwork_identity,
                                         data.artwork_revision, true, now_ms,
-                                        &ready)) {
+                                        &ready);
+      taskENTER_CRITICAL(&this->impl_->artwork_mux);
+      const bool current = this->impl_->eligible.load(std::memory_order_acquire) &&
+          this->impl_->generation.load(std::memory_order_acquire) == generation;
+      if (changed && current) {
+        this->current_snapshot_.data = ready;
+        this->snapshot_.Publish(this->current_snapshot_);
+      }
+      taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+      if (changed && current) {
+        this->policy_ = candidate;
         this->artwork_fetch_policy_.Succeeded();
-        this->Publish_(ready);
       }
     }
     return;
   }
 
   if (!slots_available) {
-    if (this->impl_->eligible.load(std::memory_order_acquire) &&
-        data.artwork_availability ==
-            pixoo::now_playing::ArtworkAvailability::kPending) {
+    if (data.artwork_availability ==
+        pixoo::now_playing::ArtworkAvailability::kPending) {
+      uint32_t generation;
+      taskENTER_CRITICAL(&this->impl_->artwork_mux);
+      generation = this->impl_->generation.load(std::memory_order_acquire);
+      const bool eligible = this->impl_->eligible.load(std::memory_order_acquire);
+      taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+      if (!eligible)
+        return;
+      auto candidate = this->policy_;
       pixoo::now_playing::NowPlayingData failed;
-      if (this->policy_.CompleteArtwork(data.artwork_identity,
+      const bool changed = candidate.CompleteArtwork(data.artwork_identity,
                                         data.artwork_revision, false, now_ms,
-                                        &failed))
+                                        &failed);
+      taskENTER_CRITICAL(&this->impl_->artwork_mux);
+      const bool current = this->impl_->eligible.load(std::memory_order_acquire) &&
+          this->impl_->generation.load(std::memory_order_acquire) == generation;
+      if (current && changed)
         this->Publish_(failed);
-      // Slot allocation cannot recover without reboot, so keep metadata/no-art
-      // usable without downloading bodies that cannot be published.
-      this->artwork_fetch_policy_.Succeeded();
+      taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+      if (current) {
+        if (changed)
+          this->policy_ = candidate;
+        // Slot allocation cannot recover without reboot.
+        this->artwork_fetch_policy_.Succeeded();
+      }
     }
     return;
   }
@@ -726,6 +839,12 @@ void HomeAssistantMediaSource::ScheduleArtwork_(uint32_t now_ms) {
   request.identity = data.artwork_identity;
   request.revision = data.artwork_revision;
   request.generation = this->artwork_fetch_policy_.generation();
+  taskENTER_CRITICAL(&this->impl_->artwork_mux);
+  const bool eligible = this->impl_->eligible.load(std::memory_order_acquire);
+  request.cancellation_generation = this->impl_->generation.load(std::memory_order_acquire);
+  taskEXIT_CRITICAL(&this->impl_->artwork_mux);
+  if (!eligible)
+    return;
   this->impl_->request.Publish(request);
   this->impl_->in_flight.store(true, std::memory_order_release);
   if (this->impl_->fetch_worker.Wake())
@@ -753,11 +872,11 @@ void HomeAssistantMediaSource::FetchArtworkJob_() {
   uint8_t *encoded = nullptr;
   size_t encoded_size = 0;
   const bool fetched =
-      this->FetchArtwork_(request.url, request.url_size, request.generation,
+      this->FetchArtwork_(request.url, request.url_size, request.cancellation_generation,
                           &encoded, &encoded_size);
   ArtworkCancellationContext cancellation{
       &this->impl_->fetch_worker, &this->impl_->eligible,
-      &this->impl_->generation, request.generation};
+      &this->impl_->generation, request.cancellation_generation};
   const auto current = [&cancellation]() {
     return !ArtworkCancelled(&cancellation);
   };
@@ -838,7 +957,7 @@ void HomeAssistantMediaSource::DecodeArtworkJob_() {
 
   ArtworkCancellationContext cancellation{
       &this->impl_->decode_worker, &this->impl_->eligible,
-      &this->impl_->generation, request.generation};
+      &this->impl_->generation, request.cancellation_generation};
   const auto current = [&cancellation]() {
     return !ArtworkCancelled(&cancellation);
   };
@@ -1036,6 +1155,7 @@ void HomeAssistantMediaSource::OnRoot_(StringRef value) {
 
 void HomeAssistantMediaSource::OnRootState_(
     pixoo::now_playing::PlaybackState state, uint32_t now_ms) {
+  this->MarkUnsettled_();
   pixoo::now_playing::NowPlayingData data;
   if (this->policy_.OnPlaybackState(state, now_ms, &data))
     this->Publish_(data);
@@ -1052,6 +1172,7 @@ void HomeAssistantMediaSource::OnRootState_(
 }
 
 void HomeAssistantMediaSource::OnContentId_(StringRef value) {
+  this->MarkUnsettled_();
   if (value.size() >
       pixoo::now_playing::NowPlayingMetadataPolicy::kMaxContentIdBytes)
     return;
@@ -1075,14 +1196,17 @@ void HomeAssistantMediaSource::OnContentId_(StringRef value) {
 }
 
 void HomeAssistantMediaSource::OnTitle_(StringRef value) {
+  this->MarkUnsettled_();
   this->policy_.OnTitle(value.c_str(), value.size(), millis());
 }
 
 void HomeAssistantMediaSource::OnArtist_(StringRef value) {
+  this->MarkUnsettled_();
   this->policy_.OnArtist(value.c_str(), value.size(), millis());
 }
 
 void HomeAssistantMediaSource::OnDuration_(StringRef value) {
+  this->MarkUnsettled_();
   if (value.empty()) {
     this->policy_.OnDuration(false, 0.0, millis());
     return;
@@ -1137,6 +1261,7 @@ void HomeAssistantMediaSource::StagePosition_(double seconds,
 }
 
 void HomeAssistantMediaSource::OnPosition_(StringRef value) {
+  this->MarkUnsettled_();
   const uint32_t receipt_ms = millis();
   if (!this->position_context_allowed_)
     return;
@@ -1156,6 +1281,7 @@ void HomeAssistantMediaSource::OnPosition_(StringRef value) {
 }
 
 void HomeAssistantMediaSource::OnPositionUpdatedAt_(StringRef value) {
+  this->MarkUnsettled_();
   if (!this->position_context_allowed_) {
     this->ClearPositionTracking_();
     return;
@@ -1171,6 +1297,7 @@ void HomeAssistantMediaSource::OnPositionUpdatedAt_(StringRef value) {
 }
 
 void HomeAssistantMediaSource::OnEntityPicture_(StringRef value) {
+  this->MarkUnsettled_();
   const uint32_t now_ms = millis();
   std::string resolved;
   if (value.empty() || !now_playing_config::ResolveArtworkUrl(
@@ -1197,8 +1324,7 @@ void HomeAssistantMediaSource::OnEntityPicture_(StringRef value) {
     this->artwork_fetch_policy_.SetDesired(identity, true);
     if (this->impl_ != nullptr) {
       taskENTER_CRITICAL(&this->impl_->artwork_mux);
-      this->impl_->generation.store(this->artwork_fetch_policy_.generation(),
-                                    std::memory_order_release);
+      this->impl_->generation.fetch_add(1, std::memory_order_acq_rel);
       taskEXIT_CRITICAL(&this->impl_->artwork_mux);
     }
   }

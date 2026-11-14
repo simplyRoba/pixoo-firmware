@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 
+#include "esphome/components/pixoo64_content/input_snapshot.h"
 #include "esphome/components/time/real_time_clock.h"
 #include "sky_astronomy.h"
 #include "weather_renderer.h"
@@ -38,22 +39,34 @@ class WeatherModel {
   void set_fixed_time(time_t epoch) {
     this->fixed_epoch_ = epoch;
     this->has_fixed_time_ = true;
-    this->sky_cache_valid_ = false;
+    this->CaptureTime();
+  }
+
+  void CaptureTime() {
+    ESPTime now{};
+    if (this->has_fixed_time_)
+      now = ESPTime::from_epoch_utc(this->fixed_epoch_);
+    else if (this->time_ != nullptr)
+      now = this->time_->now();
+    this->time_snapshot_.Publish(now);
   }
 
   bool available() const {
-    return this->source_ != nullptr && this->source_->HasData();
+    return this->source_ != nullptr && this->source_->ReadSnapshot().available;
   }
 
   WeatherViewModel BuildView() const {
     WeatherViewModel v;
     ESPTime now{};
     const bool have_time = this->resolve_time_(now);
-    if (this->source_ != nullptr && this->source_->HasData()) {
-      const pixoo::WeatherData d = this->source_->Data();
-      this->fill_from_data_(v, d, have_time ? now.hour : -1);
-      if (have_time && d.has_location)
-        v.sky = this->sky_state_(now.timestamp, d.latitude, d.longitude);
+    if (this->source_ != nullptr) {
+      const auto snapshot = this->source_->ReadSnapshot();
+      if (snapshot.available) {
+        const auto &d = snapshot.data;
+        this->fill_from_data_(v, d, have_time ? now.hour : -1);
+        if (have_time && d.has_location)
+          v.sky = this->sky_state_(now.timestamp, d.latitude, d.longitude);
+      }
     }
     this->fill_time_(v, now, have_time);
     return v;
@@ -107,15 +120,8 @@ class WeatherModel {
   }
 
   bool resolve_time_(ESPTime &now) const {
-    if (this->has_fixed_time_) {
-      now = ESPTime::from_epoch_utc(this->fixed_epoch_);
-      return now.is_valid();
-    }
-    if (this->time_ != nullptr) {
-      now = this->time_->now();
-      return now.is_valid();
-    }
-    return false;
+    now = this->time_snapshot_.Get();
+    return now.is_valid();
   }
 
   const pixoo::SkyState &sky_state_(time_t epoch, float latitude,
@@ -143,6 +149,7 @@ class WeatherModel {
     }
   }
 
+  content::InputSnapshot<ESPTime> time_snapshot_;
   WeatherSource *source_{nullptr};
   time::RealTimeClock *time_{nullptr};
   time_t fixed_epoch_{0};

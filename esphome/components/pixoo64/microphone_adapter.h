@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "esphome/components/i2s_audio/microphone/i2s_audio_microphone.h"
 #include "esphome/components/switch/switch.h"
@@ -47,7 +48,11 @@ class MicrophoneAdapter final : public PollingComponent,
   i2s_audio::I2SAudioMicrophone *microphone_{nullptr};
   switch_::Switch *enable_switch_{nullptr};
   pixoo::EqualizerLevelsSink *levels_sink_{nullptr};
-  pixoo::EqualizerProcessor processor_;
+  struct CaptureDeleter {
+    void operator()(pixoo::EqualizerProcessor::CaptureStorage *storage) const;
+  };
+  std::unique_ptr<pixoo::EqualizerProcessor::CaptureStorage, CaptureDeleter> capture_;
+  pixoo::EqualizerProcessor processor_{nullptr};
   bool configured_{false};
   bool microphone_requested_{false};
   bool microphone_stop_pending_{false};

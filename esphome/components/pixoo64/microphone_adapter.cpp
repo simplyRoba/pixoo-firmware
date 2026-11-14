@@ -1,7 +1,10 @@
 #include "microphone_adapter.h"
 
 #include <cinttypes>
+#include <new>
 #include <vector>
+
+#include "esp_heap_caps.h"
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -13,15 +16,29 @@ const char *const TAG = "pixoo64.microphone";
 
 }  // namespace
 
+void MicrophoneAdapter::CaptureDeleter::operator()(
+    pixoo::EqualizerProcessor::CaptureStorage *storage) const {
+  if (storage != nullptr) {
+    storage->~CaptureStorage();
+    heap_caps_free(storage);
+  }
+}
+
 void MicrophoneAdapter::setup() {
+  using CaptureStorage = pixoo::EqualizerProcessor::CaptureStorage;
+  void *memory = heap_caps_malloc(sizeof(CaptureStorage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (memory != nullptr)
+    this->capture_.reset(new (memory) CaptureStorage);
+  this->processor_.SetCaptureStorage(this->capture_.get());
   if (this->microphone_ == nullptr || this->levels_sink_ == nullptr) {
     ESP_LOGE(TAG, "microphone and levels sink are required");
+    this->SetEnableSwitch_(false);
     this->mark_failed();
     return;
   }
 
   if (!this->processor_.ready()) {
-    ESP_LOGE(TAG, "equalizer history allocation failed");
+    ESP_LOGE(TAG, "equalizer capture or history allocation failed");
     this->SetEnableSwitch_(false);
     this->mark_failed();
     return;
@@ -44,6 +61,7 @@ void MicrophoneAdapter::setup() {
              static_cast<unsigned int>(stream_info.get_bits_per_sample()),
              static_cast<unsigned int>(stream_info.get_channels()),
              stream_info.get_sample_rate());
+    this->SetEnableSwitch_(false);
     this->mark_failed();
     return;
   }

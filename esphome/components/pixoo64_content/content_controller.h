@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -57,6 +60,9 @@ class ContentController : public display::Display,
   void set_render_over_budget_sensor(sensor::Sensor *sensor) {
     this->render_over_budget_sensor_ = sensor;
   }
+  void setup() override;
+  float get_setup_priority() const override { return setup_priority::DATA + 1.0f; }
+  void loop() override;
   void update() override;
   display::DisplayType get_display_type() override {
     return display::DISPLAY_TYPE_COLOR;
@@ -68,6 +74,7 @@ class ContentController : public display::Display,
   void WriteGrayscaleSpan(int x, int y, int length,
                           const uint8_t *gray) override;
 
+  void CaptureInputs(const std::string &requested_id) override;
   bool ResolveDashboard(const std::string &requested_id,
                         pixoo::DashboardSelection *selection) override;
   // Fans captured spectrum levels out to every equalizer dashboard, so each
@@ -105,8 +112,12 @@ class ContentController : public display::Display,
   void RecordRender_(uint32_t elapsed_us);
   void PublishRenderWindow_();
   void ResetRenderWindow_();
+  void DrainLevels_();
 
   std::vector<Dashboard *> dashboards_;
+  // Catalog objects have application lifetime; only these handoffs cross tasks.
+  std::atomic<Dashboard *> capture_requested_{nullptr};
+  std::atomic<Dashboard *> capture_visible_{nullptr};
   Dashboard *visible_{nullptr};
   Dashboard *pending_{nullptr};
   TimingView timing_view_;
@@ -121,7 +132,11 @@ class ContentController : public display::Display,
     void operator()(uint8_t *pixels) const;
   };
 
-  pixoo::Framebuffer framebuffer_;
+  struct FrameBufferDeleter {
+    void operator()(pixoo::Framebuffer *framebuffer) const;
+  };
+
+  std::unique_ptr<pixoo::Framebuffer, FrameBufferDeleter> framebuffer_;
   std::unique_ptr<pixoo::Framebuffer, ReactionBackgroundDeleter>
       reaction_background_;
   std::unique_ptr<uint8_t, NotificationBackgroundDeleter> notification_background_;
@@ -140,6 +155,23 @@ class ContentController : public display::Display,
   sensor::Sensor *render_max_sensor_{nullptr};
   sensor::Sensor *render_over_budget_sensor_{nullptr};
   uint32_t render_budget_us_{0};
+  std::mutex render_metrics_mutex_;
+
+ private:
+  static constexpr size_t kLevelQueueSize = 32;
+  struct LevelStorage {
+    std::array<std::array<float, pixoo::kBands>, kLevelQueueSize> queue;
+    std::array<float, pixoo::kBands> latest;
+  };
+  struct LevelStorageDeleter {
+    void operator()(LevelStorage *storage) const;
+  };
+  std::mutex levels_mutex_;
+  std::unique_ptr<LevelStorage, LevelStorageDeleter> levels_storage_;
+  bool levels_allocation_attempted_{false};
+  size_t levels_head_{0};
+  size_t levels_count_{0};
+  uint32_t levels_overflow_count_{0};
   uint32_t render_frames_{0};
   uint32_t render_over_budget_{0};
   uint32_t render_max_us_{0};

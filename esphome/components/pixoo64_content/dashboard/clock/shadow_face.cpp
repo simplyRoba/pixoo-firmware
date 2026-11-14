@@ -3,23 +3,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
-#include <new>
-
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "pixoo_cmd.h"
-
-#if defined(USE_ESP32)
-#include "sdkconfig.h"
-#include "esphome/core/log.h"
-#if !defined(CONFIG_FREERTOS_UNICORE) || !CONFIG_FREERTOS_UNICORE
-#include "esp_heap_caps.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#define SHADOW_PARALLEL
-#endif
-#endif
 
 // Balance shader execution speed with its code footprint.
 #if defined(__GNUC__) && !defined(__clang__)
@@ -594,13 +579,13 @@ static_assert(sizeof(SceneSnapshot) <= 4096);
 // Output starts at first_row and retains screen-row spacing. Signed division
 // retains C++ truncation toward zero for negative subpixel projections.
 void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
-                uint8_t *gray, int row_step = 1) {
+                uint8_t *gray) {
   const auto &hour = scene.hour, &minute = scene.minute, &second = scene.second;
   const auto &hour_shadows = scene.hour_shadows;
   const auto &minute_shadows = scene.minute_shadows;
   const int hour_level = scene.hour_level, minute_level = scene.minute_level;
   const int second_level = scene.second_level, second_occlusion = scene.second_occlusion;
-  for (int y = first_row; y < last_row; y += row_step) {
+  for (int y = first_row; y < last_row; ++y) {
     uint8_t *row = gray + (y - first_row) * pixoo::kWidth;
     const int dy = 2 * y - 63;
     int ah = -63 * hour.x + dy * hour.y;
@@ -694,95 +679,7 @@ void RenderRows(const SceneSnapshot &scene, int first_row, int last_row,
 
 }  // namespace
 
-// The display and its active canvas belong exclusively to the calling task.
-// Only immutable scene data and disjoint grayscale rows cross task boundaries.
-struct ShadowFace::RenderState {
-#ifdef SHADOW_PARALLEL
-  struct Job {
-    const SceneSnapshot *scene;
-    int first_row, last_row;
-  };
-  uint8_t *gray{nullptr};
-  StaticQueue_t queue_storage;
-  uint8_t job_storage[sizeof(Job)];
-  StaticSemaphore_t done_storage;
-  QueueHandle_t queue{nullptr};
-  SemaphoreHandle_t done{nullptr};
-  TaskHandle_t task{nullptr};
-
-  static void Worker(void *arg) {
-    auto *self = static_cast<RenderState *>(arg);
-    for (;;) {
-      Job job;
-      xQueueReceive(self->queue, &job, portMAX_DELAY);
-      if (job.scene == nullptr) {
-        // Nothing may access self after this acknowledgement: the owner can
-        // release it immediately, while task deletion finishes on this core.
-        const auto done = self->done;
-        xSemaphoreGive(done);
-        vTaskDelete(nullptr);
-        return;
-      }
-      RenderRows(*job.scene, job.first_row, job.last_row,
-                 self->gray + job.first_row * 64, 2);
-      xSemaphoreGive(self->done);
-    }
-  }
-
-  bool Start() {
-    this->gray = static_cast<uint8_t *>(
-        heap_caps_malloc(64 * 64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (this->gray == nullptr)
-      this->gray = static_cast<uint8_t *>(
-          heap_caps_malloc(64 * 64, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (this->gray == nullptr)
-      return false;
-    this->queue = xQueueCreateStatic(1, sizeof(Job), this->job_storage,
-                                    &this->queue_storage);
-    this->done = xSemaphoreCreateBinaryStatic(&this->done_storage);
-    if (this->queue == nullptr || this->done == nullptr)
-      return false;
-    // The ordinary ESP-IDF task allocator keeps the stack and TCB in internal
-    // RAM. They outlive StopAck and are reclaimed by task deletion, not by us.
-    // ESP-IDF task stack sizes are bytes, unlike vanilla FreeRTOS.
-    return xTaskCreatePinnedToCore(&RenderState::Worker, "shadow_rows", 2048,
-                                  this, 1, &this->task,
-                                  1 - xPortGetCoreID()) == pdPASS;
-  }
-
-  ~RenderState() {
-    if (this->task != nullptr) {
-      const Job stop{nullptr, 0, 0};
-      xQueueSend(this->queue, &stop, portMAX_DELAY);
-      xSemaphoreTake(this->done, portMAX_DELAY);
-    }
-    if (this->queue != nullptr)
-      vQueueDelete(this->queue);
-    if (this->done != nullptr)
-      vSemaphoreDelete(this->done);
-    heap_caps_free(this->gray);
-  }
-#endif
-};
-
 ShadowFace::ShadowFace() = default;
-ShadowFace::~ShadowFace() = default;
-
-void ShadowFace::ReleaseRenderResources() {
-  this->render_state_.reset();
-  this->render_state_attempted_ = false;
-}
-
-void ShadowFace::RenderStateDeleter::operator()(RenderState *state) const {
-#ifdef SHADOW_PARALLEL
-  if (state != nullptr) {
-    state->~RenderState();
-    heap_caps_free(state);
-  }
-#else
-  delete state;
-#endif
-}
 
 void ShadowFace::Render(display::Display &display) const {
   const auto levels = this->model_.Levels();
@@ -793,45 +690,6 @@ void ShadowFace::Render(display::Display &display) const {
   static_assert(pixoo::kWidth == 64 && pixoo::kHeight == 64);
   auto *canvas = content::BlendCanvasOf(display);
   const SceneSnapshot scene(this->model_.Angles(), levels);
-#ifdef SHADOW_PARALLEL
-  if (!this->render_state_attempted_) {
-    this->render_state_attempted_ = true;
-    void *memory = heap_caps_malloc(sizeof(RenderState), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (memory != nullptr) {
-      this->render_state_.reset(new (memory) RenderState{});
-      if (!this->render_state_->Start())
-        this->render_state_.reset();
-    }
-    if (!this->render_state_)
-      ESP_LOGW("shadow_face", "Parallel renderer unavailable; using exact serial rendering");
-  }
-  if (this->render_state_) {
-    auto &state = *this->render_state_;
-    // Alternating rows keep directional light fields balanced across cores.
-    const RenderState::Job job{&scene, 0, 64};
-    xQueueSend(state.queue, &job, portMAX_DELAY);
-    RenderRows(scene, 1, 64, state.gray + 64, 2);
-    xSemaphoreTake(state.done, portMAX_DELAY);
-    if (canvas != nullptr) {
-      for (int y = 0; y < 64; ++y)
-        canvas->WriteGrayscaleSpan(0, y, 64, state.gray + y * 64);
-      return;
-    }
-    display.fill(Color(0, 0, 0));
-    for (int y = 0; y < 64; ++y)
-      for (int x = 0; x < 64; ++x) {
-        const uint8_t gray = state.gray[y * 64 + x];
-        if (gray != 0)
-          display.draw_pixel_at(x, y, Color(gray, gray, gray));
-      }
-    return;
-  }
-#elif defined(USE_ESP32)
-  if (!this->render_state_attempted_) {
-    this->render_state_attempted_ = true;
-    ESP_LOGW("shadow_face", "Single-core target; using exact serial rendering");
-  }
-#endif
   if (canvas == nullptr)
     display.fill(Color(0, 0, 0));
   uint8_t row[64];
@@ -852,5 +710,3 @@ void ShadowFace::Render(display::Display &display) const {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC pop_options
 #endif
-
-#undef SHADOW_PARALLEL

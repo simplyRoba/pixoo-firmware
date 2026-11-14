@@ -19,6 +19,15 @@ constexpr uint32_t kReceiveBudgetUs = 1000;
 constexpr size_t kReadAttempts = 32;
 }  // namespace
 
+void DdpDashboard::HandoffStorageDeleter::operator()(HandoffStorage *storage) const {
+#ifdef ESP_PLATFORM
+  storage->~HandoffStorage();
+  heap_caps_free(storage);
+#else
+  delete storage;
+#endif
+}
+
 void DdpDashboard::FrameStorageDeleter::operator()(
     pixoo::ddp::FrameBuffer *storage) const {
 #ifdef ESP_PLATFORM
@@ -35,47 +44,67 @@ bool DdpDashboard::EnsureFrameStorage_() {
   if (this->allocation_attempted_)
     return false;
   this->allocation_attempted_ = true;
+  std::unique_ptr<pixoo::ddp::FrameBuffer, FrameStorageDeleter> frames;
+  std::unique_ptr<HandoffStorage, HandoffStorageDeleter> handoff;
 #ifdef ESP_PLATFORM
   void *memory = heap_caps_malloc(sizeof(pixoo::ddp::FrameBuffer),
                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (memory == nullptr)
-    return false;
-  this->frames_.reset(new (memory) pixoo::ddp::FrameBuffer{});
+  if (memory != nullptr)
+    frames.reset(new (memory) pixoo::ddp::FrameBuffer{});
+  if (frames != nullptr) {
+    memory = heap_caps_malloc(sizeof(HandoffStorage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory != nullptr)
+      handoff.reset(new (memory) HandoffStorage{});
+  }
 #else
-  this->frames_.reset(new (std::nothrow) pixoo::ddp::FrameBuffer{});
+  frames.reset(new (std::nothrow) pixoo::ddp::FrameBuffer{});
+  if (frames != nullptr)
+    handoff.reset(new (std::nothrow) HandoffStorage{});
 #endif
-  return this->frames_ != nullptr;
+  if (frames == nullptr || handoff == nullptr)
+    return false;
+  this->frames_ = std::move(frames);
+  {
+    std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+    this->handoff_ = std::move(handoff);
+  }
+  return true;
 }
 
 void DdpDashboard::Render(display::Display &display) const {
-  if (this->frames_ == nullptr) {
-    display.fill(Color(0, 0, 0));
-    return;
+  HandoffStorage *handoff;
+  {
+    std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+    handoff = this->handoff_.get();
+    if (handoff != nullptr)
+      handoff->render_scratch = handoff->published;
   }
-  const auto &frame = this->frames_->frame();
   for (size_t y = 0; y < pixoo::ddp::kFrameHeight; ++y) {
     for (size_t x = 0; x < pixoo::ddp::kFrameWidth; ++x) {
       const size_t offset = (y * pixoo::ddp::kFrameWidth + x) * 3;
-      display.draw_pixel_at(
-          x, y, Color(frame[offset], frame[offset + 1], frame[offset + 2]));
+      display.draw_pixel_at(x, y, handoff == nullptr ? Color(0, 0, 0) :
+          Color(handoff->render_scratch[offset], handoff->render_scratch[offset + 1],
+                handoff->render_scratch[offset + 2]));
     }
   }
 }
 
 void DdpDashboard::OnShow(uint32_t) {
-  if (this->active_)
-    return;
-  this->active_ = true;
-  this->retry_pending_ = false;
-  if (!this->EnsureFrameStorage_()) {
-    this->status_set_warning();
-    return;
+  std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+  if (!this->desired_active_) {
+    this->desired_active_ = true;
+    ++this->generation_;
   }
-  this->frames_->Reset();
 }
 
 void DdpDashboard::OnHide(uint32_t) {
-  this->Stop_();
+  std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+  if (this->desired_active_) {
+    this->desired_active_ = false;
+    ++this->generation_;
+    if (this->handoff_ != nullptr)
+      this->handoff_->published.fill(0);
+  }
 }
 
 void DdpDashboard::CloseListener_() {
@@ -86,6 +115,7 @@ void DdpDashboard::CloseListener_() {
 }
 
 void DdpDashboard::on_shutdown() {
+  this->OnHide(0);
   this->Stop_();
 }
 
@@ -137,6 +167,20 @@ void DdpDashboard::loop() {
 }
 
 void DdpDashboard::Service_(uint32_t now_ms) {
+  bool desired;
+  uint32_t generation;
+  {
+    std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+    desired = this->desired_active_;
+    generation = this->generation_;
+  }
+  if (generation != this->applied_generation_) {
+    this->Stop_();
+    this->applied_generation_ = generation;
+    this->active_ = desired;
+    if (desired && !this->EnsureFrameStorage_())
+      this->status_set_warning();
+  }
   if (!this->active_)
     return;
   if (this->frames_ != nullptr && !this->listener_ &&
@@ -154,8 +198,12 @@ void DdpDashboard::Service_(uint32_t now_ms) {
       const ssize_t length = this->listener_->recvfrom(
           this->receive_buffer_.data(), this->receive_buffer_.size(), nullptr, nullptr);
       if (length >= 0) {
-        this->frames_->Apply(this->receive_buffer_.data(),
-                             static_cast<size_t>(length));
+        if (this->frames_->Apply(this->receive_buffer_.data(),
+                                 static_cast<size_t>(length)) == pixoo::ddp::DatagramResult::kPublished) {
+          std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+          if (this->desired_active_ && this->generation_ == this->applied_generation_)
+            this->handoff_->published = this->frames_->frame();
+        }
       } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         drain_exhausted = false;
         break;

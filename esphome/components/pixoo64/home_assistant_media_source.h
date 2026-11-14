@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -57,6 +58,7 @@ public:
 
   pixoo::now_playing::NowPlayingData Data() const override;
   bool SnapshotSettled() const override;
+  pixoo::now_playing::NowPlayingSnapshot ReadSnapshot() const override;
   void SetArtworkEligible(bool eligible, uint32_t now_ms) override;
   bool CopyArtwork(uint64_t expected_identity, uint32_t expected_revision,
                    uint16_t *destination,
@@ -81,6 +83,9 @@ protected:
   void SetTransportConnected_(bool connected, uint32_t now_ms);
   void ResetState_(uint32_t now_ms);
   void Publish_(const pixoo::now_playing::NowPlayingData &data);
+  void UpdateSettled_();
+  void MarkUnsettled_();
+  void ConsumeArtworkVisibility_();
   void OnSubscriptionRoot_(StringRef value);
   void OnRoot_(StringRef value);
   void OnRootState_(pixoo::now_playing::PlaybackState state, uint32_t now_ms);
@@ -111,7 +116,9 @@ protected:
   ESPPreferenceObject preference_{};
   now_playing_config::ConfigRecord record_{};
   pixoo::now_playing::NowPlayingMetadataPolicy policy_{};
-  async::SnapshotBuffer<pixoo::now_playing::NowPlayingData> snapshot_{};
+  async::SnapshotBuffer<pixoo::now_playing::NowPlayingSnapshot> snapshot_{};
+  pixoo::now_playing::NowPlayingSnapshot current_snapshot_{};
+  bool setup_complete_{false};
   char desired_artwork_url_[now_playing_config::kMaxResolvedArtworkUrlBytes +
                             1]{};
   uint16_t desired_artwork_url_size_{0};

@@ -22,8 +22,21 @@ const float kCeilSeed[kBands] = {82000, 69000, 42000, 17000, 10000, 9500,
 
 }  // namespace
 
-EqualizerProcessor::EqualizerProcessor()
-    : history_(new (std::nothrow) History{}) {}
+EqualizerProcessor::EqualizerProcessor() : EqualizerProcessor(nullptr) {
+  this->owned_capture_.reset(new (std::nothrow) CaptureStorage);
+  this->capture_ = this->owned_capture_.get();
+}
+
+EqualizerProcessor::EqualizerProcessor(CaptureStorage *external)
+    : capture_(external), history_(new (std::nothrow) History{}) {}
+
+void EqualizerProcessor::SetCaptureStorage(CaptureStorage *external) {
+  this->owned_capture_.reset();
+  this->capture_ = external;
+  this->fill_ = 0;
+  this->written_.store(0, std::memory_order_relaxed);
+  this->read_ = 0;
+}
 
 void EqualizerProcessor::AddSamples(const int32_t *samples, size_t count) {
   this->AddSampleBytes(reinterpret_cast<const uint8_t *>(samples),
@@ -31,13 +44,14 @@ void EqualizerProcessor::AddSamples(const int32_t *samples, size_t count) {
 }
 
 void EqualizerProcessor::AddSampleBytes(const uint8_t *bytes, size_t byte_count) {
+  if (!this->ready()) return;
   const size_t sample_count = byte_count / sizeof(int32_t);
   for (size_t i = 0; i < sample_count; i++) {
     int32_t sample;
     std::memcpy(&sample, bytes + i * sizeof(sample), sizeof(sample));
     // The in-progress window is the slot after the last published one.
     const uint32_t slot = this->written_.load(std::memory_order_relaxed) % kRing;
-    this->window_[slot][this->fill_++] = static_cast<float>(sample >> 8);
+    this->capture_->windows[slot][this->fill_++] = static_cast<float>(sample >> 8);
     if (this->fill_ == kFftSize) {
       // Publish the completed window and start the next slot; filling never
       // stops, so capture is continuous across callbacks.
@@ -76,7 +90,7 @@ float Percentile(const float *values, int n, float pct, float *scratch) {
 }  // namespace
 
 bool EqualizerProcessor::Poll(float out_levels[kBands]) {
-  if (!this->history_) return false;
+  if (!this->ready()) return false;
   const uint32_t written = this->written_.load(std::memory_order_acquire);
   if (written == this->read_)
     return false;  // no complete window since the last Poll
@@ -92,7 +106,7 @@ bool EqualizerProcessor::Poll(float out_levels[kBands]) {
   SpectrumBands sb{};
   int count = 0;
   for (uint32_t w = first; w < written; w++) {
-    const SpectrumBands one = AnalyzeWindow(this->window_[w % kRing]);
+    const SpectrumBands one = AnalyzeWindow(this->capture_->windows[w % kRing]);
     for (int b = 0; b < kBands; b++) sb.magnitude[b] += one.magnitude[b];
     count++;
   }

@@ -97,9 +97,10 @@ void NowPlayingDashboard::CancelPreparation(uint32_t now_ms) {
 }
 
 bool NowPlayingDashboard::ReadyToShow() const {
-  if (!this->available() || !this->source_->SnapshotSettled())
+  if (!this->available())
     return false;
-  return NowPlayingPresentation::ReadyToShow(this->source_->Data(), true);
+  const auto snapshot = this->source_->ReadSnapshot();
+  return NowPlayingPresentation::ReadyToShow(snapshot.data, snapshot.settled);
 }
 
 void NowPlayingDashboard::OnShow(uint32_t now_ms) {
@@ -301,7 +302,8 @@ void NowPlayingDashboard::Tick(uint32_t now_ms) {
   if (!this->available())
     return;
   ArtworkBridge artwork(*this);
-  this->presentation_.Update(this->source_->Data(), now_ms, artwork);
+  const auto snapshot = this->source_->ReadSnapshot();
+  this->presentation_.Update(snapshot.data, now_ms, artwork);
   this->UpdateTextLayout_(now_ms);
   this->RasterizeRows_();
 }

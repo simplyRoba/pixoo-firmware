@@ -928,6 +928,45 @@ static void test_processor_windows_and_polls() {
   TEST_ASSERT_TRUE(any);
 }
 
+static void test_processor_borrowed_capture_and_unavailable() {
+  EqualizerProcessor::CaptureStorage storage{};
+  EqualizerProcessor deferred(nullptr), borrowed(&storage);
+  TEST_ASSERT_FALSE(deferred.ready());
+  TEST_ASSERT_TRUE(borrowed.ready());
+  deferred.SetCaptureStorage(&storage);
+  TEST_ASSERT_TRUE(deferred.ready());
+  EqualizerProcessor proc, reference;
+  TEST_ASSERT_TRUE(proc.ready());
+  proc.SetCaptureStorage(nullptr);
+  TEST_ASSERT_FALSE(proc.ready());
+  int32_t words[kFftSize];
+  for (int n = 0; n < kFftSize; n++)
+    words[n] = static_cast<int32_t>(4000.0f * 256.0f *
+        std::sin(2.0f * (float) M_PI * 20 * n / kFftSize));
+  float actual[kBands], expected[kBands];
+  proc.AddSamples(words, kFftSize);
+  proc.AddSampleBytes(reinterpret_cast<const uint8_t *>(words), sizeof(words));
+  TEST_ASSERT_FALSE(proc.Poll(actual));
+  proc.SetCaptureStorage(&storage);
+  TEST_ASSERT_TRUE(proc.ready());
+  proc.AddSamples(words, kFftSize / 2);
+  proc.AddSampleBytes(reinterpret_cast<const uint8_t *>(words + kFftSize / 2), sizeof(words) / 2);
+  for (int n = 0; n < kFftSize; n++)
+    TEST_ASSERT_EQUAL_FLOAT(static_cast<float>(words[n] >> 8), storage.windows[0][n]);
+  reference.AddSamples(words, kFftSize);
+  TEST_ASSERT_TRUE(proc.Poll(actual));
+  TEST_ASSERT_TRUE(reference.Poll(expected));
+  for (int b = 0; b < kBands; b++)
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, expected[b], actual[b]);
+  proc.AddSamples(words, kFftSize / 2);
+  proc.SetCaptureStorage(nullptr);
+  proc.SetCaptureStorage(&storage);
+  proc.AddSamples(words, kFftSize / 2);
+  TEST_ASSERT_FALSE(proc.Poll(actual));
+  proc.AddSamples(words + kFftSize / 2, kFftSize / 2);
+  TEST_ASSERT_TRUE(proc.Poll(actual));
+}
+
 // Capture is continuous: several windows completed between Polls are all
 // consumed and their spectra averaged, so no audio is dropped while Poll waits.
 static void test_processor_averages_windows_between_polls() {
@@ -3233,6 +3272,7 @@ int main(int, char**) {
   RUN_TEST(test_no_dead_bands);
   RUN_TEST(test_band_mapping_monotonic);
   RUN_TEST(test_processor_windows_and_polls);
+  RUN_TEST(test_processor_borrowed_capture_and_unavailable);
   RUN_TEST(test_processor_averages_windows_between_polls);
   RUN_TEST(test_processor_accepts_misaligned_sample_bytes);
   RUN_TEST(test_processor_noise_gate);

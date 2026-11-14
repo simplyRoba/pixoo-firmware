@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include "esphome/components/pixoo64_content/input_snapshot.h"
 #include <cstdint>
 #include <memory>
 
@@ -14,7 +16,8 @@ namespace esphome::pixoo64::dashboard {
 class TextDashboard : public Dashboard {
  public:
   void set_font(font::Font *font) { this->font_ = font; }
-  void set_text(text::Text *text) { this->text_ = text; }
+  void set_text(text::Text *text) { this->text_ = text; this->CaptureInputs(); }
+  void CaptureInputs() override;
   bool available() const override {
     return this->font_ != nullptr && this->text_ != nullptr &&
            this->EnsureLayoutStorage_();
@@ -66,6 +69,11 @@ class TextDashboard : public Dashboard {
   static bool IsSpace_(char character);
   static size_t Utf8SequenceLength_(const char *data, size_t available);
 
+  struct TextInput {
+    std::array<char, kMaximumTextBytes + 1> bytes{};
+    size_t length{0};
+  };
+  content::InputSnapshot<TextInput> text_snapshot_;
   font::Font *font_{nullptr};
   text::Text *text_{nullptr};
   mutable std::unique_ptr<LayoutStorage, LayoutStorageDeleter> layout_;

@@ -45,6 +45,7 @@ struct OpenMeteoSource::Impl {
   struct TaggedWeatherData {
     pixoo::WeatherData data;
     uint32_t generation{0};
+    bool available{false};
   };
 
   explicit Impl(std::function<void()> job)
@@ -53,15 +54,16 @@ struct OpenMeteoSource::Impl {
   pixoo::WeatherRefreshPolicy refresh;
   async::SnapshotBuffer<TaggedWeatherData> result;
   async::SnapshotBuffer<Completion> completion;
-  // A release-store publishes the worker's completion buffer to the render
+  // A release-store publishes the worker's completion buffer to the main
   // task. Only one request can be active, so the buffer cannot be overwritten
-  // before the render task consumes it.
+  // before the main task consumes it.
   std::atomic<bool> completion_ready{false};
-  // The render task snapshots persisted entity values before waking the worker.
+  std::atomic<bool> refresh_demand{false};
+  // The main task snapshots persisted entity values before waking the worker.
   std::atomic<uint32_t> request_generation{0};
   std::atomic<float> request_latitude{0.0f};
   std::atomic<float> request_longitude{0.0f};
-  // Updated by the render task whenever a location invalidates a request.
+  // Updated by the main task whenever a location invalidates a request.
   std::atomic<uint32_t> location_generation{0};
 };
 
@@ -78,6 +80,12 @@ OpenMeteoSource::~OpenMeteoSource() {
 }
 
 void OpenMeteoSource::setup() {
+  if (!this->impl_->result.Initialize() || !this->impl_->completion.Initialize()) {
+    ESP_LOGE(TAG, "failed to allocate weather snapshots in PSRAM");
+    this->impl_->worker.RequestStop();
+    this->mark_failed();
+    return;
+  }
   if (!this->impl_->worker.Start())
     ESP_LOGE(TAG, "failed to start weather worker");
 }
@@ -92,18 +100,22 @@ bool OpenMeteoSource::teardown() {
 }
 
 bool OpenMeteoSource::HasData() const {
-  if (this->impl_ == nullptr || this->impl_->worker.StopRequested() ||
-      !this->impl_->refresh.HasCurrentData() ||
-      !this->impl_->result.has_value())
-    return false;
-  return this->impl_->result.Get().generation ==
-         this->impl_->refresh.location_generation();
+  return this->ReadSnapshot().available;
 }
 
 pixoo::WeatherData OpenMeteoSource::Data() const {
-  if (!this->HasData())
+  return this->ReadSnapshot().data;
+}
+
+pixoo::WeatherSnapshot OpenMeteoSource::ReadSnapshot() const {
+  if (this->impl_ == nullptr || this->impl_->worker.StopRequested())
     return {};
-  return this->impl_->result.Get().data;
+  Impl::TaggedWeatherData snapshot{};
+  if (!this->impl_->result.Read(&snapshot) || !snapshot.available ||
+      snapshot.generation != this->impl_->location_generation.load(std::memory_order_acquire) ||
+      this->impl_->worker.StopRequested())
+    return {};
+  return {snapshot.data, true};
 }
 
 void OpenMeteoSource::ObserveLocation_(float latitude, float longitude) {
@@ -112,6 +124,9 @@ void OpenMeteoSource::ObserveLocation_(float latitude, float longitude) {
   } else if (latitude != this->observed_latitude_ ||
              longitude != this->observed_longitude_) {
     this->impl_->refresh.Invalidate();
+    this->impl_->location_generation.store(
+        this->impl_->refresh.location_generation(), std::memory_order_release);
+    this->impl_->result.Publish({{}, this->impl_->refresh.location_generation(), false});
   }
   this->impl_->location_generation.store(
       this->impl_->refresh.location_generation(), std::memory_order_release);
@@ -140,7 +155,7 @@ void OpenMeteoSource::FetchJob_() {
   if (this->impl_->worker.StopRequested())
     return;
   // Stop may race this final checkpoint. The handoff remains in generated
-  // static-lifetime state, and RequestRefresh() refuses to consume it after a
+  // static-lifetime state, and loop() refuses to consume it after a
   // stop request.
   this->impl_->completion.Publish(completion);
   this->impl_->completion_ready.store(true, std::memory_order_release);
@@ -159,9 +174,8 @@ void OpenMeteoSource::ConsumeCompletion_(uint32_t now) {
       pixoo::WeatherRefreshPolicy::Completion::kSuccess)
     return;
 
-  // Tag the visible snapshot. HasData() hides it if the location generation
-  // later changes, even while a refresh is pending or repeatedly failing.
-  this->impl_->result.Publish({completion.data, completion.request.generation});
+  // Publish the accepted data and availability as one coherent snapshot.
+  this->impl_->result.Publish({completion.data, completion.request.generation, true});
 }
 
 uint32_t OpenMeteoSource::refresh_interval_ms_() const {
@@ -176,9 +190,15 @@ uint32_t OpenMeteoSource::refresh_interval_ms_() const {
 // Signals demand to refresh stale data. Network, in-flight, and retry policy
 // gate background work; this call returns without blocking the render loop.
 void OpenMeteoSource::RequestRefresh() {
+  if (this->impl_ != nullptr)
+    this->impl_->refresh_demand.store(true, std::memory_order_release);
+}
+
+void OpenMeteoSource::loop() {
   if (this->impl_ == nullptr || this->impl_->worker.StopRequested())
     return;
 
+  const bool demand = this->impl_->refresh_demand.exchange(false, std::memory_order_acq_rel);
   const uint32_t now = millis();
   const float latitude =
       this->latitude_ != nullptr ? this->latitude_->state : 0.0f;
@@ -188,7 +208,7 @@ void OpenMeteoSource::RequestRefresh() {
   if (this->impl_->worker.StopRequested())
     return;
   this->ConsumeCompletion_(now);
-  if (!is_connected())
+  if (!demand || !is_connected())
     return;
 
   uint32_t generation;
