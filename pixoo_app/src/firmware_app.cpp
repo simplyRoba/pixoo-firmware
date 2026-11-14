@@ -650,11 +650,11 @@ void FirmwareApp::PowerButtonPressed(uint32_t now_ms) {
   this->power_button_pressed_at_ms_ = now_ms;
 }
 
-void FirmwareApp::PowerButtonReleased(uint32_t now_ms) {
+void FirmwareApp::PowerButtonReleased(uint32_t edge_ms, uint32_t now_ms) {
   if (!this->power_button_pressed_)
     return;
   this->power_button_pressed_ = false;
-  const uint32_t duration_ms = now_ms - this->power_button_pressed_at_ms_;
+  const uint32_t duration_ms = edge_ms - this->power_button_pressed_at_ms_;
   if (IsDurationInRange(duration_ms, kShortPressMinimumMs,
                         kPowerShortPressMaximumMs)) {
     this->TogglePower(now_ms);
@@ -677,11 +677,11 @@ void FirmwareApp::BrightnessButtonPressed(uint32_t now_ms) {
   this->brightness_button_timing_generation_ = this->timing_generation_;
 }
 
-void FirmwareApp::BrightnessButtonReleased(uint32_t now_ms) {
+void FirmwareApp::BrightnessButtonReleased(uint32_t edge_ms, uint32_t now_ms) {
   if (!this->brightness_button_pressed_)
     return;
   this->brightness_button_pressed_ = false;
-  const uint32_t duration_ms = now_ms - this->brightness_button_pressed_at_ms_;
+  const uint32_t duration_ms = edge_ms - this->brightness_button_pressed_at_ms_;
   const TimingKind captured = this->brightness_button_timing_kind_;
   this->brightness_button_timing_kind_ = TimingKind::kNone;
   if (this->brightness_button_context_stale_)

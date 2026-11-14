@@ -48,6 +48,9 @@ class RenderPort {
  public:
   virtual ~RenderPort() = default;
 
+  // Capture external inputs on their owning task without changing render state.
+  virtual void CaptureInputs(const std::string &requested_id) { (void) requested_id; }
+
   // Resolves IDs through the renderer's catalog. On failure, leaves selection
   // unchanged; a renderer may instead return its deterministic fallback.
   virtual bool ResolveDashboard(const std::string &requested_id,
@@ -220,9 +223,11 @@ class FirmwareApp {
   // Debounced button edges enter the application without gesture meaning.
   // Timing and action selection remain native, host-tested product policy.
   void PowerButtonPressed(uint32_t now_ms);
-  void PowerButtonReleased(uint32_t now_ms);
+  void PowerButtonReleased(uint32_t edge_ms, uint32_t execution_ms);
+  void PowerButtonReleased(uint32_t now_ms) { PowerButtonReleased(now_ms, now_ms); }
   void BrightnessButtonPressed(uint32_t now_ms);
-  void BrightnessButtonReleased(uint32_t now_ms);
+  void BrightnessButtonReleased(uint32_t edge_ms, uint32_t execution_ms);
+  void BrightnessButtonReleased(uint32_t now_ms) { BrightnessButtonReleased(now_ms, now_ms); }
 
   void TogglePower(uint32_t now_ms);
   void StepBrightness(uint32_t now_ms);

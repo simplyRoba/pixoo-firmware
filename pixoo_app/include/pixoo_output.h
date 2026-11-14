@@ -29,6 +29,8 @@ class FrameOutput {
   bool RememberIfDue_(const uint8_t *scaled, size_t size, uint32_t now_ms,
                       uint32_t min_interval_ms, bool force);
 
+  uint8_t brightness_lookup_[256];
+  float cached_brightness_{-1.0f};
   std::unique_ptr<uint8_t[]> last_transmit_;
   size_t retained_capacity_{0};
   size_t raw_capacity_{0};

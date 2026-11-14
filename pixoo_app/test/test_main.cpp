@@ -1071,6 +1071,30 @@ static void test_button_edges_apply_native_gesture_policy() {
   app.BrightnessButtonPressed(3000);
   app.BrightnessButtonReleased(3049);
   TEST_ASSERT_EQUAL(2, sink.published.size());
+
+  RecordingPanel delayed_panel(&events);
+  RecordingRenderer delayed_renderer(&events);
+  FirmwareApp delayed(delayed_panel, delayed_renderer, nullptr, nullptr, nullptr,
+                      FirmwareAppConfig{0, 300, 0});
+  delayed.Start(0, LightState{false, 1.0f}, "text");
+  delayed.PowerButtonPressed(10);
+  delayed.PowerButtonReleased(60, 1000);
+  delayed.Tick(1299);
+  TEST_ASSERT_TRUE(delayed.phase() == FirmwareApp::Phase::kWaitingInit);
+  delayed.Tick(1300);
+  TEST_ASSERT_TRUE(delayed.phase() != FirmwareApp::Phase::kWaitingInit);
+
+  RecordingPanel timer_panel(&events);
+  RecordingRenderer timer_renderer(&events);
+  FirmwareApp timer_app(timer_panel, timer_renderer, nullptr, nullptr, nullptr,
+                        FirmwareAppConfig{0, 0, 0});
+  StartRunning(&timer_app);
+  timer_app.TimerStart(10, 1000);
+  timer_app.TimingShow(1000);
+  timer_app.BrightnessButtonPressed(1010);
+  timer_app.BrightnessButtonReleased(1060, 2000);
+  TEST_ASSERT_TRUE(timer_app.timing().phase == TimingPhase::kPaused);
+  TEST_ASSERT_EQUAL_UINT32(9000, timer_app.timing().value_ms);
 }
 
 static void test_dashboard_frame_cadence_gates_render_attempts() {
@@ -2093,6 +2117,41 @@ static void test_frame_output_nonfinite_brightness_blacks_frame() {
     TEST_ASSERT_TRUE(RawPrepare(output, source, brightness, 0, 1000, transmit));
     const std::vector<uint8_t> black = {0, 0, 0};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(black.data(), transmit.data(), black.size());
+  }
+}
+
+static void test_frame_output_lookup_matches_float_and_handles_overlap() {
+  FrameOutput output;
+  std::vector<uint8_t> source(256), expected(256), transmit(256);
+  for (size_t i = 0; i < source.size(); ++i)
+    source[i] = static_cast<uint8_t>(i);
+  TEST_ASSERT_TRUE(output.ConfigureCapacity(source.size()));
+  const float values[] = {0.0f, 0.25f, 0.5f, 0.73f, 1.0f,
+                          std::numeric_limits<float>::quiet_NaN(), -0.5f, 2.0f,
+                          0.73f};
+  for (float brightness : values) {
+    const float clamped = !std::isfinite(brightness) || brightness < 0.0f
+                              ? 0.0f : (brightness > 1.0f ? 1.0f : brightness);
+    for (size_t i = 0; i < source.size(); ++i)
+      expected[i] = static_cast<uint8_t>(source[i] * clamped + 0.5f);
+    TEST_ASSERT_TRUE(RawPrepare(output, source, brightness, 0, 1000, transmit, true));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), transmit.data(), expected.size());
+    TEST_ASSERT_FALSE(RawPrepare(output, source, brightness, 1, 1000, transmit));
+    for (int direction = -1; direction <= 1; ++direction) {
+      std::vector<uint8_t> overlapping(258, 0xCC);
+      uint8_t *input = overlapping.data() + 1;
+      uint8_t *destination = input + direction;
+      std::copy(source.begin(), source.end(), input);
+      TEST_ASSERT_TRUE(output.Prepare(input, source.size(), brightness, 2, 1000,
+                                      destination, source.size(), true));
+      TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), destination, expected.size());
+    }
+    output.Reset();
+    TEST_ASSERT_TRUE(RawPrepare(output, source, brightness, 3, 1000, transmit));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), transmit.data(), expected.size());
+    TEST_ASSERT_TRUE(output.ConfigureCapacity(source.size()));
+    TEST_ASSERT_TRUE(RawPrepare(output, source, brightness, 4, 1000, transmit));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), transmit.data(), expected.size());
   }
 }
 
@@ -3313,6 +3372,7 @@ int main(int, char **) {
   RUN_TEST(test_frame_output_raw_prepare_requires_configured_capacity);
   RUN_TEST(test_frame_output_raw_prepare_supports_full_payload);
   RUN_TEST(test_frame_output_nonfinite_brightness_blacks_frame);
+  RUN_TEST(test_frame_output_lookup_matches_float_and_handles_overlap);
   RUN_TEST(test_frame_output_forces_unchanged_frame);
   RUN_TEST(test_frame_output_reset_allows_first_frame_again);
   RUN_TEST(test_frame_output_resends_unchanged_after_interval);

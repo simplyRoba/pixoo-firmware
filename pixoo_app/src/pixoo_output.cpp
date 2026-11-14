@@ -14,11 +14,7 @@ float ClampBrightness(float brightness) {
   return brightness;
 }
 
-uint8_t Scale(uint8_t value, float brightness) {
-  return static_cast<uint8_t>(value * brightness + 0.5f);
-}
-
-void ScaleInto(const uint8_t *framebuffer, size_t size, float brightness,
+void ScaleInto(const uint8_t *framebuffer, size_t size, const uint8_t *lookup,
                uint8_t *transmit) {
   if (size == 0) return;
 
@@ -26,11 +22,11 @@ void ScaleInto(const uint8_t *framebuffer, size_t size, float brightness,
   const uintptr_t destination = reinterpret_cast<uintptr_t>(transmit);
   if (destination > source && destination - source < size) {
     for (size_t index = size; index != 0; --index)
-      transmit[index - 1] = Scale(framebuffer[index - 1], brightness);
+      transmit[index - 1] = lookup[framebuffer[index - 1]];
     return;
   }
   for (size_t index = 0; index < size; ++index)
-    transmit[index] = Scale(framebuffer[index], brightness);
+    transmit[index] = lookup[framebuffer[index]];
 }
 
 }  // namespace
@@ -54,7 +50,7 @@ bool FrameOutput::RememberIfDue_(const uint8_t *scaled, size_t size,
                                  uint32_t now_ms,
                                  uint32_t min_interval_ms, bool force) {
   const bool changed =
-      !this->sent_once_ || size != this->last_transmit_size_ ||
+      force || !this->sent_once_ || size != this->last_transmit_size_ ||
       (size != 0 && std::memcmp(scaled, this->last_transmit_.get(), size) != 0);
   const bool interval_elapsed =
       this->sent_once_ && (now_ms - this->last_send_ms_) >= min_interval_ms;
@@ -78,7 +74,14 @@ bool FrameOutput::Prepare(const uint8_t *framebuffer, size_t size,
       (size != 0 && transmit == nullptr))
     return false;
 
-  ScaleInto(framebuffer, size, ClampBrightness(brightness), transmit);
+  const float clamped_brightness = ClampBrightness(brightness);
+  if (clamped_brightness != this->cached_brightness_) {
+    for (size_t value = 0; value < 256; ++value)
+      this->brightness_lookup_[value] =
+          static_cast<uint8_t>(static_cast<uint8_t>(value) * clamped_brightness + 0.5f);
+    this->cached_brightness_ = clamped_brightness;
+  }
+  ScaleInto(framebuffer, size, this->brightness_lookup_, transmit);
   return this->RememberIfDue_(transmit, size, now_ms, min_interval_ms, force);
 }
 
