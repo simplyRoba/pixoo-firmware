@@ -350,6 +350,12 @@ void FirmwareAppComponent::PublishFrameMetrics_() {
     this->frame_max_sensor_->publish_state(snapshot.maximum_ms);
   if (this->rendered_fps_sensor_ != nullptr)
     this->rendered_fps_sensor_->publish_state(snapshot.frames_per_second);
+  if (this->sent_fps_sensor_ != nullptr)
+    this->sent_fps_sensor_->publish_state(snapshot.sent_frames_per_second);
+  if (this->late_frames_sensor_ != nullptr)
+    this->late_frames_sensor_->publish_state(snapshot.late_frames);
+  if (this->busy_drops_sensor_ != nullptr)
+    this->busy_drops_sensor_->publish_state(snapshot.busy_drops);
 }
 
 bool FirmwareAppComponent::ParseSound_(const std::string &name,

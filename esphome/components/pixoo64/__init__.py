@@ -88,6 +88,9 @@ CONF_FRAME_METRICS_WINDOW = "window"
 CONF_FRAME_AVERAGE = "average"
 CONF_FRAME_MAX = "maximum"
 CONF_RENDERED_FPS = "rendered_fps"
+CONF_SENT_FPS = "sent_fps"
+CONF_LATE_FRAMES = "late_frames"
+CONF_BUSY_DROPS = "busy_drops"
 
 SEVERITIES = ["info", "success", "warning", "error"]
 REACTIONS = [
@@ -271,6 +274,24 @@ FRAME_METRICS_SCHEMA = cv.All(
             cv.Required(CONF_RENDERED_FPS): sensor.sensor_schema(
                 unit_of_measurement="fps",
                 accuracy_decimals=2,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                state_class=STATE_CLASS_NONE,
+            ),
+            cv.Optional(CONF_SENT_FPS): sensor.sensor_schema(
+                unit_of_measurement="fps",
+                accuracy_decimals=2,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                state_class=STATE_CLASS_NONE,
+            ),
+            cv.Optional(CONF_LATE_FRAMES): sensor.sensor_schema(
+                unit_of_measurement="frames",
+                accuracy_decimals=0,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                state_class=STATE_CLASS_NONE,
+            ),
+            cv.Optional(CONF_BUSY_DROPS): sensor.sensor_schema(
+                unit_of_measurement="frames",
+                accuracy_decimals=0,
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
                 state_class=STATE_CLASS_NONE,
             ),
@@ -991,6 +1012,13 @@ async def to_code(config):
                 await sensor.new_sensor(frame_metrics[CONF_RENDERED_FPS])
             )
         )
+        for key, setter in (
+            (CONF_SENT_FPS, app.set_sent_fps_sensor),
+            (CONF_LATE_FRAMES, app.set_late_frames_sensor),
+            (CONF_BUSY_DROPS, app.set_busy_drops_sensor),
+        ):
+            if key in frame_metrics:
+                cg.add(setter(await sensor.new_sensor(frame_metrics[key])))
     if "timing" in config:
         timing = config["timing"]
         cg.add(app.set_timer_duration(await cg.get_variable(timing["timer_duration"])))

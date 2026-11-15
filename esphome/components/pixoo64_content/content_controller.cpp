@@ -546,44 +546,6 @@ void ContentController::ReleaseOverlayResources() {
   this->ReleaseNotificationBackground_();
 }
 
-void ContentController::RecordRender_(uint32_t elapsed_us) {
-  std::lock_guard<std::mutex> lock(this->render_metrics_mutex_);
-  ++this->render_frames_;
-  this->render_total_us_ += elapsed_us;
-  this->render_max_us_ = std::max(this->render_max_us_, elapsed_us);
-  if (elapsed_us > this->render_budget_us_)
-    ++this->render_over_budget_;
-}
-
-void ContentController::PublishRenderWindow_() {
-  uint32_t frames, max_us, over_budget;
-  uint64_t total_us;
-  {
-    std::lock_guard<std::mutex> lock(this->render_metrics_mutex_);
-    frames = this->render_frames_;
-    max_us = this->render_max_us_;
-    over_budget = this->render_over_budget_;
-    total_us = this->render_total_us_;
-    this->ResetRenderWindow_();
-  }
-  const float average_ms = frames == 0 ? 0.0f :
-      static_cast<float>(total_us) / static_cast<float>(frames) / 1000.0f;
-  if (this->render_average_sensor_ != nullptr)
-    this->render_average_sensor_->publish_state(average_ms);
-  if (this->render_max_sensor_ != nullptr)
-    this->render_max_sensor_->publish_state(max_us / 1000.0f);
-  if (this->render_over_budget_sensor_ != nullptr)
-    this->render_over_budget_sensor_->publish_state(
-        static_cast<float>(over_budget));
-}
-
-void ContentController::ResetRenderWindow_() {
-  this->render_frames_ = 0;
-  this->render_over_budget_ = 0;
-  this->render_max_us_ = 0;
-  this->render_total_us_ = 0;
-}
-
 void ContentController::loop() {
   Dashboard *requested = this->capture_requested_.load(std::memory_order_acquire);
   Dashboard *visible = this->capture_visible_.load(std::memory_order_acquire);
@@ -593,11 +555,7 @@ void ContentController::loop() {
     visible->CaptureInputs();
 }
 
-void ContentController::update() {
-  if (this->render_budget_us_ == 0)
-    return;
-  this->PublishRenderWindow_();
-}
+void ContentController::update() {}
 
 void ContentController::ReactionBackgroundDeleter::operator()(
     pixoo::Framebuffer *framebuffer) const {
@@ -747,8 +705,6 @@ bool ContentController::RenderContent(
   if (frame == nullptr || this->framebuffer_ == nullptr)
     return false;
   this->DrainLevels_();
-  const uint32_t started_us =
-      this->render_budget_us_ == 0 ? 0 : micros();
 
   const bool timing_banner = timing.active() && timing.minimized &&
       overlay == nullptr && base_visible && !base_frozen;
@@ -902,8 +858,6 @@ bool ContentController::RenderContent(
   PopActiveBlendCanvas();
   if (this->visible_ != nullptr && (timing.visible() || base_frozen))
     this->visible_->ReleaseRenderResources();
-  if (this->render_budget_us_ != 0)
-    this->RecordRender_(micros() - started_us);
   const auto &payload = this->framebuffer_->payload();
   *frame = pixoo::FrameView{payload.data(), payload.size()};
   return true;

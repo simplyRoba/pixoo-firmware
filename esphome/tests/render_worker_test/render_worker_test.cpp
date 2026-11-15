@@ -145,6 +145,27 @@ void unblock() {
   std::lock_guard<std::mutex> lock(probe->mutex); probe->block = false; signal();
 }
 
+void test_metrics_start_with_regular_frames() {
+  Probe p; probe = &p; Renderer renderer; p.buffer = renderer.pixels;
+  {
+    Pixoo64Panel panel; RenderWorker worker(panel, renderer, 1000);
+    assert(worker.Start({}, "default", {}));
+    advance(1100);
+    wait_for([] { return probe->present > 0; });
+    assert(worker.State().metrics_generation == 0);
+    advance(5100);
+    wait_for([] { return probe->content > 0; });
+    assert(worker.State().metrics_generation == 0);
+    advance(1100);
+    poll([&] { return worker.State().metrics_generation != 0; });
+    const auto state = worker.State();
+    assert(state.metrics.frames > 0);
+    assert(state.metrics.sent_frames_per_second >= 0.0f);
+    worker.RequestStop();
+  }
+  join_tasks();
+}
+
 void test_snapshot_allocation_and_lifetime() {
   using esphome::pixoo64::adapters::async::SnapshotBuffer;
   struct Value { int n = 7; };
@@ -445,7 +466,7 @@ bool Pixoo64Panel::Present(pixoo::FrameView frame, bool force) {
 }
 }
 int main() {
-  test_snapshot_allocation_and_lifetime();
+  test_snapshot_allocation_and_lifetime(); test_metrics_start_with_regular_frames();
   test_commands_and_backpressure(); test_delayed_commands_and_coalescing(); test_system_output_latch();
   test_flood_does_not_starve_frames_or_update(); test_stop_blocked(); test_update_barrier();
   test_reboot_control_during_update(); test_start_failure();

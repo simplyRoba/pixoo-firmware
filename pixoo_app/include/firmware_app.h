@@ -92,13 +92,19 @@ class MicrophonePort {
   virtual void SetEnabled(bool enabled) = 0;
 };
 
+struct FrameMetricsContext {
+  uint32_t deadline_ms{0};
+  uint32_t skipped_frames{0};
+  bool timed{true};
+};
+
 // Receives regular dashboard-frame boundaries. Implementations provide the
 // clock, so the application core remains independent of platform timing.
 class FrameMetricsPort {
  public:
   virtual ~FrameMetricsPort() = default;
-  virtual void BeginRegularFrame() = 0;
-  virtual void EndRegularFrame() = 0;
+  virtual void BeginRegularFrame(FrameMetricsContext context) = 0;
+  virtual void EndRegularFrame(bool rendered) = 0;
 };
 
 class LightStateSink {

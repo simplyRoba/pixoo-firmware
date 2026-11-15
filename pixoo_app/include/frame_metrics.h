@@ -11,6 +11,9 @@ struct FrameMetricsSnapshot {
   float frames_per_second{0.0f};
   uint32_t frames{0};
   uint32_t elapsed_ms{0};
+  float sent_frames_per_second{0.0f};
+  uint32_t late_frames{0};
+  uint32_t busy_drops{0};
 };
 
 // Accumulates frame timings over a caller-defined, millis()-based window.
@@ -21,6 +24,8 @@ class FrameMetricsWindow {
     this->started_ = true;
     this->started_ms_ = now_ms;
     this->frames_ = 0;
+    this->timing_frames_ = 0;
+    this->late_frames_ = 0;
     this->total_us_ = 0;
     this->maximum_us_ = 0;
   }
@@ -29,17 +34,25 @@ class FrameMetricsWindow {
     return this->started_ && now_ms - this->started_ms_ >= window_ms;
   }
 
-  void Record(uint32_t elapsed_us) {
+  void Record(uint32_t elapsed_us, bool rendered = true, bool timed = true,
+              uint32_t late_frames = 0) {
     if (!this->started_)
       return;
+    this->late_frames_ += late_frames;
+    if (!rendered)
+      return;
     ++this->frames_;
-    this->total_us_ += elapsed_us;
-    this->maximum_us_ = std::max(this->maximum_us_, elapsed_us);
+    if (timed) {
+      ++this->timing_frames_;
+      this->total_us_ += elapsed_us;
+      this->maximum_us_ = std::max(this->maximum_us_, elapsed_us);
+    }
   }
 
   // Returns false until a nonzero-duration window has been established. On a
   // successful close, starts the next window at now_ms.
-  bool Close(uint32_t now_ms, FrameMetricsSnapshot *snapshot) {
+  bool Close(uint32_t now_ms, FrameMetricsSnapshot *snapshot,
+             uint32_t sent_frames = 0, uint32_t busy_drops = 0) {
     if (snapshot == nullptr || !this->started_)
       return false;
     const uint32_t elapsed_ms = now_ms - this->started_ms_;
@@ -49,14 +62,19 @@ class FrameMetricsWindow {
     snapshot->frames = this->frames_;
     snapshot->elapsed_ms = elapsed_ms;
     snapshot->average_ms =
-        this->frames_ == 0
+        this->timing_frames_ == 0
             ? 0.0f
             : static_cast<float>(this->total_us_) /
-                  static_cast<float>(this->frames_) / 1000.0f;
+                  static_cast<float>(this->timing_frames_) / 1000.0f;
     snapshot->maximum_ms = this->maximum_us_ / 1000.0f;
     snapshot->frames_per_second =
         static_cast<float>(this->frames_) * 1000.0f /
         static_cast<float>(elapsed_ms);
+    snapshot->sent_frames_per_second =
+        static_cast<float>(sent_frames) * 1000.0f /
+        static_cast<float>(elapsed_ms);
+    snapshot->late_frames = this->late_frames_;
+    snapshot->busy_drops = busy_drops;
     this->Reset(now_ms);
     return true;
   }
@@ -65,6 +83,8 @@ class FrameMetricsWindow {
   bool started_{false};
   uint32_t started_ms_{0};
   uint32_t frames_{0};
+  uint32_t timing_frames_{0};
+  uint32_t late_frames_{0};
   uint64_t total_us_{0};
   uint32_t maximum_us_{0};
 };

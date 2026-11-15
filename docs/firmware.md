@@ -515,14 +515,15 @@ The commands and snapshot-update procedure are owned by
 
 ## 10. Runtime metrics
 
-`ContentController` measures render-only work. `FirmwareAppComponent`, through
-`FrameMetricsPort`, measures complete regular-frame work from immediately before
-rendering until synchronous presentation returns. Both aggregate in RAM and
-publish windowed diagnostics rather than updating ESPHome entities per frame.
+Performance metrics share a 30-second window starting with the first regular frame.
 
-Boot, off, initialization, and waiting ticks are excluded. Base refreshes beneath
-a live notification contribute to renderer timing but not complete presented-frame
-timing when they do not call the panel.
+| Metric | Meaning |
+|---|---|
+| Frame preparation average/max | Rendering through nonblocking submission; forced transfer waits are excluded. |
+| Rendered FPS | Successfully built complete images, including unchanged and busy-rejected images. |
+| Sent FPS | Full-frame transfers collected as completed, not confirmed panel refreshes. |
+| Late frames | Skipped scheduled slots and failed or late timed frames, using the active cadence. |
+| Busy drops | Presentations rejected while the previous transfer remains outstanding; unchanged-frame suppression is not counted. |
 
 Operator-facing logs, privacy behavior, and current limitations are documented in
 the [manual](manual.md).

@@ -261,14 +261,18 @@ struct RecordingSystem final : SystemPort {
 };
 
 struct RecordingFrameMetrics final : FrameMetricsPort {
-  void BeginRegularFrame() override {
+  void BeginRegularFrame(FrameMetricsContext context) override {
     ++begin_calls;
+    contexts.push_back(context);
     active = true;
   }
-  void EndRegularFrame() override {
+  void EndRegularFrame(bool rendered) override {
     ++end_calls;
+    results.push_back(rendered);
     active = false;
   }
+  std::vector<FrameMetricsContext> contexts;
+  std::vector<bool> results;
   int begin_calls{0};
   int end_calls{0};
   bool active{false};
@@ -540,6 +544,101 @@ static void test_frame_metrics_window_uses_elapsed_wall_time() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0f, snapshot.frames_per_second);
 }
 
+static void test_frame_metrics_window_outcomes_and_counters() {
+  FrameMetricsWindow window;
+  FrameMetricsSnapshot snapshot;
+  window.Reset(100);
+  window.Record(2000, true, true, 2);
+  window.Record(9000, true, false, 0);
+  window.Record(12000, false, true, 3);
+  window.Record(15000, false, false, 1);
+  TEST_ASSERT_FALSE(window.Close(100, &snapshot, 4, 5));
+  TEST_ASSERT_TRUE(window.Close(1100, &snapshot, 4, 5));
+  TEST_ASSERT_EQUAL_UINT32(2, snapshot.frames);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, snapshot.average_ms);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, snapshot.maximum_ms);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, snapshot.frames_per_second);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 4.0f, snapshot.sent_frames_per_second);
+  TEST_ASSERT_EQUAL_UINT32(6, snapshot.late_frames);
+  TEST_ASSERT_EQUAL_UINT32(5, snapshot.busy_drops);
+  TEST_ASSERT_TRUE(window.Close(2100, &snapshot));
+  TEST_ASSERT_EQUAL_UINT32(0, snapshot.frames);
+  TEST_ASSERT_EQUAL_UINT32(0, snapshot.late_frames);
+  TEST_ASSERT_EQUAL_UINT32(0, snapshot.busy_drops);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, snapshot.sent_frames_per_second);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, snapshot.average_ms);
+  window.Record(3000, true, true, 7);
+  window.Reset(UINT32_MAX - 20);
+  window.Record(8000, true, false, 2);
+  TEST_ASSERT_TRUE(window.IsDue(29, 50));
+  TEST_ASSERT_TRUE(window.Close(29, &snapshot, 1, 3));
+  TEST_ASSERT_EQUAL_UINT32(50, snapshot.elapsed_ms);
+  TEST_ASSERT_EQUAL_UINT32(1, snapshot.frames);
+  TEST_ASSERT_EQUAL_UINT32(2, snapshot.late_frames);
+  TEST_ASSERT_EQUAL_UINT32(3, snapshot.busy_drops);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, snapshot.maximum_ms);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0f, snapshot.sent_frames_per_second);
+}
+
+static void test_metrics_deadlines_skips_and_overlay_cadence() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  renderer.catalog[0].frame_interval_ms = 40;
+  RecordingFrameMetrics metrics;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0, 33, 33}, nullptr, &metrics);
+  StartRunning(&app);
+  app.Tick(0);
+  TEST_ASSERT_EQUAL_UINT32(40, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(0, metrics.contexts.back().skipped_frames);
+  TEST_ASSERT_TRUE(metrics.contexts.back().timed);
+  app.Tick(125);
+  TEST_ASSERT_EQUAL_UINT32(160, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(2, metrics.contexts.back().skipped_frames);
+  app.SelectDashboard("text");
+  app.Tick(126);
+  TEST_ASSERT_EQUAL_UINT32(166, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(0, metrics.contexts.back().skipped_frames);
+  app.Notify(Request("Alert", 10000), 130);
+  app.Tick(130);
+  TEST_ASSERT_EQUAL_UINT32(163, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_FALSE(metrics.contexts.back().timed);
+  TEST_ASSERT_EQUAL_UINT32(0, metrics.contexts.back().skipped_frames);
+  app.Tick(235);
+  TEST_ASSERT_EQUAL_UINT32(262, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(2, metrics.contexts.back().skipped_frames);
+  TEST_ASSERT_TRUE(metrics.contexts.back().timed);
+}
+
+static void test_metrics_timing_view_base_only_and_wrap() {
+  std::vector<std::string> events;
+  RecordingPanel panel(&events);
+  RecordingRenderer renderer(&events);
+  renderer.catalog[0].frame_interval_ms = 10;
+  RecordingFrameMetrics metrics;
+  FirmwareApp app(panel, renderer, nullptr, nullptr, nullptr,
+                  FirmwareAppConfig{0, 0, 0, 33, 33}, nullptr, &metrics);
+  StartRunning(&app, UINT32_MAX - 20);
+  app.Tick(UINT32_MAX - 20);
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX - 10, metrics.contexts.back().deadline_ms);
+  app.Tick(15);
+  TEST_ASSERT_EQUAL_UINT32(19, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(2, metrics.contexts.back().skipped_frames);
+  app.Notify(Request("Alert", 10000), 16);
+  app.Tick(16);
+  const int overlay_calls = metrics.begin_calls;
+  app.Tick(26);  // Base refresh beneath the notification is not a complete frame.
+  TEST_ASSERT_EQUAL(overlay_calls, metrics.begin_calls);
+  app.ClearOverlayQueue(27);
+  app.StopwatchStart(27);
+  app.TimingShow(27);
+  app.Tick(27);
+  TEST_ASSERT_EQUAL_UINT32(60, metrics.contexts.back().deadline_ms);
+  TEST_ASSERT_EQUAL_UINT32(0, metrics.contexts.back().skipped_frames);
+  TEST_ASSERT_TRUE(metrics.contexts.back().timed);
+}
+
 static void test_regular_frame_metrics_cover_render_through_present_only() {
   std::vector<std::string> events;
   RecordingPanel panel(&events);
@@ -569,12 +668,17 @@ static void test_regular_frame_metrics_cover_render_through_present_only() {
   renderer.base_frame = {kBaseToken, sizeof(kBaseToken)};
   TEST_ASSERT_EQUAL(3, metrics.begin_calls);
   TEST_ASSERT_EQUAL(3, metrics.end_calls);
+  TEST_ASSERT_TRUE(metrics.results[0]);
+  TEST_ASSERT_FALSE(metrics.results[1]);
+  TEST_ASSERT_FALSE(metrics.results[2]);
 
   panel.present_results = {false};
   app.Notify(Request("Alert", 10), 13);
   app.Tick(13);  // notification content, failed present
   TEST_ASSERT_EQUAL(4, metrics.begin_calls);
   TEST_ASSERT_EQUAL(4, metrics.end_calls);
+  TEST_ASSERT_TRUE(metrics.results[3]);
+  TEST_ASSERT_FALSE(metrics.contexts[3].timed);
 
   app.BeginFirmwareUpdate(13);
   TEST_ASSERT_EQUAL(4, metrics.begin_calls);
@@ -3386,6 +3490,9 @@ int main(int, char **) {
   RUN_TEST(test_firmware_update_presents_static_frame_synchronously);
   RUN_TEST(test_firmware_update_skips_unready_or_failed_presentation);
   RUN_TEST(test_frame_metrics_window_uses_elapsed_wall_time);
+  RUN_TEST(test_frame_metrics_window_outcomes_and_counters);
+  RUN_TEST(test_metrics_deadlines_skips_and_overlay_cadence);
+  RUN_TEST(test_metrics_timing_view_base_only_and_wrap);
   RUN_TEST(test_regular_frame_metrics_cover_render_through_present_only);
   RUN_TEST(test_invalid_or_failed_frame_is_not_presented);
   RUN_TEST(test_dashboard_metadata_is_trusted_not_caller_supplied);

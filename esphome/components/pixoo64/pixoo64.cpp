@@ -354,7 +354,11 @@ bool Pixoo64Panel::Present(pixoo::FrameView frame, bool force) {
       frame.size != static_cast<size_t>(pixoo::kFramePayloadBytes))
     return false;
 
-  if (!this->reap_frame_(force) || this->queued_ != this->reaped_) return false;
+  if (!this->reap_frame_(force)) return false;
+  if (this->queued_ != this->reaped_) {
+    if (!force) ++this->transport_counters_.busy_drops;
+    return false;
+  }
   uint8_t *const payload = this->full_transaction_ + 4;
   if (!this->output_.Prepare(frame.data, frame.size, this->brightness_,
                              millis(), kMaxFrameIntervalMs, payload,
@@ -466,6 +470,7 @@ bool Pixoo64Panel::reap_frame_(bool wait) {
       this->worker_failed_.store(true, std::memory_order_release);
       return false;
     }
+    ++this->transport_counters_.completed_frames;
   }
   return true;
 }

@@ -17,7 +17,6 @@
 #include "dashboard/now_playing/now_playing_dashboard.h"
 #include "timing/timing_view.h"
 #include "esphome/components/display/display.h"
-#include "esphome/components/sensor/sensor.h"
 #include "firmware_app.h"
 #include "notification/notification_renderer.h"
 #include "pixoo_framebuffer.h"
@@ -47,18 +46,6 @@ class ContentController : public display::Display,
   }
   void set_firmware_update_detail_font(font::Font *font) {
     this->firmware_update_detail_font_ = font;
-  }
-  void set_render_budget_us(uint32_t budget_us) {
-    this->render_budget_us_ = budget_us;
-  }
-  void set_render_average_sensor(sensor::Sensor *sensor) {
-    this->render_average_sensor_ = sensor;
-  }
-  void set_render_max_sensor(sensor::Sensor *sensor) {
-    this->render_max_sensor_ = sensor;
-  }
-  void set_render_over_budget_sensor(sensor::Sensor *sensor) {
-    this->render_over_budget_sensor_ = sensor;
   }
   void setup() override;
   float get_setup_priority() const override { return setup_priority::DATA + 1.0f; }
@@ -109,9 +96,6 @@ class ContentController : public display::Display,
   bool EnsureNotificationBackground_();
   void RestoreNotificationBackground_();
   void ReleaseNotificationBackground_();
-  void RecordRender_(uint32_t elapsed_us);
-  void PublishRenderWindow_();
-  void ResetRenderWindow_();
   void DrainLevels_();
 
   std::vector<Dashboard *> dashboards_;
@@ -151,11 +135,6 @@ class ContentController : public display::Display,
   bool reaction_snapshot_active_{false};
   font::Font *firmware_update_title_font_{nullptr};
   font::Font *firmware_update_detail_font_{nullptr};
-  sensor::Sensor *render_average_sensor_{nullptr};
-  sensor::Sensor *render_max_sensor_{nullptr};
-  sensor::Sensor *render_over_budget_sensor_{nullptr};
-  uint32_t render_budget_us_{0};
-  std::mutex render_metrics_mutex_;
 
  private:
   static constexpr size_t kLevelQueueSize = 32;
@@ -172,10 +151,6 @@ class ContentController : public display::Display,
   size_t levels_head_{0};
   size_t levels_count_{0};
   uint32_t levels_overflow_count_{0};
-  uint32_t render_frames_{0};
-  uint32_t render_over_budget_{0};
-  uint32_t render_max_us_{0};
-  uint64_t render_total_us_{0};
 };
 
 }  // namespace esphome::pixoo64::content

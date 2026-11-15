@@ -5,7 +5,7 @@ import yaml
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-from esphome.components import display, font, sensor, socket, text, time
+from esphome.components import display, font, socket, text, time
 from esphome.const import (
     CONF_FILE,
     CONF_GLYPHS,
@@ -13,11 +13,6 @@ from esphome.const import (
     CONF_PLATFORM,
     CONF_SIZE,
     CONF_TIME_ID,
-    CONF_UPDATE_INTERVAL,
-    ENTITY_CATEGORY_DIAGNOSTIC,
-    STATE_CLASS_NONE,
-    SCHEDULER_DONT_RUN,
-    UNIT_MILLISECOND,
 )
 
 CONF_DASHBOARD_ID = "dashboard_id"
@@ -36,13 +31,7 @@ CONF_FIRMWARE_UPDATE_TITLE_FONT = "firmware_update_title_font"
 CONF_FIRMWARE_UPDATE_DETAIL_FONT = "firmware_update_detail_font"
 CONF_FACE = "face"
 CONF_SEED = "seed"
-CONF_RENDER_METRICS = "render_metrics"
-CONF_RENDER_BUDGET = "budget"
-CONF_RENDER_AVERAGE = "average"
-CONF_RENDER_MAX = "maximum"
-CONF_RENDER_OVER_BUDGET = "over_budget"
-
-AUTO_LOAD = ["time", "font", "sensor", "socket"]
+AUTO_LOAD = ["time", "font", "socket"]
 
 pixoo_ns = cg.global_ns.namespace("pixoo")
 pixoo64_ns = cg.esphome_ns.namespace("pixoo64")
@@ -253,48 +242,6 @@ def validate_now_playing_fonts(config):
     return config
 
 
-def validate_render_metrics(config):
-    budget_us = config[CONF_RENDER_BUDGET].total_microseconds
-    if budget_us <= 0 or budget_us > 0xFFFFFFFF:
-        raise cv.Invalid("render budget must fit a positive uint32 microsecond value")
-    return config
-
-
-def validate_render_schedule(config):
-    if (
-        CONF_RENDER_METRICS in config
-        and config[CONF_UPDATE_INTERVAL].total_milliseconds == SCHEDULER_DONT_RUN
-    ):
-        raise cv.Invalid("render metrics require a finite update_interval")
-    return config
-
-
-RENDER_METRICS_SCHEMA = cv.All(
-    cv.Schema(
-        {
-            cv.Required(CONF_RENDER_BUDGET): cv.positive_time_period_microseconds,
-            cv.Required(CONF_RENDER_AVERAGE): sensor.sensor_schema(
-                unit_of_measurement=UNIT_MILLISECOND,
-                accuracy_decimals=2,
-                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-                state_class=STATE_CLASS_NONE,
-            ),
-            cv.Required(CONF_RENDER_MAX): sensor.sensor_schema(
-                unit_of_measurement=UNIT_MILLISECOND,
-                accuracy_decimals=2,
-                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-                state_class=STATE_CLASS_NONE,
-            ),
-            cv.Required(CONF_RENDER_OVER_BUDGET): sensor.sensor_schema(
-                accuracy_decimals=0,
-                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-                state_class=STATE_CLASS_NONE,
-            ),
-        }
-    ),
-    validate_render_metrics,
-)
-
 FINAL_VALIDATE_SCHEMA = validate_now_playing_fonts
 
 CONFIG_SCHEMA = cv.All(
@@ -306,11 +253,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_NOTIFICATION_FONT): cv.use_id(font.Font),
             cv.Required(CONF_FIRMWARE_UPDATE_TITLE_FONT): cv.use_id(font.Font),
             cv.Required(CONF_FIRMWARE_UPDATE_DETAIL_FONT): cv.use_id(font.Font),
-            cv.Optional(CONF_RENDER_METRICS): RENDER_METRICS_SCHEMA,
         }
-    ).extend(cv.polling_component_schema("300s")),
+    ).extend(cv.polling_component_schema("never")),
     validate_dashboard_config,
-    validate_render_schedule,
 )
 
 
@@ -433,19 +378,6 @@ async def build_controller(config):
             await cg.get_variable(config[CONF_FIRMWARE_UPDATE_DETAIL_FONT])
         )
     )
-    if CONF_RENDER_METRICS in config:
-        metrics = config[CONF_RENDER_METRICS]
-        cg.add(
-            controller.set_render_budget_us(
-                metrics[CONF_RENDER_BUDGET].total_microseconds
-            )
-        )
-        average = await sensor.new_sensor(metrics[CONF_RENDER_AVERAGE])
-        maximum = await sensor.new_sensor(metrics[CONF_RENDER_MAX])
-        over_budget = await sensor.new_sensor(metrics[CONF_RENDER_OVER_BUDGET])
-        cg.add(controller.set_render_average_sensor(average))
-        cg.add(controller.set_render_max_sensor(maximum))
-        cg.add(controller.set_render_over_budget_sensor(over_budget))
     cg.add(controller.set_default_dashboard(config[CONF_DEFAULT_DASHBOARD]))
     return controller
 

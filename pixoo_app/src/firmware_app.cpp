@@ -471,6 +471,9 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
       return;
     const bool reset_base_phase =
         this->base_render_requested_ || !this->base_rendered_;
+    const uint32_t skipped_frames = reset_base_phase ? 0 :
+        (now_ms - this->next_base_render_ms_) /
+            ValidFrameInterval_(this->BaseFrameInterval_());
     this->base_rendered_ = true;
     this->base_render_requested_ = false;
     this->next_base_render_ms_ = NextDeadline_(
@@ -478,14 +481,15 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
         this->BaseFrameInterval_(), reset_base_phase);
     FrameView frame;
     if (this->frame_metrics_ != nullptr)
-      this->frame_metrics_->BeginRegularFrame();
+      this->frame_metrics_->BeginRegularFrame(
+          FrameMetricsContext{this->next_base_render_ms_, skipped_frames, true});
     const bool rendered = this->renderer_.RenderContent(
         now_ms, this->selected_dashboard_.id, this->timing_,
         nullptr, 0, true, false, true, false, &frame);
     if (rendered && frame.valid())
       this->panel_.Present(frame, false);
     if (this->frame_metrics_ != nullptr)
-      this->frame_metrics_->EndRegularFrame();
+      this->frame_metrics_->EndRegularFrame(rendered && frame.valid());
     return;
   }
 
@@ -502,9 +506,13 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
         now_ms, this->next_base_render_ms_,
         this->BaseFrameInterval_(), reset_base_phase);
   }
+  uint32_t skipped_overlay_frames = 0;
   if (render_overlay) {
     const bool reset_overlay_phase =
         this->overlay_render_requested_ || !this->overlay_rendered_;
+    skipped_overlay_frames = reset_overlay_phase ? 0 :
+        (now_ms - this->next_overlay_render_ms_) /
+            ValidFrameInterval_(this->config_.overlay_frame_interval_ms);
     this->overlay_rendered_ = true;
     this->overlay_render_requested_ = false;
     this->next_overlay_render_ms_ = NextDeadline_(
@@ -517,7 +525,8 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
   const OverlayRequest &request = this->CurrentOverlayRequest_();
   FrameView frame;
   if (render_overlay && this->frame_metrics_ != nullptr)
-    this->frame_metrics_->BeginRegularFrame();
+    this->frame_metrics_->BeginRegularFrame(FrameMetricsContext{
+        this->next_overlay_render_ms_, skipped_overlay_frames, this->overlay_visible_});
   const bool rendered = this->renderer_.RenderContent(
       now_ms, this->selected_dashboard_.id, this->timing_,
       &request.overlay, visible_elapsed_ms, this->BaseContentVisible_(),
@@ -525,7 +534,7 @@ void FirmwareApp::RenderRunning_(uint32_t now_ms) {
   const bool presented = render_overlay && rendered && frame.valid() &&
                          this->panel_.Present(frame, !this->overlay_visible_);
   if (render_overlay && this->frame_metrics_ != nullptr)
-    this->frame_metrics_->EndRegularFrame();
+    this->frame_metrics_->EndRegularFrame(rendered && frame.valid());
   if (!render_overlay || !presented || this->overlay_visible_)
     return;
 

@@ -210,7 +210,6 @@ void RenderWorker::Run_() {
       app_.emplace(panel_, renderer_, this, this, this, pixoo::FirmwareAppConfig{},
                    this, this, overlay_storage_, this);
       const uint32_t now = millis();
-      if (metrics_window_ms_) metrics_window_.Reset(now);
       started = app_->Start(now, initial_light_, initial_dashboard_, initial_solar_);
       if (started) PublishState_(millis());
     } else {
@@ -315,8 +314,16 @@ void RenderWorker::Apply_(WorkerCommand &c) {
 
 void RenderWorker::PublishState_(uint32_t now_ms) {
   pixoo::FrameMetricsSnapshot snapshot;
-  const bool closed = metrics_window_ms_ && metrics_window_.IsDue(now_ms, metrics_window_ms_) &&
-                      metrics_window_.Close(now_ms, &snapshot);
+  bool closed = false;
+  if (metrics_active_ && metrics_window_.IsDue(now_ms, metrics_window_ms_)) {
+    const auto counters = panel_.GetTransportCounters();
+    closed = metrics_window_.Close(now_ms, &snapshot, counters.completed_frames - baseline_completed_,
+                                   counters.busy_drops - baseline_busy_);
+    if (closed) {
+      baseline_completed_ = counters.completed_frames;
+      baseline_busy_ = counters.busy_drops;
+    }
+  }
   const auto timing = app_->timing();
   const bool solar_enabled = app_->solar_brightness_enabled();
   const bool solar_due = app_->SolarElevationDue(now_ms);
@@ -349,11 +356,31 @@ void RenderWorker::Publish(pixoo::LightState state, bool persistent) { WorkerOut
 void RenderWorker::PublishSolarBrightnessEnabled(bool enabled) { WorkerOutput o; o.kind = WorkerOutputKind::kSolarEnabled; o.flag = enabled; Emit_(o); }
 void RenderWorker::Reboot() { WorkerOutput o; o.kind = WorkerOutputKind::kReboot; Emit_(o); }
 void RenderWorker::FactoryReset() { WorkerOutput o; o.kind = WorkerOutputKind::kFactoryReset; Emit_(o); }
-void RenderWorker::BeginRegularFrame() {
-  if (metrics_window_ms_) { frame_started_us_ = micros(); frame_active_ = true; }
+void RenderWorker::BeginRegularFrame(pixoo::FrameMetricsContext context) {
+  if (!metrics_window_ms_) return;
+  if (!metrics_active_) {
+    metrics_window_.Reset(millis());
+    const auto counters = panel_.GetTransportCounters();
+    baseline_completed_ = counters.completed_frames;
+    baseline_busy_ = counters.busy_drops;
+    metrics_active_ = true;
+  }
+  frame_context_ = context;
+  if (context.timed) frame_started_us_ = micros();
+  frame_active_ = true;
 }
-void RenderWorker::EndRegularFrame() {
-  if (frame_active_) { metrics_window_.Record(micros() - frame_started_us_); frame_active_ = false; }
+void RenderWorker::EndRegularFrame(bool rendered) {
+  if (!frame_active_) return;
+  uint32_t elapsed = 0;
+  uint32_t late = 0;
+  if (frame_context_.timed) {
+    elapsed = micros() - frame_started_us_;
+    const uint32_t now_ms = millis();
+    late = frame_context_.skipped_frames +
+           ((!rendered || static_cast<int32_t>(now_ms - frame_context_.deadline_ms) > 0) ? 1u : 0u);
+  }
+  metrics_window_.Record(elapsed, rendered, frame_context_.timed, late);
+  frame_active_ = false;
 }
 
 }  // namespace esphome::pixoo64

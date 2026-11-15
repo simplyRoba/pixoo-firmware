@@ -50,8 +50,8 @@ class RenderWorker final : public pixoo::SoundPlayer,
   void PublishSolarBrightnessEnabled(bool enabled) override;
   void Reboot() override;
   void FactoryReset() override;
-  void BeginRegularFrame() override;
-  void EndRegularFrame() override;
+  void BeginRegularFrame(pixoo::FrameMetricsContext context) override;
+  void EndRegularFrame(bool rendered) override;
 
  private:
   struct QueueStorage {
@@ -97,7 +97,11 @@ class RenderWorker final : public pixoo::SoundPlayer,
   pixoo::OverlayQueueStorage *overlay_storage_{nullptr};
   std::optional<pixoo::FirmwareApp> app_;
   pixoo::FrameMetricsWindow metrics_window_;
+  pixoo::FrameMetricsContext frame_context_{};
   uint32_t frame_started_us_{0};
+  uint32_t baseline_completed_{0};
+  uint32_t baseline_busy_{0};
+  bool metrics_active_{false};
   uint32_t applied_sequence_{0};
   bool frame_active_{false};
   bool update_paused_{false};

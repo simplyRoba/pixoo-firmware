@@ -18,6 +18,11 @@
 
 namespace esphome::pixoo64 {
 
+struct TransportCounters {
+  uint32_t completed_frames{0};
+  uint32_t busy_drops{0};
+};
+
 class Pixoo64Panel final : public Component, public pixoo::PanelPort {
  public:
   ~Pixoo64Panel() override;
@@ -58,6 +63,9 @@ class Pixoo64Panel final : public Component, public pixoo::PanelPort {
   bool Initialize() override;
   void SetBrightness(float brightness) override;
   bool Present(pixoo::FrameView frame, bool force) override;
+  TransportCounters GetTransportCounters() const {
+    return this->OnOwnerTask_() ? this->transport_counters_ : TransportCounters{};
+  }
 
  protected:
   static constexpr uint32_t kMaxFrameIntervalMs = 1000;
@@ -89,6 +97,7 @@ class Pixoo64Panel final : public Component, public pixoo::PanelPort {
   size_t queued_{0};
   size_t reaped_{0};
   esp_err_t completion_gpio_error_{ESP_OK};
+  TransportCounters transport_counters_{};
   bool IsOperational_() const;
   void FailSetup_(const char *operation, esp_err_t error);
   void StopOperations_();

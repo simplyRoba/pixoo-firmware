@@ -6,25 +6,19 @@ debug:
 
 pixoo64:
   frame_metrics:
-    window: 300s
+    window: 30s
     average:
-      name: End-to-End Frame Time Average
+      name: Frame Preparation Time Average
     maximum:
-      name: End-to-End Frame Time Maximum
+      name: Frame Preparation Time Maximum
     rendered_fps:
       name: Rendered FPS
-
-pixoo64_content:
-  update_interval: 300s
-  render_metrics:
-    budget: 26ms
-    average:
-      name: Render Time Average
-    maximum:
-      name: Render Time Maximum
-    over_budget:
-      name: Render Frames Over Budget
-      unit_of_measurement: frames
+    sent_fps:
+      name: Sent FPS
+    late_frames:
+      name: Late Frames
+    busy_drops:
+      name: Busy Drops
 
 sensor:
   - platform: wifi_signal

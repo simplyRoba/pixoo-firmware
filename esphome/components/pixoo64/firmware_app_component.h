@@ -85,6 +85,9 @@ class FirmwareAppComponent final : public PollingComponent,
   void set_rendered_fps_sensor(sensor::Sensor *sensor) {
     this->rendered_fps_sensor_ = sensor;
   }
+  void set_sent_fps_sensor(sensor::Sensor *sensor) { this->sent_fps_sensor_ = sensor; }
+  void set_late_frames_sensor(sensor::Sensor *sensor) { this->late_frames_sensor_ = sensor; }
+  void set_busy_drops_sensor(sensor::Sensor *sensor) { this->busy_drops_sensor_ = sensor; }
   void SelectDashboard(const std::string &dashboard_id);
   void on_light_remote_values_update() override;
   void SyncLightFromEntity();
@@ -163,6 +166,9 @@ class FirmwareAppComponent final : public PollingComponent,
   sensor::Sensor *frame_average_sensor_{nullptr};
   sensor::Sensor *frame_max_sensor_{nullptr};
   sensor::Sensor *rendered_fps_sensor_{nullptr};
+  sensor::Sensor *sent_fps_sensor_{nullptr};
+  sensor::Sensor *late_frames_sensor_{nullptr};
+  sensor::Sensor *busy_drops_sensor_{nullptr};
   uint32_t frame_metrics_window_ms_{0};
   std::unique_ptr<RenderWorker> worker_;
   WorkerState worker_state_{};

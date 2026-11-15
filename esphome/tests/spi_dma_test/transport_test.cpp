@@ -89,16 +89,27 @@ void layout_busy_and_forced() {
   std::vector<uint8_t> saved(base, base+12293);
   std::fill(f.frame.begin(), f.frame.end(), 99);
   assert(!f.panel.Present(f.view(), false)); assert(std::equal(saved.begin(), saved.end(), base));
+  assert(f.panel.GetTransportCounters().busy_drops == 1);
+  assert(f.panel.GetTransportCounters().completed_frames == 0);
   fake::task = reinterpret_cast<void *>(1); assert(!f.panel.Present(f.view(), true)); f.panel.SetPower(false);
   assert(fake::queue.size() == 5 && f.power.level == 1); fake::task = reinterpret_cast<void *>(2);
-  for (int i=0; i<4; ++i) { fake::complete(); assert(fake::cs == 0); }
+  for (int i=0; i<4; ++i) { fake::complete(); assert(fake::cs == 0); f.panel.WorkerLoop();
+    assert(f.panel.GetTransportCounters().completed_frames == 0); }
   fake::complete(); assert(fake::cs == 1); f.panel.WorkerLoop(); assert(fake::queue.empty());
+  assert(f.panel.GetTransportCounters().completed_frames == 1);
+  f.panel.WorkerLoop(); assert(f.panel.GetTransportCounters().completed_frames == 1);
   assert(f.panel.Present(f.view(), true)); assert(fake::queue.empty() && fake::cs == 1);
+  assert(f.panel.GetTransportCounters().completed_frames == 2);
+  assert(f.panel.Present(f.view(), false));
+  assert(f.panel.GetTransportCounters().completed_frames == 2);
+  assert(f.panel.GetTransportCounters().busy_drops == 1);
 }
 void partial_failures() {
   for (int i=0; i<5; ++i) {
     Fixture f; fake::fail = i; assert(!f.panel.Present(f.view(), false));
     assert(fake::queue.empty() && fake::cs == 1 && fake::attempts == i+1);
+    assert(f.panel.GetTransportCounters().completed_frames == 0);
+    assert(f.panel.GetTransportCounters().busy_drops == 0);
     fake::fail = -1; assert(f.panel.Present(f.view(), false));
     assert(f.panel.Initialize()); assert(fake::queue.empty());
   }
@@ -114,6 +125,7 @@ void shutdown_and_failures() {
     Fixture f; assert(f.panel.Present(f.view(), false));
     for (int i=0; i<4; ++i) fake::complete(); fake::gpio_fail = true; fake::complete();
     f.panel.WorkerLoop(); assert(fake::queue.empty() && fake::cs == 1 && f.power.level == 0);
+    assert(f.panel.GetTransportCounters().completed_frames == 0);
     fake::task = reinterpret_cast<void *>(1); f.panel.loop(); assert(f.panel.is_failed());
   }
   {
