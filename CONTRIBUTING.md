@@ -60,9 +60,11 @@ esphome/tests/render_test/.esphome/build/pixoo64-render-test/.pioenvs/pixoo64-re
 ```
 
 The native suites test the framework-independent protocol, application-policy,
-and content layers. Configuration tests validate the production composition and
-expected failures for invalid wiring or schema combinations. The host render
-target exercises the real renderer, fonts, deterministic animation states, and
+and content layers. Tool test discovery also builds and runs C++ host tests for
+the render worker, command queues, snapshot storage, and SPI DMA transport.
+Configuration tests validate the production composition and expected failures for
+invalid wiring or schema combinations. The host render target exercises the real
+renderer, fonts, deterministic animation states, and
 now-playing adapter and image-decoder fixtures, including full progressive JPEG
 output and resource-limit failures. Host results and ESP32 compilation do not
 establish on-device progressive decode latency or memory availability; those

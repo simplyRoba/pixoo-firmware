@@ -40,34 +40,32 @@ state remain with their respective components. `FirmwareApp` decides:
 - when a rendered frame is presented to the panel.
 
 `FirmwareApp` has no ESPHome, ESP-IDF, FreeRTOS, HTTP, or GPIO types in its public
-interface. `FirmwareAppComponent` is the ESPHome adapter around it: it converts
-entity callbacks and API actions into typed application commands and calls
-`FirmwareApp::Tick(millis())` from a 5 ms ESPHome polling interval.
+interface. `FirmwareAppComponent` converts entity callbacks and API actions into
+commands for `RenderWorker`. ESPHome's main loop runs on core 0; the worker owns
+`FirmwareApp` on core 1 and services it at a 5 ms interval.
 
 ```text
 ESPHome entities, API actions, OTA callbacks, GPIO button callbacks
         │
         ▼
-FirmwareAppComponent
-        │ typed commands and lifecycle ticks
+FirmwareAppComponent (core 0) ◄────┐
+        │ commands               │ outputs and state
+        ▼                        │
+RenderWorker (core 1) ────────────┘
+        │ owns and ticks
         ▼
 FirmwareApp
         ├── PanelPort ───────► Pixoo64Panel ─────► panel transport and power output
         ├── RenderPort ──────► ContentController ─► dashboards and overlays
         │                                           ├► WeatherSource adapter
         │                                           └► NowPlayingSource adapter
-        ├── SoundPlayer ─────► RTTTL adapter
-        ├── MicrophonePort ──► I2S microphone adapter and equalizer DSP
-        ├── LightStateSink ──► ESPHome light entity
-        ├── SolarBrightnessStateSink ─► ESPHome switch entity
-        ├── SystemPort ──────► safe reboot and preference reset
-        └── FrameMetricsPort ► ESPHome diagnostic sensors
+        └── Sound, microphone, entity, system, and metrics ports ─► RenderWorker
 ```
 
 Calls enter through the component and leave through ports:
 
 ```text
-entities/actions/buttons → FirmwareApp → ports → adapters
+entities/actions/buttons → worker commands → FirmwareApp → ports → adapters
 ```
 
 Adapters do not call sibling adapters to implement product policy. An adapter may
@@ -83,14 +81,14 @@ test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` and
 
 | Port | Consumer | Production adapter | Responsibility |
 |---|---|---|---|
-| `PanelPort` | `FirmwareApp` | `Pixoo64Panel` | Panel power, initialization, brightness, synchronous frame presentation, and panel transport resources. |
+| `PanelPort` | `FirmwareApp` | `Pixoo64Panel` | Panel power, initialization, brightness, queued frame presentation, and panel transport resources. |
 | `RenderPort` | `FirmwareApp` | `ContentController` | Dashboard lookup, boot/update frames, dashboard rendering, notification composition, and reaction composition. |
-| `SoundPlayer` | `FirmwareApp` | `RtttlSoundPlayer` | Play or stop a sound from the closed `pixoo::Sound` vocabulary. |
-| `MicrophonePort` | `FirmwareApp` | `MicrophoneAdapter` | Enable capture, process microphone samples, and publish normalized equalizer levels. |
-| `LightStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect persistent manual state or transient effective automatic brightness in the ESPHome light entity. |
-| `SolarBrightnessStateSink` | `FirmwareApp` | `FirmwareAppComponent` | Reflect application-owned mode changes in the persisted ESPHome switch. |
-| `SystemPort` | `FirmwareApp` | `FirmwareAppComponent` | Request a safe reboot, optionally after clearing persisted preferences. |
-| `FrameMetricsPort` | `FirmwareApp` | `FirmwareAppComponent` | Measure complete regular-frame work without putting a platform clock in the application core. |
+| `SoundPlayer` | `FirmwareApp` | `RenderWorker` | Queue play/stop requests for the main-task RTTTL adapter. |
+| `MicrophonePort` | `FirmwareApp` | `RenderWorker` | Queue capture requests for the main-task microphone adapter. |
+| `LightStateSink` | `FirmwareApp` | `RenderWorker` | Queue persistent manual or transient automatic light-state publications. |
+| `SolarBrightnessStateSink` | `FirmwareApp` | `RenderWorker` | Queue mode publications for the main-task switch adapter. |
+| `SystemPort` | `FirmwareApp` | `RenderWorker` | Request a main-task reboot or preference reset. |
+| `FrameMetricsPort` | `FirmwareApp` | `RenderWorker` | Collect regular-frame preparation and deadline metrics for main-task publication. |
 | `WeatherSource` | weather rendering layer | `OpenMeteoSource` | Non-blocking weather refresh and coherent weather snapshots. |
 | `NowPlayingSource` | now-playing rendering layer | `HomeAssistantMediaSource` | Native-API media metadata, visibility-scoped artwork work, and coherent media/artwork snapshots. |
 
@@ -99,16 +97,19 @@ test substitute. Most are consumed by `FirmwareApp`; `WeatherSource` and
 which forwards them to every configured equalizer dashboard. The microphone is
 therefore bound to the renderer catalog rather than to one selected face.
 
-`FirmwareAppComponent` receives the concrete ESPHome entities and implements the
-small output ports above. It supplies `FirmwareApp` with solar elevation from an
-ESPHome `sun::Sun` calculator updated from runtime location and SNTP time.
+`FirmwareAppComponent` applies worker outputs through the concrete ESPHome
+adapters and supplies solar elevation from an ESPHome `sun::Sun` calculator.
+The worker keeps the latest pending dashboard, light, and solar state updates;
+actions and button edges use bounded queues. OTA and reboot requests are
+independent of queue capacity.
 
 ### 2.3 Ownership and lifetime
 
 - ESPHome code generation owns the concrete components for the lifetime of the
   device application.
-- `FirmwareAppComponent` constructs one `FirmwareApp` after its required adapters
-  are available.
+- `RenderWorker` constructs and owns one `FirmwareApp` after panel setup.
+- The main task captures input snapshots; the worker owns dashboard animation,
+  drawing, and panel operations.
 - `FirmwareApp` owns application state and the bounded 16-entry overlay FIFO.
 - `ContentController` owns the dashboard catalog and reusable framebuffer storage.
 - Dashboard pointers and injected port pointers are non-owning and remain fixed
@@ -259,8 +260,8 @@ account for that before the remaining settle wait. If `PanelPort::Initialize()` 
 application remains in `kWaitingInit` and retries on each 5 ms service poll; there
 is currently no backoff or separate failure phase.
 
-The 5 ms component poll is only a service opportunity. Actual rendering follows
-separate deadlines:
+The worker's 5 ms service interval is only a service opportunity. Actual rendering
+follows separate deadlines:
 
 - each dashboard supplies a validated positive frame interval through
   `DashboardSelection`;
@@ -271,8 +272,11 @@ separate deadlines:
 
 Deadlines use wrap-safe unsigned time arithmetic. A delayed poll renders at the
 current tick and advances the deadline; it does not render a burst of missed
-frames. This keeps work bounded when networking or another ESPHome component
-delays the main loop.
+frames when worker execution is delayed.
+
+OTA waits for the worker to attempt a forced update frame and acknowledge its
+pause before flash writes begin. OTA errors resume the worker. Shutdown waits
+for the worker to drain panel transfers, release its resources, and stop.
 
 `FirmwareApp` owns Solar Brightness policy; the adapter supplies elevation once
 per minute, retrying unavailable data each second. Automatic light publications
@@ -324,9 +328,9 @@ no second runtime face selector.
 reaction backgrounds. Shared `BlendCanvas` and `aa_draw` utilities provide
 coverage-based shapes, gradients, glows, and alpha composition.
 
-Rendering returns a `FrameView` over this retained storage. Presentation is
-synchronous: the panel adapter finishes consuming the view before the next render
-may reuse it.
+Rendering returns a borrowed `FrameView`. The panel adapter consumes it before
+`Present` returns. Queued SPI transfers use adapter-owned storage, so the renderer
+may reuse its framebuffer.
 
 ### 5.3 Notifications and reactions
 
@@ -401,11 +405,12 @@ response before JSON parsing or image validation/decoding. A shared
 `container->end()`; it does not cover parsing or decoding.
 
 `DdpDashboard` services a non-blocking IPv4 UDP socket on port 4048 from its
-ESPHome component loop, independently of rendering ticks. At most one DDP
-dashboard may be configured. `OnShow()` opens reception; `OnHide()` and shutdown
-close the socket and reset both image buffers. Each service pass permits at most
-32 read attempts and checks a 1,000 µs budget before each read. Exhausting either
-limit requests another main-loop pass; an empty queue does not. The budget is
+ESPHome component loop on core 0, independently of rendering ticks. At most one
+DDP dashboard may be configured. `OnShow()` and `OnHide()` request reception
+changes; the main loop opens or closes the socket and resets the receiver.
+Each service pass permits at most 32 read attempts and checks a 1,000 µs budget
+before each read. Exhausting either limit requests another main-loop pass; an
+empty queue does not. The budget is
 cooperative, not preemptive. Socket failures retry after one second while visible.
 The ESP32 UDP receive mailbox holds 32 datagrams; a full mailbox drops input.
 
@@ -416,10 +421,11 @@ byte-offset writes update an assembly buffer; PUSH publishes it, including a
 zero-length PUSH. Partial writes retain other pixels. Sequence numbers do not
 group images; there is no completeness check, retransmission, or image queue.
 
-The standalone model owns two 12,288-byte buffers allocated once on first entry
-in PSRAM, with no internal-RAM fallback. Allocation failure leaves black content,
-a warning, and no listener. Reception, publication, and rendering share the main
-loop; no cross-task handoff is required. Operator behavior and network exposure
+The standalone model owns two 12,288-byte receiver buffers. Three additional
+slots pass published images to the render worker, which reads one immutable slot
+while the main task copies into a free slot. All five buffers are retained in
+PSRAM after first entry, with no internal-RAM fallback. Allocation failure leaves
+black content, a warning, and no listener. Operator behavior and network exposure
 are documented in the [manual](manual.md#controls-and-features).
 
 The microphone adapter captures I2S samples into retained windows. Completed
@@ -435,15 +441,19 @@ wire framing, pins, rates, and electrical constraints belong to
 
 - translates power, initialization, brightness, and presentation requests into
   the panel operations;
-- consumes each borrowed `FrameView` synchronously;
+- consumes each borrowed `FrameView` before returning and queues ordinary frames
+  for SPI DMA;
+- rejects a non-forced presentation while a previous transfer remains outstanding;
+- waits for completion on forced presentation and before power-off or teardown;
 - retains transfer and previous-frame storage instead of allocating during
   presentation;
 - exposes synchronous power-on time to the application lifecycle;
 - owns hardware-resource setup and idempotent teardown state; and
 - rejects later operations once shutdown or teardown begins.
 
-`FirmwareApp` owns when power and initialization occur. `FrameOutput` owns
-brightness scaling and unchanged-frame comparison; `Pixoo64Panel` supplies the
+The final DMA completion callback releases chip select. `FirmwareApp` owns when
+power and initialization occur. `FrameOutput` owns brightness scaling and
+unchanged-frame comparison; `Pixoo64Panel` supplies the
 production maximum resend interval. Soft-start values originate in the board
 profile; cold-start and repower settle delays are `FirmwareAppConfig` policy.
 
@@ -466,9 +476,9 @@ C++. Adapters repeat checks where a framework mismatch could otherwise drive an
 unsupported hardware configuration.
 
 API actions, entity callbacks, and OTA callbacks are inbound adapter events. They
-are converted to typed `FirmwareApp` commands rather than implementing product
-policy in YAML. Deployment and operation are documented in the
-[manual](manual.md); development-time configuration is documented in
+are submitted to the worker as typed `FirmwareApp` commands rather than
+implementing product policy in YAML. Deployment and operation are documented in
+the [manual](manual.md); development-time configuration is documented in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 8. Extension rules
