@@ -457,7 +457,7 @@ pixoo64_content:
     - platform: clock
       id: clock_shadow_dashboard
       dashboard_id: clock_shadow
-      frame_interval: 33ms
+      frame_interval: 40ms
       face: shadow
       time_id: panel_time
 

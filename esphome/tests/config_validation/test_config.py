@@ -618,7 +618,7 @@ for field in ('options', 'legacy_options'):
         self.assertIn("  default_dashboard: clock_analog\n", production)
         self.assertIn("    initial_option: clock_analog\n", production)
         self.assertIn(
-            "      dashboard_id: clock_shadow\n      frame_interval: 33ms\n"
+            "      dashboard_id: clock_shadow\n      frame_interval: 40ms\n"
             "      face: shadow\n      time_id: panel_time\n", production,
         )
         render = (self.fixture / "esphome/tests/render_test/render_test.yaml").read_text()
@@ -636,7 +636,7 @@ for field in ('options', 'legacy_options'):
         for statement in (
             "new(clock_shadow_dashboard) pixoo64::dashboard::ShadowClockDashboard();",
             'clock_shadow_dashboard->set_id("clock_shadow");',
-            "clock_shadow_dashboard->set_frame_interval_ms(33);",
+            "clock_shadow_dashboard->set_frame_interval_ms(40);",
             "clock_shadow_dashboard->set_time(panel_time);",
             "panel_content_controller->add_dashboard(clock_shadow_dashboard);",
         ):
