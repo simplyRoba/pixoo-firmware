@@ -6,6 +6,8 @@ using portMUX_TYPE = std::mutex;
 #define portMUX_INITIALIZER_UNLOCKED {}
 #define portENTER_CRITICAL(mux) (mux)->lock()
 #define portEXIT_CRITICAL(mux) (mux)->unlock()
+#define taskENTER_CRITICAL(mux) portENTER_CRITICAL(mux)
+#define taskEXIT_CRITICAL(mux) portEXIT_CRITICAL(mux)
 #define pdMS_TO_TICKS(n) (n)
 #define pdPASS 1
 #define pdTRUE 1

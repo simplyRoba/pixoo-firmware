@@ -12,6 +12,7 @@
 #include "esphome/core/hal.h"
 #include "pixoo64.h"
 #include "render_worker.h"
+#include "snapshot_buffer.h"
 
 using namespace std::chrono_literals;
 using namespace esphome::pixoo64;
@@ -142,6 +143,37 @@ void block_next(RenderWorker &worker, uint32_t sequence) {
 }
 void unblock() {
   std::lock_guard<std::mutex> lock(probe->mutex); probe->block = false; signal();
+}
+
+void test_snapshot_allocation_and_lifetime() {
+  using esphome::pixoo64::adapters::async::SnapshotBuffer;
+  struct Value { int n = 7; };
+  const size_t allocations_before = heap_allocation_attempts.load();
+  const size_t frees_before = heap_frees.load();
+  {
+    SnapshotBuffer<Value> buffer;
+    buffer.Publish({42});
+    Value out{99};
+    assert(!buffer.Read(&out) && out.n == 99 && !buffer.Read(nullptr));
+    assert(!buffer.has_value() && buffer.Get().n == 7);
+    buffer.Clear();
+    fail_spiram_allocation = true;
+    assert(!buffer.Initialize());
+    buffer.Publish({42});
+    assert(!buffer.has_value() && buffer.Get().n == 7);
+    fail_spiram_allocation = false;
+    assert(buffer.Initialize() && buffer.Initialize());
+    assert(heap_allocation_attempts.load() == allocations_before + 2);
+    assert(last_heap_caps.load() == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    assert(!buffer.has_value());
+    buffer.Publish({42});
+    assert(buffer.has_value() && buffer.Get().n == 42);
+    assert(buffer.Read(&out) && out.n == 42);
+    buffer.Clear();
+    assert(!buffer.Read(&out) && out.n == 42);
+    assert(!buffer.has_value() && buffer.Get().n == 7);
+  }
+  assert(heap_frees.load() == frees_before + 1);
 }
 
 void test_commands_and_backpressure() {
@@ -413,6 +445,7 @@ bool Pixoo64Panel::Present(pixoo::FrameView frame, bool force) {
 }
 }
 int main() {
+  test_snapshot_allocation_and_lifetime();
   test_commands_and_backpressure(); test_delayed_commands_and_coalescing(); test_system_output_latch();
   test_flood_does_not_starve_frames_or_update(); test_stop_blocked(); test_update_barrier();
   test_reboot_control_during_update(); test_start_failure();

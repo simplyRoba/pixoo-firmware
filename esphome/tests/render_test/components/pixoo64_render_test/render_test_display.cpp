@@ -18,6 +18,7 @@
 #include "dashboard/now_playing/now_playing_dashboard.h"
 #include "dashboard/clock/shadow_face.h"
 #include "dashboard/weather/weather_icon.h"
+#include "dashboard/weather/weather_model.h"
 #include "esphome/components/pixoo64_content/blend_canvas.h"
 #include "esphome/core/wake.h"
 #include "png.h"
@@ -332,6 +333,38 @@ bool CheckShadowSecondContinuity() {
   return true;
 }
 
+bool CheckWeatherSnapshot() {
+  class Source final : public pixoo::WeatherSource {
+   public:
+    void RequestRefresh() override {}
+    bool HasData() const override { ++legacy_reads; return true; }
+    pixoo::WeatherData Data() const override { ++legacy_reads; return {}; }
+    pixoo::WeatherSnapshot ReadSnapshot() const override {
+      ++snapshot_reads;
+      pixoo::WeatherSnapshot snapshot{};
+      snapshot.available = available;
+      snapshot.data.has_temperature = true;
+      snapshot.data.temperature = 23;
+      return snapshot;
+    }
+    mutable unsigned snapshot_reads{0};
+    mutable unsigned legacy_reads{0};
+    bool available{true};
+  } source;
+  pixoo64::weather::WeatherModel model;
+  model.set_source(&source);
+  auto view = model.BuildView();
+  bool valid = source.snapshot_reads == 1 && source.legacy_reads == 0 &&
+               view.has_temperature && view.temperature == 23;
+  source.available = false;
+  view = model.BuildView();
+  valid &= source.snapshot_reads == 2 && source.legacy_reads == 0 &&
+           !view.has_temperature;
+  std::printf("render test: %s coherent weather snapshot\n",
+              valid ? "ok" : "FAILED");
+  return valid;
+}
+
 bool CheckInputCapture() {
   class CaptureDashboard final : public pixoo64::dashboard::Dashboard {
    public:
@@ -381,6 +414,7 @@ void RenderTestDisplay::setup() {
     int failures = CheckBlendSpans() ? 0 : 1;
     failures += CheckGrayscaleSpans() ? 0 : 1;
     failures += CheckInputCapture() ? 0 : 1;
+    failures += CheckWeatherSnapshot() ? 0 : 1;
     std::map<std::string, std::vector<uint8_t>> now_playing_frames;
     auto check = [&](const std::string &id) {
       if (id.rfind("now_playing_", 0) == 0)
