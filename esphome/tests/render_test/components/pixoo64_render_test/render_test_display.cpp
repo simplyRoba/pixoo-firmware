@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <limits>
 #include <numeric>
@@ -1858,6 +1859,65 @@ void RenderTestDisplay::setup() {
       render_ddp();
       ddp_valid &= this->framebuffer_ == expected;
 
+      // Interleave MAIN work with a worker drawing a pinned frame.
+      struct CallbackDisplay final : display::Display {
+        CallbackDisplay(RenderTestDisplay &target, std::function<void()> callback)
+            : target(target), callback(std::move(callback)) {}
+        display::DisplayType get_display_type() override { return display::DISPLAY_TYPE_COLOR; }
+        void update() override {}
+        void draw_pixel_at(int x, int y, Color color) override {
+          this->target.draw_pixel_at(x, y, color);
+          if (++this->pixels == 16) this->callback();
+        }
+        int get_width_internal() override { return 64; }
+        int get_height_internal() override { return 64; }
+        RenderTestDisplay &target;
+        std::function<void()> callback;
+        size_t pixels{0};
+      };
+      const auto publish_frame = [&](const std::vector<uint8_t> &frame) {
+        for (size_t offset = 0; offset < frame.size(); offset += 1440) {
+          const size_t size = std::min(size_t(1440), frame.size() - offset);
+          send_ddp(packet(offset, frame.data() + offset, size, offset + size == frame.size()));
+          drain();
+        }
+      };
+      std::vector<uint8_t> old_frame(expected.size()), new_frame(expected.size());
+      for (size_t i = 0; i < old_frame.size(); i += 3) {
+        old_frame[i] = 11; old_frame[i + 1] = 22; old_frame[i + 2] = 33;
+        new_frame[i] = 44; new_frame[i + 1] = 55; new_frame[i + 2] = 66;
+      }
+      publish_frame(old_frame);
+      bool published_during_render = false;
+      CallbackDisplay publish_display(*this, [&]() {
+        published_during_render = true;
+        publish_frame(new_frame);
+      });
+      ddp.Render(publish_display);
+      const bool publish_immutable = published_during_render && this->framebuffer_ == old_frame;
+      ddp.Render(*this);
+      const bool publish_visible = this->framebuffer_ == new_frame;
+      if (!publish_immutable || !publish_visible)
+        std::printf("render test: FAILED DDP publish during render\n");
+      ddp_valid &= publish_immutable && publish_visible;
+
+      bool shutdown_during_render = false;
+      CallbackDisplay shutdown_display(*this, [&]() {
+        shutdown_during_render = true;
+        ddp.on_shutdown();
+      });
+      ddp.Render(shutdown_display);
+      const bool shutdown_immutable = shutdown_during_render && this->framebuffer_ == new_frame &&
+                                      !ddp.active() && ddp.fd() == -1;
+      if (!shutdown_immutable)
+        std::printf("render test: FAILED DDP shutdown during render\n");
+      ddp_valid &= shutdown_immutable;
+      ddp.OnShow(ddp.advance());
+      ddp.loop();
+      publish_frame(expected);
+      render_ddp();
+      ddp_valid &= this->framebuffer_ == expected;
+
       // Zero-length and truncated oversized UDP datagrams must not stop the drain
       // or publish bytes from an otherwise valid-looking header.
       ddp_valid &= send_packet(nullptr, 0);
@@ -1944,6 +2004,21 @@ void RenderTestDisplay::setup() {
       ddp_valid &= competing.fd() == -1;
       competing.on_shutdown();
 
+      // Cancel a published but unread frame across rapid hide/re-entry.
+      send_ddp(packet(0, first_rgb, 3, true));
+      drain();
+      ddp.OnHide(ddp.advance());
+      ddp.OnShow(ddp.advance());
+      ddp.Render(*this);
+      ddp_valid &= std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                              [](uint8_t value) { return value == 0; });
+      ddp.loop();
+      send_ddp(packet(0, nullptr, 0, true));
+      drain();
+      ddp.Render(*this);
+      ddp_valid &= std::all_of(this->framebuffer_.begin(), this->framebuffer_.end(),
+                              [](uint8_t value) { return value == 0; });
+
       // Drop both unpublished assembly bytes and queued input on hide/re-entry.
       send_ddp(packet(0, first_rgb, 3, false));
       drain();
@@ -1997,6 +2072,7 @@ void RenderTestDisplay::setup() {
       auto recovered_frame = retained_frame;
       std::copy_n(first_rgb, 3, recovered_frame.begin());
       ddp_valid &= this->framebuffer_ == recovered_frame;
+      this->content_controller_->HideBaseContent(ddp.advance());
       ddp.on_shutdown();
       ddp.loop();
       ddp_valid &= !ddp.active() && ddp.fd() == -1 && !ddp.status_has_warning();

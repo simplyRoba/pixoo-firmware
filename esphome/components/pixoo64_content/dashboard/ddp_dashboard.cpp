@@ -72,19 +72,21 @@ bool DdpDashboard::EnsureFrameStorage_() {
 }
 
 void DdpDashboard::Render(display::Display &display) const {
-  HandoffStorage *handoff;
+  const std::array<uint8_t, pixoo::ddp::kFrameBytes> *frame = nullptr;
   {
     std::lock_guard<std::mutex> lock(this->handoff_mutex_);
-    handoff = this->handoff_.get();
-    if (handoff != nullptr)
-      handoff->render_scratch = handoff->published;
+    if (this->published_index_ != kNoSlot) {
+      this->reader_index_ = this->published_index_;
+      this->published_index_ = kNoSlot;
+    }
+    if (this->handoff_ != nullptr)
+      frame = &this->handoff_->slots[this->reader_index_];
   }
   for (size_t y = 0; y < pixoo::ddp::kFrameHeight; ++y) {
     for (size_t x = 0; x < pixoo::ddp::kFrameWidth; ++x) {
       const size_t offset = (y * pixoo::ddp::kFrameWidth + x) * 3;
-      display.draw_pixel_at(x, y, handoff == nullptr ? Color(0, 0, 0) :
-          Color(handoff->render_scratch[offset], handoff->render_scratch[offset + 1],
-                handoff->render_scratch[offset + 2]));
+      display.draw_pixel_at(x, y, frame == nullptr ? Color(0, 0, 0) :
+          Color((*frame)[offset], (*frame)[offset + 1], (*frame)[offset + 2]));
     }
   }
 }
@@ -98,13 +100,19 @@ void DdpDashboard::OnShow(uint32_t) {
 }
 
 void DdpDashboard::OnHide(uint32_t) {
-  std::lock_guard<std::mutex> lock(this->handoff_mutex_);
-  if (this->desired_active_) {
-    this->desired_active_ = false;
-    ++this->generation_;
-    if (this->handoff_ != nullptr)
-      this->handoff_->published.fill(0);
+  std::array<uint8_t, pixoo::ddp::kFrameBytes> *reader = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+    if (this->desired_active_) {
+      this->desired_active_ = false;
+      ++this->generation_;
+      this->published_index_ = kNoSlot;
+      if (this->handoff_ != nullptr)
+        reader = &this->handoff_->slots[this->reader_index_];
+    }
   }
+  if (reader != nullptr)
+    reader->fill(0);
 }
 
 void DdpDashboard::CloseListener_() {
@@ -115,7 +123,14 @@ void DdpDashboard::CloseListener_() {
 }
 
 void DdpDashboard::on_shutdown() {
-  this->OnHide(0);
+  {
+    std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+    if (this->desired_active_) {
+      this->desired_active_ = false;
+      ++this->generation_;
+    }
+    this->published_index_ = kNoSlot;
+  }
   this->Stop_();
 }
 
@@ -200,9 +215,27 @@ void DdpDashboard::Service_(uint32_t now_ms) {
       if (length >= 0) {
         if (this->frames_->Apply(this->receive_buffer_.data(),
                                  static_cast<size_t>(length)) == pixoo::ddp::DatagramResult::kPublished) {
-          std::lock_guard<std::mutex> lock(this->handoff_mutex_);
-          if (this->desired_active_ && this->generation_ == this->applied_generation_)
-            this->handoff_->published = this->frames_->frame();
+          size_t slot = kNoSlot;
+          uint32_t generation = 0;
+          {
+            std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+            if (this->desired_active_ && this->generation_ == this->applied_generation_) {
+              generation = this->generation_;
+              for (size_t i = 0; i < kNoSlot; ++i) {
+                if (i != this->reader_index_ && i != this->published_index_) {
+                  slot = i;
+                  break;
+                }
+              }
+            }
+          }
+          if (slot != kNoSlot) {
+            this->handoff_->slots[slot] = this->frames_->frame();
+            std::lock_guard<std::mutex> lock(this->handoff_mutex_);
+            if (this->desired_active_ && this->generation_ == generation &&
+                this->applied_generation_ == generation)
+              this->published_index_ = slot;
+          }
         }
       } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         drain_exhausted = false;

@@ -28,8 +28,7 @@ class DdpDashboard : public Dashboard, public Component {
 
  private:
   struct HandoffStorage {
-    std::array<uint8_t, pixoo::ddp::kFrameBytes> published{};
-    std::array<uint8_t, pixoo::ddp::kFrameBytes> render_scratch{};
+    std::array<std::array<uint8_t, pixoo::ddp::kFrameBytes>, 3> slots{};
   };
   struct HandoffStorageDeleter {
     void operator()(HandoffStorage *storage) const;
@@ -46,6 +45,9 @@ class DdpDashboard : public Dashboard, public Component {
   uint32_t generation_{0};
   uint32_t applied_generation_{0};
   std::unique_ptr<HandoffStorage, HandoffStorageDeleter> handoff_;
+  static constexpr size_t kNoSlot = 3;
+  mutable size_t reader_index_{0};
+  mutable size_t published_index_{kNoSlot};
   // Socket and assembly state belong to the main loop.
   bool active_{false};
   bool retry_pending_{false};
