@@ -5,8 +5,7 @@ The source SVGs are rasterized at 192x192, then downsampled with Pillow's
 Lanczos filter for anti-aliased 48x48 output. Each output pixel is stored as
 RGB565 plus 8-bit alpha; runtime rendering performs bilinear sampling.
 
-Dependencies:
-  python -m pip install cairosvg Pillow
+Dependencies: see CONTRIBUTING.md.
 
 Run from anywhere:
   .venv/bin/python tools/gen-reaction-art.py
@@ -28,16 +27,16 @@ try:
     import cairosvg
 except ImportError as exc:
     raise SystemExit(
-        "gen-reaction-art.py requires CairoSVG; install with "
-        "'python -m pip install cairosvg Pillow'"
+        "gen-reaction-art.py requires CairoSVG; "
+        "see CONTRIBUTING.md for development setup"
     ) from exc
 
 try:
     from PIL import Image
 except ImportError as exc:
     raise SystemExit(
-        "gen-reaction-art.py requires Pillow; install with "
-        "'python -m pip install cairosvg Pillow'"
+        "gen-reaction-art.py requires Pillow; "
+        "see CONTRIBUTING.md for development setup"
     ) from exc
 
 ART_SIZE = 48

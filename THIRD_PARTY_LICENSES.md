@@ -79,5 +79,5 @@ The reaction-to-source mapping and additional attribution are retained in
 - **Local SHA-256:**
   `d2c8c15de5ca83fcaef7cadc06d8db578c082507fa3da8a8f698d026fdda2b14`.
 
-Dependencies installed from `requirements.txt` are distributed separately and
+Dependencies installed from `pyproject.toml` are distributed separately and
 are not enumerated by this notice.

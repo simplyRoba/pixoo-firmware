@@ -21,7 +21,8 @@
   "packages": {
     ".": {
       "extra-files": [
-        { "type": "generic", "path": "esphome/pixoo64.yaml" }
+        { "type": "generic", "path": "esphome/pixoo64.yaml" },
+        { "type": "generic", "path": "pyproject.toml" }
       ]
     }
   }

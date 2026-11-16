@@ -14,17 +14,17 @@ a C compiler, Make, and CMake >= 3.15 on `PATH`:
 Create the development environment from the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install --group dev
 cp esphome/secrets.example.yaml esphome/secrets.yaml
 ```
 
-`requirements.txt` pins the project's direct Python tools. CI tests both that
-full environment and the smaller `ci-requirements.txt` subset. Keep shared pins
-consistent between the files and with ESPHome's exact dependency constraints.
-Other transitive packages and host libraries are resolved for the current
-platform. Recreate `.venv` after moving or renaming the checkout because its
-scripts contain absolute paths.
+`pyproject.toml` declares Python 3.12 and pins ESPHome and CairoSVG. ESPHome pins
+its required tools and libraries. Development and CI use the same `dev`
+dependencies, installed with pip >=25.1. Other transitive packages and host
+libraries are resolved for the current platform. Recreate `.venv` after moving
+or renaming the checkout because its scripts contain absolute paths.
 
 `esphome/secrets.yaml` is local and ignored by Git. Replace every example value
 before using a build on hardware. Tests may use the committed example values.
@@ -169,8 +169,8 @@ Use `!` or a `BREAKING CHANGE:` footer for a major bump. `chore:`, `test:`,
 releases on their own unless they contain a breaking change.
 
 Release Please maintains one release PR on `main`. That PR updates `version.txt`,
-`CHANGELOG.md`, `.release-please-manifest.json`, and the annotated
-`esphome.project.version` in `esphome/pixoo64.yaml`. Merge it once the
+`CHANGELOG.md`, `.release-please-manifest.json`, and the annotated versions in
+`esphome/pixoo64.yaml` and `pyproject.toml`. Merge it once the
 [PR requirements](#repository-rules) are met to create the `v<version>` tag and
 GitHub release. Project metadata identifies the
 firmware release in ESPHome logs and the native API; it does not change the
@@ -179,7 +179,7 @@ independently pinned ESPHome or Arduino versions.
 The shared release workflow requires a GitHub App installed for this repository
 with Contents and Pull requests write permissions. Configure repository Actions
 secrets `RELEASE_BOT_CLIENT_ID` and `RELEASE_BOT_PRIVATE_KEY`. App-created release
-PRs trigger CI. Dependabot groups the monthly Python toolchain updates with
+PRs trigger CI. Dependabot checks the monthly Python toolchain updates with
 `deps:` subjects; GitHub Actions updates use `ci:`.
 
 ## Repository rules
