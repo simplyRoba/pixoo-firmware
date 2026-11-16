@@ -49,18 +49,12 @@ LEDBoard` REV1.0 (`20210525`). Other board revisions and variants are unknown.
 - [Contributor setup, builds, tests, and generators](CONTRIBUTING.md)
 - [Third-party notices](THIRD_PARTY_LICENSES.md)
 
-## License
-
-Copyright (C) 2026 simplyRoba. Original project material is licensed under the
-GNU Affero General Public License, version 3 or later
-([`AGPL-3.0-or-later`](https://spdx.org/licenses/AGPL-3.0-or-later.html)); see the
-full license text in [LICENSE](LICENSE).
-Checked-in OpenMoji artwork and bundled fonts have their own terms; see
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 > [!NOTE]
 > This independent project is not
 affiliated with or endorsed by Divoom; the Divoom and Pixoo64 names identify the
 supported hardware.
+
+Copyright (C) 2026 simplyRoba.
 
 **This project is developed with AI assistance, reviewed by a critical human.**
