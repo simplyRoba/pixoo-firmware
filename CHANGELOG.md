@@ -1,5 +1,48 @@
 # Changelog
 
+## [3.0.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.1.0...v3.0.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* Remove pixoo64_content.render_metrics and replace the legacy drawing and end-to-end sensor set with frame preparation, rendered and sent FPS, late-frame, and busy-drop metrics. Update monitoring configuration and Home Assistant entity references accordingly.
+* per-kind pause, resume, stop, minimize, and show actions and buttons are replaced by timing_pause, timing_resume, timing_stop, timing_minimize, and timing_show. The timing configuration requires the shared controls and a visible binary sensor.
+
+### Features
+
+* consolidate timing controls and publish visibility ([ceaec4a](https://github.com/simplyRoba/pixoo-firmware/commit/ceaec4ad5b339cf19ccecbc179589e97f2cde9e2))
+* replace legacy monitoring with async frame metrics ([0dd072d](https://github.com/simplyRoba/pixoo-firmware/commit/0dd072d68b6e2b84175c5ece99461acc8169040b))
+* run rendering and queued panel DMA on a dedicated core ([e23e970](https://github.com/simplyRoba/pixoo-firmware/commit/e23e9700cb5680edb9a649d9da59f009d65eb296))
+* show timer and stopwatch banners by default ([6da5e1e](https://github.com/simplyRoba/pixoo-firmware/commit/6da5e1e58093daf13ee65c76e9fed4bff330f2c8))
+
+
+### Bug Fixes
+
+* build host JPEG decoder with the Ninja toolchain ([3e54a07](https://github.com/simplyRoba/pixoo-firmware/commit/3e54a070db9bd37e3a5a1d87d4aeafa32f6bdcf1))
+* recover now-playing readiness after Home Assistant startup ([a9857e2](https://github.com/simplyRoba/pixoo-firmware/commit/a9857e2cef6801e4d2a13dead40de5cc2c4f0f9b))
+
+
+### Performance Improvements
+
+* avoid copying DDP frames on the render task ([fdb6020](https://github.com/simplyRoba/pixoo-firmware/commit/fdb60202e98e8f7e2daaf84c94f2b3e856ecf069))
+* limit shadow clock rendering to 25 fps ([9d4aef9](https://github.com/simplyRoba/pixoo-firmware/commit/9d4aef9524cd288aef102c6e3881316107b0f6b2))
+
+
+### Code Refactoring
+
+* isolate rendering state and snapshot external inputs ([8566833](https://github.com/simplyRoba/pixoo-firmware/commit/85668331ac3e5bb0a528d30d29a0c0094d6e0cb0))
+* prepare application ports for queued rendering ([f2fa96f](https://github.com/simplyRoba/pixoo-firmware/commit/f2fa96f06b754a49a3dcebdfc38308fd994b85ba))
+
+
+### Documentation
+
+* align architecture with asynchronous rendering ([5125741](https://github.com/simplyRoba/pixoo-firmware/commit/51257415e900db162668ae3a685cdd3cec05c36c))
+
+
+### Dependencies
+
+* bump esphome from 2026.9.1 to 2026.10.2 ([7f3f9a0](https://github.com/simplyRoba/pixoo-firmware/commit/7f3f9a0a71050db6abfeebf89c4fa0a16101cb70))
+
 ## [2.1.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.0.0...v2.1.0) (2026-10-23)
 
 
