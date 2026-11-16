@@ -70,8 +70,8 @@ output and resource-limit failures. Host results and ESP32 compilation do not
 establish on-device progressive decode latency or memory availability; those
 require hardware verification.
 
-The host render target runs `tools/build-libjpeg-host.py` as a PlatformIO
-prebuild hook. It downloads the pinned libjpeg-turbo 3.2.0 release archive,
+The host render target runs `tools/build-libjpeg-host.py` during code generation.
+It downloads the pinned libjpeg-turbo 3.2.0 release archive,
 verifies its SHA-256, and uses native CMake with `Unix Makefiles` to build the
 static libjpeg API library with `WITH_JPEG8=ON` and SIMD disabled. TurboJPEG,
 command-line tools, and upstream tests are disabled. The archive, extracted

@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 from pathlib import Path
+import shlex
 import tarfile
 import tempfile
 import unittest
@@ -16,6 +17,54 @@ spec.loader.exec_module(helper)
 
 
 class LibjpegHostBuildTest(unittest.TestCase):
+    def test_build_flags_address_archive_content_and_quote_paths(self):
+        with tempfile.TemporaryDirectory(prefix="jpeg test ") as directory:
+            root = Path(directory)
+            prefix = root / "install"
+            library_dir = prefix / "lib"
+            library_dir.mkdir(parents=True)
+            archive = library_dir / "libjpeg.a"
+            compiler = ("ccache", "clang", "-DNAME=a b")
+            with patch.object(helper, "build", return_value=prefix) as build:
+                archive.write_bytes(b"first archive")
+                flags = helper.build_flags(root, compiler)
+                build.assert_called_with(root, compiler)
+                digest = hashlib.sha256(b"first archive").hexdigest()
+                name = f"pixoo_jpeg_{digest}"
+                copied = library_dir / f"lib{name}.a"
+                self.assertEqual(copied.read_bytes(), b"first archive")
+                self.assertEqual(shlex.split(flags[0]), [f"-I{prefix / 'include'}"])
+                self.assertEqual(shlex.split(flags[1]), [f"-L{library_dir}"])
+                self.assertEqual(flags[2], f"-l{name}")
+                with patch.object(Path, "write_bytes", side_effect=AssertionError("unnecessary copy")):
+                    self.assertEqual(helper.build_flags(root, compiler), flags)
+                archive.write_bytes(b"changed archive")
+                changed = helper.build_flags(root, compiler)
+                new_digest = hashlib.sha256(b"changed archive").hexdigest()
+                self.assertEqual(changed[2], f"-lpixoo_jpeg_{new_digest}")
+                self.assertNotEqual(changed[2], flags[2])
+                self.assertEqual((library_dir / f"libpixoo_jpeg_{new_digest}.a").read_bytes(), b"changed archive")
+
+    def test_build_forwards_compiler_argv_to_cmake(self):
+        with tempfile.TemporaryDirectory(prefix="jpeg build ") as directory:
+            root = Path(directory)
+            (root / f"libjpeg-turbo-{helper.VERSION}").mkdir()
+            compiler = ("/path with spaces/ccache", "clang", "-DNAME=a b")
+            with patch.object(helper.shutil, "which", return_value="cmake"), patch.object(
+                helper, "download_archive"
+            ), patch.object(helper.subprocess, "run") as run:
+                prefix = helper.build(root, compiler)
+                changed = helper.build(root, (*compiler, "-DOTHER=1"))
+            self.assertNotEqual(prefix, changed)
+            self.assertEqual(prefix.name, "install")
+            self.assertEqual(prefix.parent.parent, root)
+            command = run.call_args_list[0].args[0]
+            self.assertEqual(command[command.index("-B") + 1], str(prefix.parent))
+            self.assertIn(f"-DCMAKE_INSTALL_PREFIX={prefix}", command)
+            self.assertIn(f"-DCMAKE_C_COMPILER={compiler[0]}", command)
+            self.assertIn(f"-DCMAKE_C_COMPILER_ARG1={shlex.join(compiler[1:])}", command)
+            self.assertEqual(run.call_count, 6)
+
     def test_checksum_rejects_corrupt_cached_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "source.tar.gz"
