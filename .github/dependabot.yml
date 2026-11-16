@@ -6,9 +6,6 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "deps"
-    groups:
-      python-toolchain:
-        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
