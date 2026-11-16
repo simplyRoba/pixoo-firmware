@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Build pinned libjpeg-turbo for the PlatformIO native render target."""
+"""Build pinned libjpeg-turbo for the native render target."""
 from __future__ import annotations
 
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import shlex
 import subprocess
 import tarfile
 import urllib.request
@@ -60,7 +61,7 @@ def extract_archive(archive: Path, destination: Path) -> None:
         source.extractall(destination, members=members, filter="data")
 
 
-def build(root: Path, compiler: str) -> Path:
+def build(root: Path, compiler: tuple[str, ...]) -> Path:
     cmake = shutil.which("cmake")
     if cmake is None:
         raise RuntimeError("Native JPEG build requires CMake >= 3.15 on PATH (brew install cmake or apt install cmake).")
@@ -77,11 +78,13 @@ def build(root: Path, compiler: str) -> Path:
             (staging / source.name).replace(source)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    binary = root / "build"
-    prefix = root / "install"
+    identity = hashlib.sha256("\0".join((VERSION, *compiler)).encode()).hexdigest()[:16]
+    binary = root / f"build-{identity}"
+    prefix = binary / "install"
     subprocess.run([
         cmake, "-S", str(source), "-B", str(binary), "-G", "Unix Makefiles",
-        "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_C_COMPILER={compiler}",
+        "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_C_COMPILER={compiler[0]}",
+        f"-DCMAKE_C_COMPILER_ARG1={shlex.join(compiler[1:])}",
         f"-DCMAKE_INSTALL_PREFIX={prefix}", "-DCMAKE_INSTALL_LIBDIR=lib",
         *[f"-D{key}={value}" for key, value in OPTIONS.items()],
     ], check=True)
@@ -90,18 +93,15 @@ def build(root: Path, compiler: str) -> Path:
     return prefix
 
 
-def platformio_setup(env) -> None:
-    root = Path(env.subst("$BUILD_DIR")).resolve() / "libjpeg-turbo"
-    compiler = env.WhereIs(env.subst("$CC"))
-    if not compiler:
-        raise RuntimeError("Native JPEG build requires a C compiler on PATH")
+def build_flags(root: Path, compiler: tuple[str, ...]) -> tuple[str, ...]:
     prefix = build(root, compiler)
-    env.Append(CPPPATH=[str(prefix / "include")])
-    # Application objects (including the project-owned jmemnobs backend) precede
-    # LIBS. Use the exact archive, never a system -ljpeg or a dynamic library.
-    env.Append(LIBS=[env.File(str(prefix / "lib/libjpeg.a"))])
-
-
-if "Import" in globals():
-    Import("env")  # noqa: F821 -- PlatformIO/SCons supplies Import
-    platformio_setup(env)  # noqa: F821
+    library_dir = prefix / "lib"
+    data = (library_dir / "libjpeg.a").read_bytes()
+    # A unique content-derived name prevents system JPEG fallback and makes
+    # Ninja relink when the archive changes; -l follows application objects.
+    name = f"pixoo_jpeg_{hashlib.sha256(data).hexdigest()}"
+    library = library_dir / f"lib{name}.a"
+    if not library.exists() or library.read_bytes() != data:
+        library.write_bytes(data)
+    return (shlex.quote(f"-I{prefix / 'include'}"),
+            shlex.quote(f"-L{library_dir}"), f"-l{name}")
