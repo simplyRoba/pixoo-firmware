@@ -40,8 +40,6 @@ class MicrophoneAdapter final : public PollingComponent,
   void SetEnabled(bool enabled) override;
 
  protected:
-  static constexpr uint32_t kStopFallbackMs = 1000;
-
   void ServiceMicrophone_();
   void SetEnableSwitch_(bool enabled);
 
@@ -55,10 +53,8 @@ class MicrophoneAdapter final : public PollingComponent,
   pixoo::EqualizerProcessor processor_{nullptr};
   bool configured_{false};
   bool microphone_requested_{false};
-  bool microphone_stop_pending_{false};
   bool microphone_stop_issued_{false};
   bool microphone_enable_on_{false};
-  uint32_t microphone_stop_pending_started_ms_{0};
 };
 
 }  // namespace esphome::pixoo64::adapters

@@ -6,7 +6,6 @@
 
 #include "esp_heap_caps.h"
 
-#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 namespace esphome::pixoo64::adapters {
@@ -121,17 +120,11 @@ void MicrophoneAdapter::SetEnabled(bool enabled) {
   if (enabled) {
     if (this->microphone_requested_)
       return;
-    const bool stop_pending = this->microphone_stop_pending_;
     this->microphone_requested_ = true;
-    this->microphone_stop_pending_ = false;
+    this->microphone_stop_issued_ = false;
     this->SetEnableSwitch_(true);
-    if (this->microphone_ != nullptr) {
-      // A pending stop has not returned its listener request yet. An issued
-      // stop has, so reclaim that request and let the microphone restart.
-      if (!stop_pending)
-        this->microphone_->start();
-      this->microphone_stop_issued_ = false;
-    }
+    if (this->microphone_ != nullptr)
+      this->microphone_->start();
     return;
   }
 
@@ -143,38 +136,17 @@ void MicrophoneAdapter::SetEnabled(bool enabled) {
     return;
   }
 
-  // I2SAudioMicrophone::stop() is a no-op until the asynchronous start has
-  // reached running, so wait to issue it. GPIO21 stays on until the stop has
-  // completed so the I2S task can unwind safely.
-  if (!this->microphone_->is_stopped()) {
-    this->microphone_->stop();
-    this->microphone_stop_issued_ = true;
-    this->microphone_stop_pending_ = false;
-  } else {
-    // start() records a listener request before the microphone loop leaves the
-    // stopped state. Give that loop a chance to observe it before stop().
-    this->microphone_stop_pending_ = true;
-    this->microphone_stop_pending_started_ms_ = millis();
-  }
+  // stop() also returns a listener request that the microphone loop has not
+  // acted on yet. GPIO21 stays on until the microphone reports stopped so the
+  // I2S task can unwind safely.
+  this->microphone_->stop();
+  this->microphone_stop_issued_ = true;
 }
 
 void MicrophoneAdapter::ServiceMicrophone_() {
   if (this->microphone_ == nullptr || this->microphone_requested_)
     return;
 
-  if (this->microphone_stop_pending_) {
-    if (!this->microphone_->is_stopped()) {
-      this->microphone_->stop();
-      this->microphone_stop_pending_ = false;
-      this->microphone_stop_issued_ = true;
-    } else if (millis() - this->microphone_stop_pending_started_ms_ >=
-               kStopFallbackMs) {
-      // A failed microphone ignores start() and remains stopped. Do not leave
-      // its external enable line powered indefinitely.
-      this->SetEnableSwitch_(false);
-      this->microphone_stop_pending_ = false;
-    }
-  }
   if (this->microphone_stop_issued_ && this->microphone_->is_stopped()) {
     this->SetEnableSwitch_(false);
     this->microphone_stop_issued_ = false;
