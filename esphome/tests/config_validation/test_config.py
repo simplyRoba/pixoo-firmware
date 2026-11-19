@@ -296,13 +296,14 @@ for field in ('options', 'legacy_options'):
         self.assertEqual(generated.count("pixoo_firmware->set_timing_button("), 7)
         visible = re.search(r"pixoo_firmware->set_timing_visible\((\w+)\);", generated)
         self.assertIsNotNone(visible)
-        self.assertIn(f'App.register_binary_sensor({visible.group(1)}, "Timing Visible",', generated)
+        self.assertRegex(generated, rf'App\.register_binary_sensor\({visible.group(1)}, (?:ESPHOME_PSTR\()?"Timing Visible"')
         for index, action in enumerate(actions):
             with self.subTest(action=action):
                 binding = re.search(
                     rf"pixoo_firmware->set_timing_button\({index}, (\w+)\);", generated)
                 self.assertIsNotNone(binding)
-                self.assertIn(f'App.register_button({binding.group(1)}, "{action.replace("_", " ").title()}",', generated)
+                name = action.replace("_", " ").title()
+                self.assertRegex(generated, rf'App\.register_button\({binding.group(1)}, (?:ESPHOME_PSTR\()?"{name}"')
                 command = "".join(word.title() for word in action.split("_"))
                 if action != "timer_start":
                     self.assertIn(f"pixoo64::{command}Action<>(pixoo_firmware);", generated)
