@@ -98,6 +98,8 @@ esp32:
     advanced:
       minimum_chip_revision: "3.0"
       sram1_as_iram: true
+      # GigaDevice flash (JEDEC manufacturer 0xc8); omits other vendor drivers.
+      flash_chip: gd
     sdkconfig_options:
       # Makes malloc() draw from PSRAM, not just internal RAM. Allocations above
       # 8 KiB prefer PSRAM; either pool remains a fallback for the other.
