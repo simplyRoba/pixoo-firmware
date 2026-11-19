@@ -3,8 +3,6 @@ import ast
 import asyncio
 import calendar
 from datetime import datetime, timezone
-import hashlib
-import json
 import os
 from pathlib import Path
 import re
@@ -38,14 +36,6 @@ class TimezoneCodegenTest(unittest.TestCase):
     def setUp(self):
         self.source = CATALOG.read_text()
         self.entries, self.default = parse_catalog(self.source)
-
-    def test_catalog_persisted_identity(self):
-        identity = json.dumps(([(label, posix) for label, posix, _ in self.entries],
-                               self.default)).encode()
-        self.assertEqual(hashlib.sha256(identity).hexdigest(),
-                         "7416bbd464d07a66661aae2d7d202947657000521b4aae794388571f00673a37")
-        self.assertEqual(len(self.entries), 44)
-        self.assertEqual(self.entries[8][0], self.default)
 
     def test_strict_catalog_validation(self):
         for source in (

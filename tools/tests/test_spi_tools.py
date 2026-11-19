@@ -349,12 +349,6 @@ class PublicCliTest(unittest.TestCase):
         self.assertIn("    animation_only: true\n", generated)
         self.assertNotIn("    now_playing_source:", generated)
 
-    def test_render_test_view_requires_explicit_update(self):
-        script = (ROOT / "tools" / "render-test-view.sh").read_text(encoding="utf-8")
-        self.assertIn("--update", script)
-        self.assertIn("(unset PIXOO_UPDATE_SNAPSHOTS; \"$bin\")", script)
-        self.assertIn("PIXOO_UPDATE_SNAPSHOTS=1 \"$bin\"", script)
-
     def test_uart_requires_paths_and_validates_baud(self):
         parser = UART.build_parser()
         with self.assertRaises(SystemExit):

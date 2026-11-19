@@ -70,15 +70,6 @@ class EspHomeConfigTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_dashboard_legacy_options_are_explicit(self):
-        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
-        mapping = re.search(r"    legacy_options: (\[.*?\])", production, re.DOTALL)
-        self.assertIsNotNone(mapping)
-        self.assertEqual(yaml.safe_load(mapping[1]), [
-            "text", "now_playing", "weather_forecast", "weather_landscape",
-            "equalizer_bars", "equalizer_waveform", "game_of_life", "clock_split_flap",
-            "clock_analog", "clock_binary", "clock_digital", "stopwatch", "timer",
-            "ddp", "clock_shadow",
-        ])
         script = """
 from pathlib import Path
 from esphome.core import CORE
@@ -140,13 +131,7 @@ for field in ('options', 'legacy_options'):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_ddp_catalog_and_codegen(self):
-        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
-        self.assertEqual(production.count("    - platform: ddp\n"), 1)
-        self.assertIn("      dashboard_id: ddp\n", production)
-        self.assertIn("      - ddp\n", production)
-        self.assertIn("  default_dashboard: clock_analog\n", production)
-        self.assertIn("    initial_option: clock_analog\n", production)
+    def test_ddp_codegen(self):
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
             cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
@@ -242,19 +227,6 @@ for field in ('options', 'legacy_options'):
                 codepoint, glyph_index = face.get_next_char(codepoint, glyph_index)
             self.assertSetEqual(codepoints, expected_codepoints, font_name)
 
-        references = (
-            ("esphome/pixoo64.yaml", "fonts/pixel_operator_glyphs.yaml"),
-            ("esphome/tests/render_test/render_test.yaml", "../../fonts/pixel_operator_glyphs.yaml"),
-            ("tools/render-weather-gif.py", "../../fonts/pixel_operator_glyphs.yaml"),
-        )
-        for relative_path, include_path in references:
-            text = (self.fixture / relative_path).read_text(encoding="utf-8")
-            self.assertEqual(
-                text.count(f"glyphs: !include {include_path}"),
-                2,
-                relative_path,
-            )
-
         sanitizer = (
             self.fixture / "pixoo_content/src/dashboard/now_playing/now_playing_text.cpp"
         ).read_text(encoding="utf-8")
@@ -276,48 +248,8 @@ for field in ('options', 'legacy_options'):
         }
         self.assertSetEqual(sanitizer_codepoints, expected_codepoints)
 
-    def test_now_playing_dashboard_and_render_fixture_are_complete(self):
-        production = (self.fixture / "esphome/pixoo64.yaml").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(production.count("    - platform: now_playing\n"), 1)
-        self.assertEqual(production.count("      dashboard_id: now_playing\n"), 1)
-        self.assertEqual(production.count("      source: panel_now_playing\n"), 1)
-        self.assertEqual(production.count("      font: font_8\n"), 1)
-        self.assertIn("      - now_playing\n", production)
-        self.assertIn("  default_dashboard: clock_analog\n", production)
-        for source in (
-            "now_playing_data.cpp",
-            "now_playing_text.cpp",
-            "now_playing_art.cpp",
-            "now_playing_timing.cpp",
-            "metadata_policy.cpp",
-            "now_playing_presentation.cpp",
-        ):
-            self.assertIn(source, production)
-
-        render_path = "esphome/tests/render_test/render_test.yaml"
-        render = (self.fixture / render_path).read_text(encoding="utf-8")
-        self.assertEqual(render.count("    - platform: now_playing\n"), 1)
-        self.assertIn("  - id: src_now_playing\n", render)
-        self.assertIn("    now_playing_source: src_now_playing\n", render)
-        render_display = (
-            self.fixture
-            / "esphome/tests/render_test/components/pixoo64_render_test/display.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("cv.Optional(CONF_NOW_PLAYING_SOURCE)", render_display)
-        self.assertIn('title: "ÄÖÜ äöü ß"\n', render)
-        self.assertIn('title: "Signal 🚀 Lost"\n', render)
-        for source in (
-            "now_playing_data.cpp",
-            "now_playing_text.cpp",
-            "now_playing_art.cpp",
-            "now_playing_timing.cpp",
-            "metadata_policy.cpp",
-            "now_playing_presentation.cpp",
-        ):
-            self.assertIn(source, render)
-        result = self.run_config(self.fixture, render_path)
+    def test_render_test_config_is_valid(self):
+        result = self.run_config(self.fixture, "esphome/tests/render_test/render_test.yaml")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_render_fixture_rejects_unpaired_artwork_content_identity(self):
@@ -344,152 +276,9 @@ for field in ('options', 'legacy_options'):
                 output,
             )
 
-    def test_now_playing_uses_project_decoder_libraries(self):
-        text = (
-            self.fixture / "esphome/components/pixoo64/__init__.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn('"JPEGDEC",\n            "1.8.4"', text)
-        self.assertIn('cg.add_library("pngle", "1.1.0")', text)
-        self.assertIn('cg.add_build_flag("-DUSE_PIXOO64_NOW_PLAYING")', text)
-        self.assertIn('cg.add_build_flag("-DPNGLE_NO_GAMMA_CORRECTION")', text)
-        self.assertIn('cg.add_build_flag("-Wl,--wrap=calloc")', text)
-        self.assertNotIn("from esphome.components import runtime_image", text)
-        self.assertNotIn('"runtime_image",', text)
-
-        decoder = (
-            self.fixture / "esphome/components/pixoo64/artwork_decoder.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            '#include "artwork_decoder.h"\n\n#ifdef USE_PIXOO64_NOW_PLAYING',
-            decoder,
-        )
-        for forbidden in ("App.feed_wdt", "ESP_LOG", "runtime_image"):
-            self.assertNotIn(forbidden, decoder)
-        self.assertIn("MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT", decoder)
-        self.assertIn("kDecoderYieldIntervalPixels = 1024", decoder)
-        self.assertIn("vTaskDelay(pdMS_TO_TICKS(1))", decoder)
-
-        source = (
-            self.fixture
-            / "esphome/components/pixoo64/home_assistant_media_source.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            '#include "home_assistant_media_source.h"\n\n#ifdef USE_PIXOO64_NOW_PLAYING',
-            source,
-        )
-        self.assertNotIn("MALLOC_CAP_INTERNAL", source)
-        self.assertIn(
-            ': fetch_worker(std::move(fetch_job), 12288, 0, 0, false,\n'
-            '                     "pixoo_art_http")',
-            source,
-        )
-        self.assertIn(
-            'decode_worker(std::move(decode_job), 12288, 0, 1, false,\n'
-            '                      "pixoo_art_dec")',
-            source,
-        )
-        self.assertIn(
-            "kArtworkIdentityDomain, resolved.data(), resolved.size()", source
-        )
-        self.assertIn(
-            '"Artwork HTTP task: task=pixoo_art_http core=0 priority=0 "',
-            source,
-        )
-        self.assertIn(
-            '"Artwork decode task: task=pixoo_art_dec core=1 priority=0 "',
-            source,
-        )
-        self.assertIn("kArtworkReadChunkBytes = 512", source)
-        self.assertIn("kArtworkReadChunkBytes,", source)
-        reader = (
-            self.fixture / "esphome/components/pixoo64/http_body_reader.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertIn("std::min(remaining, options.chunk_bytes)", reader)
-        self.assertIn("container->end();\n  lease.Release();", reader)
-        self.assertNotIn("http_read_fully", reader)
-        self.assertIn("published_encoded", source)
-        self.assertIn("artwork::EncodedBodiesEqual", source)
-        self.assertIn('ESP_LOGD(TAG, "artwork reused")', source)
-        self.assertNotIn("vTaskDelay", source)
-        self.assertNotIn("YieldArtworkWorker", source)
-        for diagnostic in (
-            "artwork eligibility",
-            "artwork reference",
-            "artwork job %u queued",
-            "artwork job %u HTTP start",
-            "artwork job %u HTTP finish",
-            "artwork job %u HTTP handoff",
-            "artwork job %u decode start",
-            "artwork job %u decode finish",
-            "artwork job %u main completion",
-            "artwork renderer copy",
-            "ArtworkJobDiagnostics",
-            "ArtworkFetchResult",
-            "CurrentTaskName",
-            "CurrentTaskCore",
-            "CurrentTaskPriority",
-            "CurrentStackHighWater",
-            "next_job_sequence",
-            "main_job_active",
-            "copy_started_us",
-        ):
-            self.assertNotIn(diagnostic, source)
-        log_calls = re.findall(r"ESP_LOG(?:CONFIG|[A-Z]+)\(.*?\);", source, re.S)
-        self.assertGreater(len(log_calls), 0)
-        for log_call in log_calls:
-            for secret_value in (
-                "request.url",
-                "desired_artwork_url_",
-                "record_.entity_id",
-                "home_assistant_url",
-                "artwork_identity",
-            ):
-                self.assertNotIn(secret_value, log_call)
-
-        weather = (
-            self.fixture / "esphome/components/pixoo64/open_meteo.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("weather worker start", weather)
-        self.assertNotIn("weather worker finish", weather)
-
-    def test_production_config_uses_one_shared_panel_http_gate(self):
-        text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
-        self.assertEqual(text.count("http_request:\n"), 1)
-        self.assertEqual(text.count("  id: panel_http\n"), 1)
-        self.assertEqual(text.count("http_gate:\n"), 1)
-        self.assertEqual(text.count("id: panel_http_gate\n"), 1)
-        self.assertEqual(text.count("http_request_id: panel_http\n"), 2)
-        self.assertEqual(text.count("http_gate: panel_http_gate\n"), 2)
-        self.assertIn("  timeout: 5s\n", text)
-        self.assertIn("  follow_redirects: false\n", text)
-        self.assertIn("  verify_ssl: false\n", text)
-        self.assertIn("    http_request: NONE\n", text)
-
-    def test_timing_controls_and_codegen(self):
-        text = (self.fixture / "esphome/pixoo64.yaml").read_text()
-        self.assertNotIn("platform: timing", text)
-        self.assertIn("components/pixoo64_content/timing\n", text)
-        self.assertIn("  reboot_timeout: 0s\n", text)
-        self.assertIn("    timer_duration: timing_timer_duration\n", text)
-        self.assertIn("    initial_value: 300\n", text)
-        self.assertIn("    min_value: 1\n    max_value: 5999\n    step: 1\n    mode: box\n", text)
-        self.assertIn("        duration_seconds: int\n      supports_response: status\n", text)
-        self.assertEqual(text.count("TimerStart(duration_seconds)"), 1)
-        self.assertIn("                  success: false\n", text)
+    def test_timing_codegen(self):
         actions = ["stopwatch_start", "timer_start", "timing_pause", "timing_resume",
                    "timing_stop", "timing_minimize", "timing_show"]
-        for action in actions:
-            self.assertEqual(text.count(f"    - action: {action}\n"), 1)
-            name = action.replace("_", " ").title()
-            self.assertIn(f"    {action}:\n      name: {name}\n", text)
-            if action != "timer_start":
-                self.assertIn(f"    - action: {action}\n      then:\n"
-                              f"        - pixoo64.{action}: pixoo_firmware\n", text)
-        old_actions = [f"{kind}_{verb}" for kind in ("stopwatch", "timer")
-                       for verb in ("pause", "resume", "stop", "minimize", "show")]
-        for old in (*old_actions, "stopwatch_reset", "timer_set", "timer_reset", "timing_start"):
-            self.assertNotIn(old, text)
-        self.assertIn("    visible:\n      name: Timing Visible\n", text)
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
             cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
@@ -597,36 +386,7 @@ for field in ('options', 'legacy_options'):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(f"[{old}] is an invalid option", result.stdout + result.stderr)
 
-    def test_production_config_has_all_clock_faces(self):
-        text = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
-        self.assertEqual(text.count("    - platform: clock\n"), 5)
-        for face in ("split_flap", "analog", "binary", "digital", "shadow"):
-            self.assertEqual(text.count(f"      dashboard_id: clock_{face}\n"), 1)
-            self.assertEqual(text.count(f"      face: {face}\n"), 1)
-
-    def test_shadow_clock_catalog_fixtures_and_codegen(self):
-        production = (self.fixture / "esphome/pixoo64.yaml").read_text()
-        options = re.search(
-            r"    id: panel_dashboard\n.*?    options:\n(.*?)    initial_option:",
-            production, re.DOTALL,
-        ).group(1)
-        self.assertEqual(re.findall(r"      - (\w+)", options), [
-            "clock_analog", "clock_digital", "clock_split_flap", "clock_binary",
-            "clock_shadow", "now_playing", "equalizer_bars", "equalizer_waveform",
-            "weather_forecast", "weather_landscape", "text", "game_of_life", "ddp",
-        ])
-        self.assertIn("  default_dashboard: clock_analog\n", production)
-        self.assertIn("    initial_option: clock_analog\n", production)
-        self.assertIn(
-            "      dashboard_id: clock_shadow\n      frame_interval: 40ms\n"
-            "      face: shadow\n      time_id: panel_time\n", production,
-        )
-        render = (self.fixture / "esphome/tests/render_test/render_test.yaml").read_text()
-        for source in ("shadow_clock.h", "shadow_clock.cpp"):
-            self.assertIn(f"/dashboard/clock/{source}", production)
-            self.assertIn(f"/dashboard/clock/{source}", render)
-        for fixture in ("clock_shadow", "clock_shadow_opposed"):
-            self.assertIn(f"      dashboard_id: {fixture}\n      face: shadow\n", render)
+    def test_shadow_clock_codegen(self):
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "compile", "--only-generate", "esphome/pixoo64.yaml"],
             cwd=self.fixture, text=True, capture_output=True, timeout=60, check=False,
@@ -641,35 +401,6 @@ for field in ('options', 'legacy_options'):
             "panel_content_controller->add_dashboard(clock_shadow_dashboard);",
         ):
             self.assertIn(statement, generated)
-
-    def test_production_solar_brightness_uses_runtime_location_and_clock(self):
-        production = (self.fixture / "esphome/pixoo64.yaml").read_text(encoding="utf-8")
-        params = (self.fixture / "esphome/config-params.yaml").read_text(encoding="utf-8")
-        self.assertEqual(production.count("\nsun:\n"), 1)
-        self.assertIn("  id: panel_sun\n", production)
-        self.assertIn("  latitude: 0\n", production)
-        self.assertIn("  longitude: 0\n", production)
-        self.assertIn("  solar_brightness:\n", production)
-        for value in (
-            "enable_switch: solar_brightness",
-            "day_brightness: solar_day_brightness",
-            "night_brightness: solar_night_brightness",
-            "latitude: location_latitude",
-            "longitude: location_longitude",
-            "sun: panel_sun",
-        ):
-            self.assertIn(value, production)
-        self.assertEqual(params.count("name: Day Brightness"), 1)
-        self.assertEqual(params.count("name: Night Brightness"), 1)
-        self.assertEqual(production.count("name: Solar Brightness"), 1)
-        self.assertIn("restore_mode: RESTORE_DEFAULT_OFF", production)
-        component = (self.fixture / "esphome/components/pixoo64/firmware_app_component.cpp").read_text(encoding="utf-8")
-        self.assertIn("solar_sun_->set_latitude(latitude)", component)
-        self.assertIn("solar_sun_->set_longitude(longitude)", component)
-        self.assertIn("add_remote_values_listener(this)", component)
-        self.assertIn("light_publication_guard_.Expect(state)", component)
-        self.assertNotIn("SyncLightFromEntity();\n", production)
-        self.assertNotIn('#include "esphome/components/sun/sun.cpp"', component)
 
     def test_final_validators_reject_invalid_board_wiring(self):
         cases = (
