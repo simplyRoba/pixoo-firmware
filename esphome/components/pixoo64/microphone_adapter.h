@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -55,6 +56,9 @@ class MicrophoneAdapter final : public PollingComponent,
   bool microphone_requested_{false};
   bool microphone_stop_issued_{false};
   bool microphone_enable_on_{false};
+  bool capture_logged_{false};
+  // Set by the microphone task's data callback.
+  std::atomic<bool> capture_received_{false};
 };
 
 }  // namespace esphome::pixoo64::adapters

@@ -67,12 +67,18 @@ void MicrophoneAdapter::setup() {
   this->microphone_->add_data_callback(
       [this](const microphone::AudioCapture &capture) {
         this->processor_.AddSampleBytes(capture.data.data(), capture.data.size());
+        this->capture_received_.store(true, std::memory_order_relaxed);
       });
   this->configured_ = true;
 }
 
 void MicrophoneAdapter::update() {
   this->ServiceMicrophone_();
+  if (this->microphone_requested_ && !this->capture_logged_ &&
+      this->capture_received_.load(std::memory_order_relaxed)) {
+    ESP_LOGD(TAG, "capture running");
+    this->capture_logged_ = true;
+  }
   if (this->levels_sink_ == nullptr)
     return;
 
@@ -121,6 +127,8 @@ void MicrophoneAdapter::SetEnabled(bool enabled) {
       return;
     this->microphone_requested_ = true;
     this->microphone_stop_issued_ = false;
+    this->capture_received_.store(false, std::memory_order_relaxed);
+    this->capture_logged_ = false;
     this->SetEnableSwitch_(true);
     if (this->microphone_ != nullptr)
       this->microphone_->start();
@@ -153,6 +161,8 @@ void MicrophoneAdapter::ServiceMicrophone_() {
 }
 
 void MicrophoneAdapter::SetEnableSwitch_(bool enabled) {
+  if (enabled != this->microphone_enable_on_ && this->enable_switch_ != nullptr)
+    ESP_LOGD(TAG, "enable line %s", enabled ? "on" : "off");
   if (this->enable_switch_ != nullptr) {
     if (enabled)
       this->enable_switch_->turn_on();
