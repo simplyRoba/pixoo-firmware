@@ -2,7 +2,6 @@
 
 #include <cinttypes>
 #include <new>
-#include <vector>
 
 #include "esp_heap_caps.h"
 
@@ -66,8 +65,8 @@ void MicrophoneAdapter::setup() {
   }
 
   this->microphone_->add_data_callback(
-      [this](const std::vector<uint8_t> &data) {
-        this->processor_.AddSampleBytes(data.data(), data.size());
+      [this](const microphone::AudioCapture &capture) {
+        this->processor_.AddSampleBytes(capture.data.data(), capture.data.size());
       });
   this->configured_ = true;
 }
