@@ -17,7 +17,6 @@ on:
       - ".github/workflows/release-please.yml"
       - "release-please-config.json"
       - ".release-please-manifest.json"
-      - "version.txt"
       - "CHANGELOG.md"
   pull_request:
   workflow_dispatch:
@@ -44,7 +43,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: pyproject.toml
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
@@ -60,7 +59,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: pyproject.toml
       - name: Install native Cairo runtime
         run: sudo apt-get update && sudo apt-get install -y libcairo2
       - name: Install development tools and verify dependencies
@@ -90,7 +89,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: pyproject.toml
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip

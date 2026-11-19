@@ -3,25 +3,28 @@
 ## Setup
 
 The documented commands use a POSIX shell and are supported on macOS and Ubuntu.
-Windows is untested. Use Python 3.12 to match CI. Native tests and reaction-art
-generation require a C++ compiler and Cairo. The host render target also requires
-a C compiler, Make, and CMake >= 3.15 on `PATH`:
+Windows is untested. Use a Python version allowed by `requires-python` in
+`pyproject.toml`; CI uses the newest allowed version. Native tests and
+reaction-art generation require a C++ compiler and Cairo. The host render target
+also requires a C compiler, Make, and CMake >= 3.15 on `PATH`:
 
 - macOS: install the Xcode command-line tools and `brew install cairo cmake`;
 - Ubuntu: install `build-essential`, `cmake`, `libcairo2-dev`, `pkg-config`, and
   the Python venv package for the selected interpreter.
 
-Create the development environment from the repository root:
+Create the development environment from the repository root. If `python3` is
+not a supported version, call a supported interpreter by its versioned name:
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install --group dev
 cp esphome/secrets.example.yaml esphome/secrets.yaml
 ```
 
-`pyproject.toml` declares Python 3.12 and pins ESPHome and CairoSVG. ESPHome pins
-its required tools and libraries. Development and CI use the same `dev`
+`pyproject.toml` declares the supported Python range, which matches the pinned
+ESPHome release, and pins ESPHome and CairoSVG. ESPHome pins its required tools
+and libraries. Development and CI use the same `dev`
 dependencies, installed with pip >=25.1. Other transitive packages and host
 libraries are resolved for the current platform. Recreate `.venv` after moving
 or renaming the checkout because its scripts contain absolute paths.
@@ -168,7 +171,7 @@ Use `!` or a `BREAKING CHANGE:` footer for a major bump. `chore:`, `test:`,
 `ci:`, `build:`, and `style:` are excluded from release notes and do not trigger
 releases on their own unless they contain a breaking change.
 
-Release Please maintains one release PR on `main`. That PR updates `version.txt`,
+Release Please maintains one release PR on `main`. That PR updates
 `CHANGELOG.md`, `.release-please-manifest.json`, and the annotated versions in
 `esphome/pixoo64.yaml` and `pyproject.toml`. Merge it once the
 [PR requirements](#repository-rules) are met to create the `v<version>` tag and

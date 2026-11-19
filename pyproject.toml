@@ -1,7 +1,7 @@
 [project]
 name = "pixoo-firmware"
 version = "3.0.0" # x-release-please-version
-requires-python = "==3.12.*"
+requires-python = ">=3.12,<3.15"
 
 [dependency-groups]
 dev = [
