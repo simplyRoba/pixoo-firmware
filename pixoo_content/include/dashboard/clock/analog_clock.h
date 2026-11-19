@@ -35,8 +35,8 @@ class AnalogClockModel {
   // The hour and minute hands stay geared 1:12 throughout, so their motion is
   // one the gear train could make on its own, and the hour hand runs at
   // kWindHandsDegPerSec. The second hand cannot hold that gearing and runs at
-  // kWindSecondDegPerSec; being the faster hand it usually lands first, and
-  // from then on it ticks normally while the other two are still travelling.
+  // kWindSecondDegPerSec. Whichever lands first follows the clock while the
+  // other is still travelling; the wind ends when every hand has landed.
   //
   // A wind covers real distance, so it takes as long as that distance demands:
   // longest from a time just short of 12, and barely there at all just past it.

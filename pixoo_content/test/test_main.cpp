@@ -1221,6 +1221,35 @@ static void test_analog_wind_ticks_the_second_hand_once_it_lands() {
   TEST_ASSERT_FALSE(m.winding());
 }
 
+static void test_analog_wind_lets_the_second_hand_land_after_the_geared_hands() {
+  // 13:25 is a short way round for the geared hands and :45 a long way for the
+  // second hand, so the geared hands land first.
+  const uint32_t hands_ms = clock::AnalogClockModel::HandsWindMs(13, 25);
+  const uint32_t second_ms = clock::AnalogClockModel::SecondWindMs(45);
+  TEST_ASSERT_TRUE(hands_ms < second_ms);
+  clock::AnalogClockModel m;
+  m.StartWind(0);
+  float previous = 0.0f;
+  for (uint32_t now = 0; now < second_ms; now += 33) {
+    m.Update(13, 25, 45 + static_cast<int>(now / 1000), now);
+    const float angle = m.Angles().second;
+    // The second hand keeps travelling at wind speed, never cut short.
+    TEST_ASSERT_TRUE(angle >= previous);
+    TEST_ASSERT_TRUE(angle - previous <=
+                     clock::AnalogClockModel::kWindSecondDegPerSec * 0.034f);
+    previous = angle;
+    if (now >= hands_ms) {
+      TEST_ASSERT_TRUE(m.winding());
+      TEST_ASSERT_FLOAT_WITHIN(0.001f, 1 * 30.0f + 25 * 0.5f, m.Angles().hour);
+      TEST_ASSERT_FLOAT_WITHIN(0.001f, 25 * 6.0f, m.Angles().minute);
+    }
+  }
+  const int landed = (45 + static_cast<int>(second_ms / 1000)) % 60;
+  m.Update(13, 25, landed, second_ms);
+  TEST_ASSERT_FALSE(m.winding());
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, landed * 6.0f, m.Angles().second);
+}
+
 static void test_analog_wind_lands_the_second_hand_on_a_live_second() {
   // The clock runs on while the hand travels, so it is aimed at the second
   // that will be showing when it arrives, taking another turn if need be.
@@ -3210,6 +3239,7 @@ int main(int, char**) {
   RUN_TEST(test_analog_wind_keeps_the_hands_geared);
   RUN_TEST(test_analog_wind_runs_every_hand_at_once);
   RUN_TEST(test_analog_wind_ticks_the_second_hand_once_it_lands);
+  RUN_TEST(test_analog_wind_lets_the_second_hand_land_after_the_geared_hands);
   RUN_TEST(test_analog_wind_lands_the_second_hand_on_a_live_second);
   RUN_TEST(test_analog_wind_runs_forward_onto_the_time);
   RUN_TEST(test_analog_wind_decelerates_onto_the_time);

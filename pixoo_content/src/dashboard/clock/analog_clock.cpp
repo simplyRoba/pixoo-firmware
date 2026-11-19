@@ -158,8 +158,9 @@ void AnalogClockModel::Update(int hour, int minute, int second,
       this->wind_target_set_ = true;
     }
     const uint32_t since_wind = Elapsed(now_ms, this->wind_started_ms_);
+    const bool second_travelling = since_wind < this->wind_second_ms_;
 
-    if (since_wind < this->wind_second_ms_) {
+    if (second_travelling) {
       this->angles_.second = WindTravel(this->wind_second_target_,
                                         kWindSecondDegPerSec, since_wind);
     } else {
@@ -177,6 +178,12 @@ void AnalogClockModel::Update(int hour, int minute, int second,
                                       kWindHandsDegPerSec, since_wind);
       this->angles_.hour = travel;
       this->angles_.minute = WrapAngle(travel * kMinutesPerHourTurn);
+      return;
+    }
+    if (second_travelling) {
+      // Landed geared hands follow the clock while the second hand travels on.
+      this->angles_.hour = hour_target;
+      this->angles_.minute = minute * 6.0f;
       return;
     }
     this->winding_ = false;
