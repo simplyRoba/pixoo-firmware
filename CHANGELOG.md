@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.0.1](https://github.com/simplyRoba/pixoo-firmware/compare/v3.0.0...v3.0.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* let the analog second hand finish its wind after the geared hands ([0a36413](https://github.com/simplyRoba/pixoo-firmware/commit/0a364133804033e62298dd9e85caf331cd16af7e))
+
+
+### Performance Improvements
+
+* build only the GigaDevice flash driver ([31a04e4](https://github.com/simplyRoba/pixoo-firmware/commit/31a04e43d09e1b96fe2accd06f73b48179a87733))
+* take microphone captures without a per-chunk copy ([b79ae52](https://github.com/simplyRoba/pixoo-firmware/commit/b79ae52ad3c0680cb3583db82c25ed9750815ca8))
+
+
+### Code Refactoring
+
+* drop microphone stop workaround ([db92c4c](https://github.com/simplyRoba/pixoo-firmware/commit/db92c4c63dcffe8e9ef639f7c9ec13d0af620d49))
+
+
+### Dependencies
+
+* bump esphome to 2026.11.0 ([73f55bb](https://github.com/simplyRoba/pixoo-firmware/commit/73f55bbe301e72d322eea1103468e90cfc07e2eb))
+
 ## [3.0.0](https://github.com/simplyRoba/pixoo-firmware/compare/v2.1.0...v3.0.0) (2026-11-16)
 
 
